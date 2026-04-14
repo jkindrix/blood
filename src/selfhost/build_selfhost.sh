@@ -604,6 +604,12 @@ do_build_libmprompt() {
 }
 
 do_build_blood_runtime() {
+    local debug_alloc=""
+    if [ "${1:-}" = "--debug-alloc" ]; then
+        debug_alloc="--debug-alloc"
+        shift
+    fi
+
     local rt_dir="$REPO_ROOT/runtime/blood-runtime"
     local rt_build="$rt_dir/build/debug"
     local fg="$BUILD_DIR/first_gen"
@@ -614,12 +620,12 @@ do_build_blood_runtime() {
 
     mkdir -p "$rt_build"
 
-    step "Compiling Blood runtime to LLVM IR"
+    step "Compiling Blood runtime to LLVM IR${debug_alloc:+ (debug-alloc mode)}"
     "$fg" build --emit llvm-ir --no-cache --no-parallel --build-dir "$rt_dir/build" "$rt_dir/lib.blood"
     ok "IR generated"
 
     step "Post-processing IR"
-    python3 "$rt_dir/build_runtime.py" "$rt_build/lib.ll" "$rt_build/lib_clean.ll"
+    python3 "$rt_dir/build_runtime.py" $debug_alloc "$rt_build/lib.ll" "$rt_build/lib_clean.ll"
     ok "IR post-processed"
 
     step "Compiling to archive"
@@ -1165,7 +1171,29 @@ verify_ir() {
 build_asan() {
     local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
-    [ -f "$RUNTIME_A" ] || die "Runtime library not found at $RUNTIME_A"
+
+    # Step 1: Build a debug-alloc runtime (calloc/free instead of mmap/munmap).
+    # Regions use calloc (visible to ASan) and all calloc→__libc_calloc
+    # (consistent pair with __libc_free, avoids ASan alloc/free mismatch).
+    # Save/restore the normal runtime — do_build_blood_runtime overwrites RUNTIME_A.
+    local saved_rt=""
+    if [ -f "$RUNTIME_A" ]; then
+        saved_rt="$(mktemp)"
+        cp "$RUNTIME_A" "$saved_rt"
+    fi
+    step "Building debug-alloc runtime for ASan"
+    do_build_blood_runtime --debug-alloc
+    local debug_rt="$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a"
+    [ -f "$debug_rt" ] || die "Debug-alloc runtime not found at $debug_rt"
+    # Copy the debug-alloc archive to a stable location so we can restore RUNTIME_A
+    cp "$debug_rt" "$BUILD_DIR/libblood_runtime_debug.a"
+    debug_rt="$BUILD_DIR/libblood_runtime_debug.a"
+    # Restore the normal runtime so subsequent commands (test golden, etc.) work
+    if [ -n "$saved_rt" ] && [ -f "$saved_rt" ]; then
+        cp "$saved_rt" "$RUNTIME_A"
+        rm -f "$saved_rt"
+    fi
+    ok "Debug-alloc runtime built ($(stat -c%s "$debug_rt") bytes)"
 
     step "Building ASan-instrumented binary from $ir_file"
 
@@ -1182,7 +1210,8 @@ build_asan() {
         -o "$BUILD_DIR/second_gen_asan.o" -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
-    "$CLANG" "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_A" \
+    # Link against the debug-alloc runtime (not the normal runtime).
+    "$CLANG" "$BUILD_DIR/second_gen_asan.o" "$debug_rt" \
         -fsanitize=address -Wl,-z,muldefs \
         -lstdc++ -lm -lpthread -ldl -no-pie \
         -o "$BUILD_DIR/second_gen_asan"
@@ -1192,6 +1221,8 @@ build_asan() {
 
     printf "\n  Run with: ./build/second_gen_asan version\n"
     printf "  ASan will report memory errors with stack traces.\n"
+    printf "  Note: debug-alloc routes regions through calloc/free (ASan-tracked),\n"
+    printf "  and replaces __libc_free/__libc_realloc with free/realloc (ASan-tracked).\n"
 }
 
 bisect_functions() {
@@ -1460,7 +1491,7 @@ case "${1:-status}" in
                 do_build_runtime
                 ;;
             blood_runtime)
-                do_build_blood_runtime
+                do_build_blood_runtime "${3:-}"
                 ;;
             libmprompt)
                 do_build_libmprompt

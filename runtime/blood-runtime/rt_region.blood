@@ -25,6 +25,24 @@ mod rt_panic;
 mod alloc;
 
 // ============================================================================
+// Debug allocation mode
+// ============================================================================
+//
+// When DEBUG_ALLOC_MODE is non-zero, regions use calloc/free instead of
+// mmap/munmap/mprotect. This makes all region-allocated memory visible to
+// sanitizers (ASan, TSan, valgrind, rr) that instrument malloc/free but
+// cannot track raw mmap allocations.
+//
+// Set to 1 by build_runtime.py --debug-alloc (patches the IR global).
+// Normal builds leave it at 0 — no runtime cost on the normal path.
+
+static mut DEBUG_ALLOC_MODE: i32 = 0;
+
+pub fn is_debug_alloc() -> bool {
+    @unsafe { DEBUG_ALLOC_MODE != 0 }
+}
+
+// ============================================================================
 // Region registry — fixed-capacity parallel arrays
 // ============================================================================
 
@@ -155,24 +173,35 @@ pub fn rt_blood_region_create(initial_size: i64, max_size: i64) -> i64 {
         init_commit = round_up(init_commit, ps);
         if init_commit > res { init_commit = res; }
 
-        // mmap: reserve virtual address space (PROT_NONE = no access)
-        let null_ptr: *mut u8 = alloc.addr_to_ptr(0);
-        let base: *mut u8 = libc.sys_mmap(
-            null_ptr, res as u64,
-            libc.PROT_NONE(),
-            libc.MAP_PRIVATE() + libc.MAP_ANONYMOUS(),
-            -1, 0
-        );
-        if alloc.ptr_to_addr(base) == libc.MAP_FAILED_ADDR() as i64 {
-            rt_panic.rt_panic("region: mmap failed");
-        }
+        let mut base: *mut u8 = alloc.addr_to_ptr(0);
+        if DEBUG_ALLOC_MODE != 0 {
+            // Debug mode: use calloc so sanitizers can track the allocation.
+            // All memory is committed upfront (no demand-paging).
+            base = libc.sys_calloc(1, res as u64);
+            if alloc.ptr_to_addr(base) == 0 {
+                rt_panic.rt_panic("region: calloc failed (debug-alloc mode)");
+            }
+            init_commit = res; // all committed
+        } else {
+            // Normal mode: reserve virtual address space (PROT_NONE = no access)
+            let null_ptr: *mut u8 = alloc.addr_to_ptr(0);
+            base = libc.sys_mmap(
+                null_ptr, res as u64,
+                libc.PROT_NONE(),
+                libc.MAP_PRIVATE() + libc.MAP_ANONYMOUS(),
+                -1, 0
+            );
+            if alloc.ptr_to_addr(base) == libc.MAP_FAILED_ADDR() as i64 {
+                rt_panic.rt_panic("region: mmap failed");
+            }
 
-        // mprotect: commit initial pages (PROT_READ | PROT_WRITE)
-        let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
-        let ret: i32 = libc.sys_mprotect(base, init_commit as u64, prot_rw);
-        if ret != 0 {
-            libc.sys_munmap(base, res as u64);
-            rt_panic.rt_panic("region: mprotect failed");
+            // mprotect: commit initial pages (PROT_READ | PROT_WRITE)
+            let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
+            let ret: i32 = libc.sys_mprotect(base, init_commit as u64, prot_rw);
+            if ret != 0 {
+                libc.sys_munmap(base, res as u64);
+                rt_panic.rt_panic("region: mprotect failed");
+            }
         }
 
         // Allocate region ID
@@ -223,9 +252,13 @@ pub fn rt_blood_region_destroy(region_id: i64) {
         write_i32(REG_GEN, idx, new_gen);
         alloc.update_region_gen(base_addr, new_gen);
 
-        // munmap: release virtual address space. The validation array retains
-        // the (base, end, new_gen) entry so stale references are still detected.
-        libc.sys_munmap(base, reserved as u64);
+        // Release backing memory. The validation array retains the
+        // (base, end, new_gen) entry so stale references are still detected.
+        if DEBUG_ALLOC_MODE != 0 {
+            libc.sys_free(base);
+        } else {
+            libc.sys_munmap(base, reserved as u64);
+        }
 
         // Remove from registry by swapping with last entry
         let last: i64 = REG_COUNT - 1;
@@ -254,7 +287,12 @@ pub fn rt_blood_region_reset(region_id: i64) {
         let base: *mut u8 = alloc.addr_to_ptr(read_i64(REG_BASE, idx));
         let committed: i64 = read_i64(REG_COMMITTED, idx);
         if committed > 0 {
-            libc.sys_madvise(base, committed as u64, libc.MADV_DONTNEED());
+            if DEBUG_ALLOC_MODE != 0 {
+                // Debug mode: zero out calloc'd memory instead of madvise
+                libc.sys_memset(base, 0, committed as u64);
+            } else {
+                libc.sys_madvise(base, committed as u64, libc.MADV_DONTNEED());
+            }
         }
 
         // No gen invalidation — region_reset is for compiler-internal temp regions
@@ -301,10 +339,14 @@ pub fn rt_blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 {
 
             let additional: i64 = desired - committed;
             if additional > 0 {
-                let commit_ptr: *mut u8 = alloc.addr_to_ptr(base_addr + committed);
-                let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
-                let ret: i32 = libc.sys_mprotect(commit_ptr, additional as u64, prot_rw);
-                if ret != 0 { return 0; }
+                if DEBUG_ALLOC_MODE == 0 {
+                    // Normal mode: commit additional pages via mprotect
+                    let commit_ptr: *mut u8 = alloc.addr_to_ptr(base_addr + committed);
+                    let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
+                    let ret: i32 = libc.sys_mprotect(commit_ptr, additional as u64, prot_rw);
+                    if ret != 0 { return 0; }
+                }
+                // Debug mode: memory already accessible from calloc — no mprotect needed
             }
             write_i64(REG_COMMITTED, idx, desired);
         }
@@ -365,6 +407,9 @@ pub fn rt_blood_region_active_id() -> i64 {
 #[export_name = "blood_region_trim"]
 pub fn rt_blood_region_trim(region_id: i64) {
     @unsafe {
+        // Debug mode: no-op — can't selectively release calloc'd memory
+        if DEBUG_ALLOC_MODE != 0 { return; }
+
         let idx: i64 = find_region(region_id);
         if idx < 0 { return; }
 
@@ -400,6 +445,9 @@ pub fn rt_blood_region_exit_scope(region_id: i64) -> i32 {
 #[export_name = "blood_region_protect"]
 pub fn rt_blood_region_protect(region_id: i64, prot: i32) {
     @unsafe {
+        // Debug mode: no-op — mprotect on calloc'd memory would interfere with ASan
+        if DEBUG_ALLOC_MODE != 0 { return; }
+
         let idx: i64 = find_region(region_id);
         if idx < 0 { return; }
 

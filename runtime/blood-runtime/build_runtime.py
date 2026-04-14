@@ -590,7 +590,67 @@ def process_ir(input_path, output_path):
     stripped = len(lines) - len(out) + len(impl_lines)
     print(f'Processed: stripped {stripped} declares, injected {len(ptr_builtins)} ptr builtins + 6 missing builtins')
 
+def apply_debug_alloc(lines):
+    """Patch IR for sanitizer compatibility (--debug-alloc mode).
+
+    1. Set DEBUG_ALLOC_MODE global to 1 (regions use calloc instead of mmap).
+    2. Replace @__libc_free → @free and @__libc_realloc → @realloc so that
+       calloc/free/realloc all go through ASan's interceptors (full tracking).
+       The compiler IR does not define @free or @realloc, so they resolve to
+       ASan's versions at link time.
+    3. Add @free and @realloc declarations if not present.
+    """
+    out = []
+    patched_global = False
+    has_free_decl = False
+    has_realloc_decl = False
+
+    for line in lines:
+        # Patch DEBUG_ALLOC_MODE global: @def{N}_DEBUG_ALLOC_MODE = global i32 0 → 1
+        if not patched_global and '_DEBUG_ALLOC_MODE' in line and 'global i32 0' in line:
+            line = line.replace('global i32 0', 'global i32 1')
+            patched_global = True
+
+        # Replace @__libc_free → @free (ASan-intercepted)
+        if '@__libc_free(' in line:
+            if line.strip().startswith('declare'):
+                line = line.replace('@__libc_free(', '@free(')
+                has_free_decl = True
+            else:
+                line = line.replace('@__libc_free(', '@free(')
+
+        # Replace @__libc_realloc → @realloc (ASan-intercepted)
+        if '@__libc_realloc(' in line:
+            if line.strip().startswith('declare'):
+                line = line.replace('@__libc_realloc(', '@realloc(')
+                has_realloc_decl = True
+            else:
+                line = line.replace('@__libc_realloc(', '@realloc(')
+
+        out.append(line)
+
+    # Inject declarations if not already present
+    if not has_free_decl:
+        out.append('declare void @free(ptr)\n')
+    if not has_realloc_decl:
+        out.append('declare ptr @realloc(ptr, i64)\n')
+
+    if not patched_global:
+        print('WARNING: DEBUG_ALLOC_MODE global not found in IR — debug-alloc may not work')
+
+    return out
+
+
 if __name__ == '__main__':
-    input_path = sys.argv[1] if len(sys.argv) > 1 else 'runtime/blood-runtime/build/debug/lib.ll'
-    output_path = sys.argv[2] if len(sys.argv) > 2 else 'runtime/blood-runtime/build/debug/lib_clean.ll'
+    debug_alloc = '--debug-alloc' in sys.argv
+    args = [a for a in sys.argv[1:] if a != '--debug-alloc']
+    input_path = args[0] if len(args) > 0 else 'runtime/blood-runtime/build/debug/lib.ll'
+    output_path = args[1] if len(args) > 1 else 'runtime/blood-runtime/build/debug/lib_clean.ll'
     process_ir(input_path, output_path)
+    if debug_alloc:
+        with open(output_path) as f:
+            lines = f.readlines()
+        lines = apply_debug_alloc(lines)
+        with open(output_path, 'w') as f:
+            f.writelines(lines)
+        print('Applied --debug-alloc: DEBUG_ALLOC_MODE=1, calloc→__libc_calloc')
