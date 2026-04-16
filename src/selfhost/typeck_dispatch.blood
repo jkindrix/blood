@@ -711,13 +711,10 @@ fn constraint_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.Method
     };
     let mut all_at_least: bool = true;
     let mut some_strictly: bool = false;
+    let empty: Vec<u32> = Vec.new();
     for i in 0usize..max_params {
-        let b1 = if i < m1.type_param_bounds.len() { &m1.type_param_bounds[i] } else { &m1.type_param_bounds[0] };
-        let b2 = if i < m2.type_param_bounds.len() { &m2.type_param_bounds[i] } else { &m2.type_param_bounds[0] };
-        // Handle when we're outside range — treat as empty
-        let empty: Vec<u32> = Vec.new();
-        let bounds1 = if i < m1.type_param_bounds.len() { b1 } else { &empty };
-        let bounds2 = if i < m2.type_param_bounds.len() { b2 } else { &empty };
+        let bounds1 = if i < m1.type_param_bounds.len() { &m1.type_param_bounds[i] } else { &empty };
+        let bounds2 = if i < m2.type_param_bounds.len() { &m2.type_param_bounds[i] } else { &empty };
         // m1's bounds must be a superset of m2's bounds for this param
         if !bounds_superset(bounds1, bounds2) {
             all_at_least = false;
