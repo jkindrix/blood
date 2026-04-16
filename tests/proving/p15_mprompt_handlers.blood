@@ -1,0 +1,45 @@
+// p15_mprompt_handlers.blood
+//
+// Integration test: Blood mprompt handler wrappers via C shim.
+// Validates: resume, abort, nesting, deep yield, dispatch trampolines,
+// separate create+enter.
+//
+// Build (manual — not in golden suite):
+//   # 1. Build libmprompt (if not already built)
+//   ./src/selfhost/build_selfhost.sh build libmprompt
+//
+//   # 2. Compile C files
+//   clang-18 -c -O2 -fPIC -I vendor/libmprompt/include \
+//     runtime/blood-runtime/rt_mprompt_shim.c -o /tmp/rt_mprompt_shim.o
+//   clang-18 -c -O2 -fPIC -I vendor/libmprompt/include \
+//     tests/proving/p15_mprompt_handlers.c -o /tmp/p15_handlers.o
+//
+//   # 3. Compile Blood file
+//   src/selfhost/build/first_gen build tests/proving/p15_mprompt_handlers.blood
+//
+//   # 4. Link
+//   clang-18 tests/proving/build/debug/p15_mprompt_handlers.o \
+//     /tmp/rt_mprompt_shim.o /tmp/p15_handlers.o \
+//     vendor/libmprompt/build/libmprompt.a \
+//     src/selfhost/build/libblood_runtime.a \
+//     -Wl,-z,muldefs -lm -ldl -lpthread -o /tmp/p15_test
+//
+//   # 5. Run
+//   /tmp/p15_test
+//
+// Expected output: 0
+// Expected exit code: 0
+
+bridge "C" MpromptTest {
+    fn mprompt_handler_test() -> i64;
+}
+
+fn main() -> i32 {
+    let result: i64 = MpromptTest.mprompt_handler_test();
+    if result != 0 {
+        println_int(result as i32);
+        return 1;
+    }
+    println_int(0);
+    0
+}
