@@ -1474,12 +1474,32 @@ pub fn emit_place_addr(
                     }
                 }
 
-                // Get the element size using tracked HIR type for proper byte-offset calculation
+                // Get the element size using tracked HIR type for proper byte-offset calculation.
+                // For static array writes, current_hir_type may be None if the HIR type
+                // registration used a different def_id than the access site. Fall back to
+                // the static's LLVM type which is always registered correctly.
                 let elem_size = match &current_hir_type {
                     &Option.Some(ty_id) => {
                         get_element_size_from_hir_id(ctx, ty_id)
                     }
-                    &Option.None => get_indexing_element_size(ctx, place.local),
+                    &Option.None => {
+                        if place.is_static() {
+                            match place.get_static_def_id() {
+                                Option.Some(def_id) => {
+                                    match ctx.get_static_type(def_id.index) {
+                                        Option.Some(ref llvm_ty) => {
+                                            // Parse element type from LLVM array type "[N x T]"
+                                            codegen_size.llvm_array_element_size(llvm_ty.as_str())
+                                        }
+                                        Option.None => get_indexing_element_size(ctx, place.local),
+                                    }
+                                }
+                                Option.None => get_indexing_element_size(ctx, place.local),
+                            }
+                        } else {
+                            get_indexing_element_size(ctx, place.local)
+                        }
+                    }
                 };
 
                 // Calculate byte offset = offset * element_size
