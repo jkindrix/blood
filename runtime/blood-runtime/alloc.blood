@@ -404,14 +404,15 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
         if idx >= 0 {
             let g: i32 = ht_read_gen(idx);
             // Reserved generation values (MEMORY_MODEL.md §4.5):
-            // 0xFFFFFFFE = OVERFLOW_GUARD — triggers Tier 3 promotion
-            // 0xFFFFFFFF = PERSISTENT_MARKER — slot is Tier 3
-            // Prevent generation from reaching PERSISTENT_MARKER via increment.
-            if g >= 0x7FFFFFFE {
-                // Generation overflow: slot has been freed ~2 billion times at this address.
-                // Promote to "permanently valid" (Tier 3): set gen to -1 sentinel.
-                // blood_validate_generation treats gen=-1 as always valid.
-                ht_write_gen(idx, -1);
+            // 0x7FFFFFFE = FROZEN_MARKER — set by rt_blood_freeze; allocation is immutable
+            // 0x7FFFFFFF = PERSISTENT_MARKER — set by rt_blood_alloc_persistent; never freed
+            // next_gen() panics if the counter reaches 0x7FFFFFFE, so normal increments
+            // never produce these values. If we see them here, the compiler emitted an
+            // incorrect drop on a frozen or persistent allocation — panic immediately rather
+            // than silently promoting the slot to gen=-1 (permanently valid), which would
+            // make every fat ref to this freed address pass validation forever.
+            if g == 0x7FFFFFFE || g == 0x7FFFFFFF {
+                rt_panic.rt_panic("blood_unregister_allocation: attempt to free frozen or persistent allocation (compiler bug: incorrect drop)");
             } else {
                 ht_write_gen(idx, g + 1);
             }
