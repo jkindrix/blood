@@ -1,0 +1,655 @@
+module blood.mir_ntr_scope;
+
+// Blood Self-Hosted Compiler - NTR Handler Scope Pre-Scan (Step 3a infrastructure)
+//
+// Identifies non-tail-resumptive (NTR) effect handler scopes in a MIR body
+// and computes the data that Step 3a-emit will need to extract each scope's
+// body into a separate LLVM function for mp_prompt_enter.
+//
+// This pass is INFRASTRUCTURE ONLY — it does not change codegen emission.
+// The returned NtrScopeAnalysis is produced and (eventually) stored on the
+// codegen context; the next step (3a-emit + min 3b + min 3c vertical slice)
+// will consume it.
+//
+// Why the pre-scan lives outside codegen: body extraction requires knowing
+// the full scope (entry block, body blocks, captures) before the first block
+// is emitted, so a streaming codegen pass cannot compute it on the fly.
+//
+// The analysis reports ALL handler scopes (TR and NTR). The caller filters
+// to NTR by consulting its own classification (ctx.handler_needs_abort).
+// Keeping the pass unaware of TR/NTR status avoids a dependency cycle with
+// the codegen context and keeps the pass pure (body in, analysis out).
+//
+// For the coupling with the abort path (setjmp/longjmp can't cross the
+// gstack boundary introduced by mp_prompt_enter) see
+// .tmp/LIBMPROMPT_STEP2_3.md "Scope Correction" section.
+
+mod common;
+mod hir_def;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+
+// ============================================================
+// Public types
+// ============================================================
+
+/// Description of a single handler scope identified by the pre-scan.
+///
+/// Contains everything Step 3a-emit needs to extract the body into a
+/// separate LLVM function:
+///   - `push_block` / `pop_block`: control flow boundaries
+///   - `body_blocks`: the set of blocks that become the body function
+///   - `captures`: locals to pack into the env struct
+pub struct NtrScope {
+    /// The handler DefId. Matches PushHandler.handler_id and PopHandler.handler_id.
+    pub handler_id: hir_def.DefId,
+    /// The basic block containing the PushHandler statement for this scope.
+    pub push_block: mir_def.BasicBlockId,
+    /// The basic block containing the matching PopHandler statement.
+    /// May equal `push_block` for an empty body (unusual but legal).
+    pub pop_block: mir_def.BasicBlockId,
+    /// All basic blocks that belong to this scope's body.
+    /// Invariant: includes `push_block` (for statements after PushHandler)
+    /// and `pop_block` (for statements before PopHandler). Does NOT include
+    /// blocks that are inside strictly-nested scopes with different
+    /// handler_ids — those are reported as separate NtrScope entries.
+    pub body_blocks: Vec<mir_def.BasicBlockId>,
+    /// Locals that body blocks read or write which are also referenced
+    /// outside the body. These become the environment struct for the
+    /// extracted body function.
+    ///
+    /// Invariant: no local in `captures` is defined (has its initial
+    /// assignment) strictly within `body_blocks`.
+    pub captures: Vec<mir_def.MirLocalId>,
+}
+
+impl NtrScope {
+    /// True if the given basic block is part of this scope's body.
+    pub fn contains_block(self: &NtrScope, bb: mir_def.BasicBlockId) -> bool {
+        for i in 0usize..self.body_blocks.len() {
+            if self.body_blocks[i].index == bb.index {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True if the given local is in this scope's capture set.
+    pub fn captures_local(self: &NtrScope, local: mir_def.MirLocalId) -> bool {
+        for i in 0usize..self.captures.len() {
+            if self.captures[i].index == local.index {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// The result of running the pre-scan over one MIR body.
+pub struct NtrScopeAnalysis {
+    /// One entry per handler scope found in the body. Scopes appear in the
+    /// order their PushHandler statements are encountered during block
+    /// traversal — outer scopes before inner scopes when they nest.
+    pub scopes: Vec<NtrScope>,
+}
+
+impl NtrScopeAnalysis {
+    /// Creates an empty analysis result.
+    pub fn new() -> NtrScopeAnalysis {
+        NtrScopeAnalysis { scopes: Vec.new() }
+    }
+
+    /// Number of handler scopes found.
+    pub fn scope_count(self: &NtrScopeAnalysis) -> usize {
+        self.scopes.len()
+    }
+}
+
+// ============================================================
+// Entry point
+// ============================================================
+
+/// Analyze a MIR body and return all handler scopes found in it.
+///
+/// Running order:
+///   1. Locate every (PushHandler, matching PopHandler) pair.
+///   2. For each pair, compute the body-block set via forward reachability.
+///   3. For each scope, compute the capture set (locals referenced in body
+///      blocks and also referenced in non-body blocks).
+///
+/// Returns an empty analysis if the body has no handler scopes.
+pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
+    let mut result = NtrScopeAnalysis.new();
+
+    // Step 1: find all PushHandler statements paired with their matching
+    // PopHandler. We walk blocks linearly and use a stack to match nested
+    // pushes with their pops.
+    let pairs = find_handler_pairs(body);
+
+    // Step 2 + 3: for each pair, compute body blocks and captures.
+    for i in 0usize..pairs.len() {
+        let pair = &pairs[i];
+        let body_blocks = compute_body_blocks(body, pair.push_block, pair.pop_block, pair.handler_id);
+        let captures = compute_captures(body, &body_blocks);
+
+        result.scopes.push(NtrScope {
+            handler_id: pair.handler_id,
+            push_block: pair.push_block,
+            pop_block: pair.pop_block,
+            body_blocks: body_blocks,
+            captures: captures,
+        });
+    }
+
+    result
+}
+
+// ============================================================
+// Internal: handler pair detection
+// ============================================================
+
+/// A matched (PushHandler, PopHandler) pair located during scanning.
+struct HandlerPair {
+    handler_id: hir_def.DefId,
+    push_block: mir_def.BasicBlockId,
+    pop_block: mir_def.BasicBlockId,
+}
+
+/// Walks every block's statements in order and produces one HandlerPair
+/// for each PushHandler statement. A `pop_block` is found by linear scan
+/// for a PopHandler with the matching handler_id, looking at all blocks
+/// (not just successors of push_block) because control flow may reach a
+/// pop through a merge from multiple body paths.
+///
+/// If no matching PopHandler is found, the pair is dropped silently — that
+/// indicates a malformed MIR body (callers should validate elsewhere).
+fn find_handler_pairs(body: &mir_body.MirBody) -> Vec<HandlerPair> {
+    let mut pairs: Vec<HandlerPair> = Vec.new();
+
+    // First pass: record where each handler's pop lives.
+    // We use linear scan; for large bodies a map would be faster, but
+    // NTR scopes per body are typically few.
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            match &stmt.kind {
+                &mir_stmt.StatementKind.PushHandler {
+                    handler_id,
+                    state_place: _,
+                    state_kind: _,
+                    allocation_tier: _,
+                    inline_mode: _,
+                } => {
+                    let push_bb = mir_def.BasicBlockId.new(bb_idx as u32);
+                    match find_matching_pop(body, push_bb, handler_id) {
+                        Option.Some(pop_bb) => {
+                            pairs.push(HandlerPair {
+                                handler_id: handler_id,
+                                push_block: push_bb,
+                                pop_block: pop_bb,
+                            });
+                        }
+                        Option.None => {
+                            // Malformed: PushHandler without matching PopHandler.
+                            // Skip — validate_mir will diagnose separately.
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pairs
+}
+
+/// Find the basic block containing the PopHandler that matches a given
+/// handler_id, starting the search from the push_block (inclusive).
+///
+/// Returns the first match found by forward traversal. Correctness relies
+/// on the MIR invariant that each PushHandler has exactly one matching
+/// PopHandler reachable on every terminating path.
+fn find_matching_pop(
+    body: &mir_body.MirBody,
+    push_block: mir_def.BasicBlockId,
+    handler_id: hir_def.DefId,
+) -> Option<mir_def.BasicBlockId> {
+    // Simple forward BFS from push_block. We visit each block at most once
+    // and return as soon as we find a PopHandler with the target handler_id.
+    let mut visited: Vec<bool> = Vec.new();
+    for i in 0usize..body.basic_blocks.len() {
+        visited.push(false);
+    }
+
+    let mut worklist: Vec<mir_def.BasicBlockId> = Vec.new();
+    worklist.push(push_block);
+
+    while worklist.len() > 0 {
+        let bb = worklist.pop();
+        match bb {
+            Option.Some(bb_id) => {
+                let idx = bb_id.as_usize();
+                if idx >= body.basic_blocks.len() {
+                    continue;
+                }
+                if visited[idx] {
+                    continue;
+                }
+                visited[idx] = true;
+
+                let block = &body.basic_blocks[idx];
+                for stmt in &block.statements {
+                    match &stmt.kind {
+                        &mir_stmt.StatementKind.PopHandler { handler_id: pop_id } => {
+                            if pop_id.index == handler_id.index {
+                                return Option.Some(bb_id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Follow successors.
+                match &block.terminator {
+                    &Option.Some(ref term) => {
+                        let succs = term.successors();
+                        for si in 0usize..succs.len() {
+                            worklist.push(succs[si]);
+                        }
+                    }
+                    &Option.None => {}
+                }
+            }
+            Option.None => {
+                // Worklist exhausted.
+            }
+        }
+    }
+
+    Option.None
+}
+
+// ============================================================
+// Internal: body block reachability
+// ============================================================
+
+/// Compute the set of basic blocks that constitute the body of a handler
+/// scope. Starts from `push_block` and performs forward BFS, stopping at
+/// the block containing the matching PopHandler (inclusive).
+///
+/// Blocks reachable only through successors of the pop_block are NOT
+/// included — they are post-scope code.
+fn compute_body_blocks(
+    body: &mir_body.MirBody,
+    push_block: mir_def.BasicBlockId,
+    pop_block: mir_def.BasicBlockId,
+    handler_id: hir_def.DefId,
+) -> Vec<mir_def.BasicBlockId> {
+    let mut result: Vec<mir_def.BasicBlockId> = Vec.new();
+    let mut visited: Vec<bool> = Vec.new();
+    for i in 0usize..body.basic_blocks.len() {
+        visited.push(false);
+    }
+
+    let mut worklist: Vec<mir_def.BasicBlockId> = Vec.new();
+    worklist.push(push_block);
+
+    while worklist.len() > 0 {
+        let bb = worklist.pop();
+        match bb {
+            Option.Some(bb_id) => {
+                let idx = bb_id.as_usize();
+                if idx >= body.basic_blocks.len() {
+                    continue;
+                }
+                if visited[idx] {
+                    continue;
+                }
+                visited[idx] = true;
+                result.push(bb_id);
+
+                // If this is the pop_block, don't follow successors — the
+                // scope ends here.
+                if bb_id.index == pop_block.index {
+                    continue;
+                }
+
+                // Follow successors, but do not cross into a different
+                // handler scope's pop (leave those to the outer scan).
+                let block = &body.basic_blocks[idx];
+                match &block.terminator {
+                    &Option.Some(ref term) => {
+                        let succs = term.successors();
+                        for si in 0usize..succs.len() {
+                            worklist.push(succs[si]);
+                        }
+                    }
+                    &Option.None => {}
+                }
+            }
+            Option.None => {}
+        }
+    }
+
+    let _ = handler_id;  // reserved for future nested-scope exclusion
+    result
+}
+
+// ============================================================
+// Internal: capture analysis
+// ============================================================
+
+/// Compute the set of locals that must be captured by the body function's
+/// environment struct.
+///
+/// A local is a capture if:
+///   - It is referenced (read or written) by at least one statement or
+///     terminator inside any body block, AND
+///   - It is referenced by at least one statement or terminator outside
+///     all body blocks.
+///
+/// The return place (local 0) and arguments (locals 1..param_count) are
+/// always considered "defined outside" since their storage is established
+/// by the function prologue before any basic block runs. They are captured
+/// iff referenced inside body blocks.
+///
+/// This is a conservative over-approximation: it may capture locals that
+/// are technically dead after the body ends, but correctness is preserved.
+fn compute_captures(
+    body: &mir_body.MirBody,
+    body_blocks: &Vec<mir_def.BasicBlockId>,
+) -> Vec<mir_def.MirLocalId> {
+    let n = body.locals.len();
+    let mut used_inside: Vec<bool> = Vec.new();
+    let mut used_outside: Vec<bool> = Vec.new();
+    for i in 0usize..n {
+        used_inside.push(false);
+        used_outside.push(false);
+    }
+
+    // Build a fast membership check for body blocks.
+    let mut is_body: Vec<bool> = Vec.new();
+    for i in 0usize..body.basic_blocks.len() {
+        is_body.push(false);
+    }
+    for bi in 0usize..body_blocks.len() {
+        let idx = body_blocks[bi].as_usize();
+        if idx < is_body.len() {
+            is_body[idx] = true;
+        }
+    }
+
+    // Walk every block, collecting local references.
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        let inside = is_body[bb_idx];
+
+        for stmt in &block.statements {
+            collect_stmt_locals(stmt, inside, &mut used_inside, &mut used_outside);
+        }
+
+        match &block.terminator {
+            &Option.Some(ref term) => {
+                collect_term_locals(term, inside, &mut used_inside, &mut used_outside);
+            }
+            &Option.None => {}
+        }
+    }
+
+    // Arguments and return place are always defined outside the body.
+    // param_count + 1 (for return place) locals count as "used outside"
+    // unconditionally.
+    let arg_and_ret_count = (body.param_count as usize) + 1;
+    for i in 0usize..arg_and_ret_count {
+        if i < used_outside.len() {
+            used_outside[i] = true;
+        }
+    }
+
+    // Captures = used inside AND used outside.
+    let mut captures: Vec<mir_def.MirLocalId> = Vec.new();
+    for i in 0usize..n {
+        if used_inside[i] && used_outside[i] {
+            captures.push(mir_def.MirLocalId.new(i as u32));
+        }
+    }
+
+    captures
+}
+
+/// Record every local referenced by a statement into the appropriate bucket.
+fn collect_stmt_locals(
+    stmt: &mir_stmt.Statement,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    match &stmt.kind {
+        &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+            mark_place(place, inside_body, used_inside, used_outside);
+            mark_rvalue(rvalue, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.StorageLive(local) => {
+            mark_local(local, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.StorageDead(local) => {
+            mark_local(local, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.Drop(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.PushHandler {
+            handler_id: _,
+            ref state_place,
+            state_kind: _,
+            allocation_tier: _,
+            inline_mode: _,
+        } => {
+            mark_place(state_place, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.PopHandler { handler_id: _ } => {
+            // No locals referenced.
+        }
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _ } => {
+            // Inline handlers' operations carry their own bodies; the
+            // referenced locals (if any) will appear in the enclosing
+            // block's other statements. Conservative: no extra marking.
+        }
+        &mir_stmt.StatementKind.CallReturnClause {
+            handler_id: _,
+            handler_name: _,
+            ref body_result,
+            ref state_place,
+            ref destination,
+        } => {
+            mark_operand(body_result, inside_body, used_inside, used_outside);
+            mark_place(state_place, inside_body, used_inside, used_outside);
+            mark_place(destination, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.CallFinallyClause { handler_id: _, ref state_place } => {
+            mark_place(state_place, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.Deinit(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx: _ } => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, ref count } => {
+            mark_operand(src, inside_body, used_inside, used_outside);
+            mark_operand(dst, inside_body, used_inside, used_outside);
+            mark_operand(count, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.EnterUnchecked(_) => {
+            // No locals referenced.
+        }
+        &mir_stmt.StatementKind.ExitUnchecked(_) => {
+            // No locals referenced.
+        }
+        &mir_stmt.StatementKind.Nop => {
+            // No locals referenced.
+        }
+        &mir_stmt.StatementKind.Safepoint => {
+            // No locals referenced.
+        }
+        &mir_stmt.StatementKind.RegionEnter { region_local } => {
+            mark_local(region_local, inside_body, used_inside, used_outside);
+        }
+        &mir_stmt.StatementKind.RegionExit { region_local } => {
+            mark_local(region_local, inside_body, used_inside, used_outside);
+        }
+    }
+}
+
+/// Record every local referenced by a terminator into the appropriate bucket.
+fn collect_term_locals(
+    term: &mir_term.Terminator,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    match &term.kind {
+        &mir_term.TerminatorKind.Goto { target: _ } => {}
+        &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
+            mark_operand(discr, inside_body, used_inside, used_outside);
+        }
+        &mir_term.TerminatorKind.Return => {}
+        &mir_term.TerminatorKind.Unreachable => {}
+        &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
+            mark_operand(func, inside_body, used_inside, used_outside);
+            for i in 0usize..args.len() {
+                mark_operand(&args[i], inside_body, used_inside, used_outside);
+            }
+            mark_place(destination, inside_body, used_inside, used_outside);
+        }
+        &mir_term.TerminatorKind.Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
+            mark_operand(cond, inside_body, used_inside, used_outside);
+        }
+        &mir_term.TerminatorKind.Perform {
+            effect_id: _,
+            op_index: _,
+            ref args,
+            ref destination,
+            target: _,
+            is_tail_resumptive: _,
+        } => {
+            for i in 0usize..args.len() {
+                mark_operand(&args[i], inside_body, used_inside, used_outside);
+            }
+            mark_place(destination, inside_body, used_inside, used_outside);
+        }
+        &mir_term.TerminatorKind.Resume { ref value, ref destination, target: _ } => {
+            match value {
+                &Option.Some(ref v) => mark_operand(v, inside_body, used_inside, used_outside),
+                &Option.None => {}
+            }
+            match destination {
+                &Option.Some(ref d) => mark_place(d, inside_body, used_inside, used_outside),
+                &Option.None => {}
+            }
+        }
+        &mir_term.TerminatorKind.Drop { ref place, target: _, unwind: _ } => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_term.TerminatorKind.StaleReference { ref ptr, expected_gen: _, actual_gen: _ } => {
+            mark_place(ptr, inside_body, used_inside, used_outside);
+        }
+    }
+}
+
+/// Mark a single local as referenced in either the inside or outside bucket.
+fn mark_local(
+    local: mir_def.MirLocalId,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    let idx = local.as_usize();
+    if inside_body {
+        if idx < used_inside.len() {
+            used_inside[idx] = true;
+        }
+    } else {
+        if idx < used_outside.len() {
+            used_outside[idx] = true;
+        }
+    }
+}
+
+/// Mark the base local of a Place (ignoring projection detail — any
+/// reference to the Place counts as a reference to its base local).
+fn mark_place(
+    place: &mir_types.Place,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    mark_local(place.local, inside_body, used_inside, used_outside);
+}
+
+/// Mark the local carried by an Operand (Copy and Move carry Places;
+/// Constant carries nothing).
+fn mark_operand(
+    operand: &mir_types.Operand,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    match operand {
+        &mir_types.Operand.Copy(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Operand.Move(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Operand.Constant(_) => {}
+    }
+}
+
+/// Mark locals referenced by an Rvalue.
+fn mark_rvalue(
+    rvalue: &mir_types.Rvalue,
+    inside_body: bool,
+    used_inside: &mut Vec<bool>,
+    used_outside: &mut Vec<bool>,
+) {
+    match rvalue {
+        &mir_types.Rvalue.Use(ref operand) => {
+            mark_operand(operand, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
+            mark_operand(left, inside_body, used_inside, used_outside);
+            mark_operand(right, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
+            mark_operand(operand, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
+            mark_operand(operand, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            for i in 0usize..operands.len() {
+                mark_operand(&operands[i], inside_body, used_inside, used_outside);
+            }
+        }
+        &mir_types.Rvalue.Discriminant(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.Len(ref place) => {
+            mark_place(place, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
+            mark_operand(array_ref, inside_body, used_inside, used_outside);
+        }
+        &mir_types.Rvalue.ZeroInit(_) => {}
+    }
+}
