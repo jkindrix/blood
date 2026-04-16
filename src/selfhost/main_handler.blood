@@ -548,6 +548,14 @@ pub fn collect_handler_info(
                         state_field_count: state_count,
                     });
                 }
+
+                // Register this handler's effect as NTR only if it has NTR ops.
+                // handler_needs_abort checks non_tail_resumptive_effects to decide whether
+                // to emit setjmp at PushHandler. If all ops are tail-resumptive, no setjmp
+                // is needed — blood_perform with continuation=0 + abort_depth=0 skips abort.
+                if has_ntr_op {
+                    ctx.register_non_tail_resumptive_effect(effect_def_id);
+                }
             }
             &hir_item.ItemKind.Fn(_) => {}
             &hir_item.ItemKind.Struct(_) => {}
@@ -566,20 +574,8 @@ pub fn collect_handler_info(
                         opi as u32,
                     );
                 }
-
-                // Register all effects as non-tail-resumptive by default (safe).
-                // Only known tail-resumptive builtins (State, IO, Console) are
-                // excluded — their handlers always resume in tail position.
-                // Use span-based extraction because item name symbols use the AST
-                // parser's interner, not the HIR interner.
-                let effect_name = main_helpers.resolve_symbol(intern, entry.item.name.symbol);
-                let is_known_tail_resumptive =
-                    main_helpers.str_equals(&effect_name, "State")
-                    || main_helpers.str_equals(&effect_name, "IO")
-                    || main_helpers.str_equals(&effect_name, "Console");
-                if !is_known_tail_resumptive {
-                    ctx.register_non_tail_resumptive_effect(effect_item_def_id);
-                }
+                // NTR registration is now done in the Handler branch (above), not here.
+                // Each handler registers its effect as NTR if and only if it has NTR ops.
             }
             &hir_item.ItemKind.Module(_) => {}
             &hir_item.ItemKind.Macro(_) => {}
