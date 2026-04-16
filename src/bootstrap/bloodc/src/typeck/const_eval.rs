@@ -253,7 +253,18 @@ fn eval_literal(lit: &ast::Literal, span: Span) -> Result<ConstResult, Box<TypeE
             if is_unsigned {
                 Ok(ConstResult::Uint(*value))
             } else {
-                Ok(ConstResult::Int(*value as i128))
+                let signed = i128::try_from(*value).map_err(|_| {
+                    Box::new(TypeError::new(
+                        TypeErrorKind::ConstEvalError {
+                            reason: format!(
+                                "integer literal {} is too large for a signed integer type",
+                                value
+                            ),
+                        },
+                        span,
+                    ))
+                })?;
+                Ok(ConstResult::Int(signed))
             }
         }
         ast::LiteralKind::Bool(b) => Ok(ConstResult::Bool(*b)),
