@@ -33,7 +33,11 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 `blood_freeze()` marks only the root allocation as frozen (gen set to `0x7FFFFFFE`). Inner heap pointers inside the structure are not recursively frozen. A "frozen" value can contain pointers to mutable heap data, breaking the immutability guarantee.
 
-**Needed:** runtime type-layout metadata so that freeze can walk fields and follow inner pointers. Not currently emitted by codegen.
+**Cycle guard in place:** `blood_freeze` now checks whether an allocation is already frozen before re-marking it. This prevents infinite recursion on cyclic heap structures once the field traversal is wired in.
+
+**Stub defined:** `blood_freeze_fields(ptr, layout_id)` is the API entry point for the deep traversal. It returns false (no-op) until codegen emits type-layout descriptors.
+
+**Needed:** runtime type-layout metadata emitted by codegen so that `blood_freeze_fields` can walk pointer-typed fields and call `blood_freeze` recursively. Not currently emitted by codegen.
 
 ### GAP-3: Aggregate operand escape analysis — partially fixed (`--no-parallel`)
 

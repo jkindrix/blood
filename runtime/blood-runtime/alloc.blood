@@ -774,13 +774,20 @@ pub fn rt_blood_persist(src: *mut u8, size: i64) -> *mut u8 {
 }
 
 /// Marks a persistent allocation as frozen (deeply immutable).
+/// For compound types, inner heap pointer fields must also be frozen;
+/// that traversal is deferred pending type-layout metadata (GAP-2).
 #[export_name = "blood_freeze"]
 pub fn rt_blood_freeze(ptr: *mut u8) -> bool {
     @unsafe {
         let addr: i64 = ptr_to_addr(ptr);
         let idx: i64 = ht_find(addr);
         if idx < 0 { return false; }
+        // Cycle guard: already frozen — idempotent, safe on shared/cyclic structures.
+        if ht_read_gen(idx) == 0x7FFFFFFE { return true; }
         ht_write_gen(idx, 0x7FFFFFFE);
+        // GAP-2: recurse into inner heap pointer fields via type-layout metadata.
+        // When codegen emits layout descriptors, replace this comment with:
+        //   rt_blood_freeze_fields(ptr, layout_id);
         true
     }
 }
@@ -794,6 +801,22 @@ pub fn rt_blood_is_frozen(ptr: *mut u8) -> bool {
         if idx < 0 { return false; }
         ht_read_gen(idx) == 0x7FFFFFFE
     }
+}
+
+/// Stub: recursively freezes inner heap pointer fields of a frozen allocation.
+/// Defines the layout-aware deep-freeze API entry point (GAP-2).
+///
+/// When codegen emits type-layout descriptors, this function will iterate over
+/// pointer-typed fields identified by `layout_id` and call `rt_blood_freeze` on each,
+/// delivering the deep immutability guarantee promised by `Frozen<T>`.
+///
+/// The cycle guard in `rt_blood_freeze` (check-before-mark) prevents infinite
+/// recursion on cyclic heap structures once this traversal is wired in.
+#[export_name = "blood_freeze_fields"]
+pub fn rt_blood_freeze_fields(ptr: *mut u8, layout_id: u64) -> bool {
+    // GAP-2: type-layout metadata not yet emitted by codegen.
+    // Implementation deferred — see docs/KNOWN_LIMITATIONS.md §GAP-2.
+    false
 }
 
 // ============================================================
