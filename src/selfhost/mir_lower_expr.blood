@@ -1295,11 +1295,11 @@ fn lower_field_expr(
                         Option.None => {
                             ctx.mir_error_with_note(
                                 mir_lower_ctx.MirLowerErrorKind.FieldNotResolved,
-                                common.make_string("field index could not be resolved; defaulting to 0"),
+                                common.make_string("field index could not be resolved"),
                                 span,
                                 common.make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                             );
-                            0
+                            return;
                         }
                     }
                 }
@@ -3339,11 +3339,11 @@ fn expr_to_place(
                                 Option.None => {
                                     ctx.mir_error_with_note(
                                         mir_lower_ctx.MirLowerErrorKind.FieldNotResolved,
-                                        common.make_string("field index could not be resolved in place expression; defaulting to 0"),
+                                        common.make_string("field index could not be resolved in place expression"),
                                         span,
                                         common.make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                                     );
-                                    0
+                                    return mir_types.Place.local(0usize);
                                 }
                             }
                         }
