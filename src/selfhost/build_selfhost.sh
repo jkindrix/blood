@@ -448,10 +448,11 @@ do_relink_first_gen() {
 
     # Match the exact link command from src/selfhost/main.blood:524-539
     local bin_path="$BUILD_DIR/first_gen"
-    local clang_cmd="$CLANG $obj_dir/*.o $RUNTIME_A -Wl,-z,muldefs -lm -ldl -lpthread -pie -o $bin_path"
-
-    # shellcheck disable=SC2086  # intentional word splitting for *.o expansion
-    eval "$clang_cmd" || rc=$?
+    local clang_args=("$CLANG")
+    # shellcheck disable=SC2206  # intentional glob expansion for .o files
+    clang_args+=($obj_dir/*.o)
+    clang_args+=("$RUNTIME_A" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o "$bin_path")
+    "${clang_args[@]}" || rc=$?
     if [ "$rc" -ne 0 ]; then
         fail "$CLANG linking failed (exit $rc)"
         return 1
