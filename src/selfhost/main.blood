@@ -2119,16 +2119,21 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let output: &mut String = @unsafe { (output_addr as usize as *mut String) as &mut String };
 
     // No regions: bypass flag ensures all allocations go to heap (thread-safe).
-    // fn_temp_region = 0 disables the type-to-LLVM cache. Per-function memory
-    // is not reclaimed (accumulates on heap) — acceptable for the parallel phase.
+    // fn_temp_region stays at 0 so codegen's temp-region dance in
+    // register_def_name / register_fn_signature / handler_op_wrapper becomes a
+    // no-op. Per-function memory is not reclaimed (accumulates on heap) —
+    // acceptable for the parallel phase of a one-shot compiler.
+    //
+    // History: we previously called region_create/activate/reset/destroy per
+    // worker to reclaim MIR + codegen temp memory. But region_create, destroy,
+    // and the activate/deactivate stack all mutate global state
+    // (NEXT_GENERATION, REG_*, RV_*, STACK_*) without synchronization. Under
+    // parallel workers this corrupted the validation array, producing stale
+    // references to region-allocated data in the string tables that the main
+    // thread merges after thread_join. Symptom: def3300_codegen_pass2 → Clone
+    // on wctx.string_table entries → blood_stale_reference_panic.
 
     set_alloc_bypass_tracking(1);
-
-    // Per-worker MIR + temp regions. Safe for single-worker mode.
-    // For multi-worker, these cause races on the global region stack, but
-    // the bypass flag ensures allocations bypass the region dispatch.
-    let worker_mir_region = region_create(4194304, 8589934592);
-    let worker_fn_temp_region = region_create(2097152, 4294967296);
 
     let mut mir_error_count: usize = 0;
     let mut i: usize = chunk_start;
@@ -2142,7 +2147,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         let body_entry = &lower.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        region_activate(worker_mir_region);
         let mut mir_result = mir_lower.lower_body(
             work.typeck_def_id,
             hir_body,
@@ -2162,9 +2166,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             mir_result.body.def_id = work.def_id;
         }
 
-        // Pop MIR region — codegen reads MIR body (still valid) from here.
-        region_deactivate();
-
         // Set up call remaps for trait default methods
         ctx.call_remaps = find_call_remaps_for_def(
             &typeck.default_method_remaps,
@@ -2181,15 +2182,9 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             ctx.is_handler_op = true;
         }
 
-        // Activate temp region for codegen temporaries
-        region_activate(worker_fn_temp_region);
-        ctx.fn_temp_region = worker_fn_temp_region;
         let mc: u32 = lower.module_names.len() as u32;
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str(), work.module_index, mc);
 
-        // Deactivate temp region before appending to output
-        ctx.fn_temp_region = 0 as u64;
-        region_deactivate();
         output.push_str(fn_ir.as_str());
 
         // Closures and inline handler bodies
@@ -2204,11 +2199,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
                 ctx.is_handler_op = true;
             }
 
-            region_activate(worker_fn_temp_region);
-            ctx.fn_temp_region = worker_fn_temp_region;
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc);
-            ctx.fn_temp_region = 0 as u64;
-            region_deactivate();
             output.push_str(closure_ir.as_str());
 
             if is_inline_hop {
@@ -2217,10 +2208,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
             cli += 1;
         }
-
-        // Reset regions to reclaim per-function temporaries
-        region_reset(worker_fn_temp_region);
-        region_reset(worker_mir_region);
 
         if is_hop {
             ctx.handler_op_state_local = -1;
@@ -2232,8 +2219,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         i += 1;
     }
 
-    region_destroy(worker_fn_temp_region);
-    region_destroy(worker_mir_region);
     mir_error_count as u64
 }
 
