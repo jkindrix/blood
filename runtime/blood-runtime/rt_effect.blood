@@ -132,15 +132,23 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
         }
         rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr);
 
-        // ABORT: NTR (continuation=0) always aborts; resumptive aborts if not resumed
+        // ABORT IF NOT RESUMED
+        //
+        // A handler that returned without invoking resume() cannot produce a
+        // value for the perform site to consume. If an abort target is
+        // registered, long-jump back to it so the with-handle block exits
+        // with the handler's return value. Otherwise — no abort target —
+        // the caller is a tail-resumptive site whose handler op is required
+        // to resume; falling through returns the handler's value normally.
+        //
+        // The continuation argument is *not* a reliable signal here: the TR
+        // fast path passes continuation=0, but so does the unsound-resume
+        // guard in emit_place_addr (StaleReference). Keying on was_resumed
+        // handles both correctly because TR handler ops always call
+        // blood_set_was_resumed before returning.
         let mut should_abort: i32 = 0;
-        if continuation == 0 {
+        if this_was_resumed == 0 {
             should_abort = 1;
-        }
-        if continuation != 0 {
-            if this_was_resumed == 0 {
-                should_abort = 1;
-            }
         }
         if should_abort != 0 {
             if rt_evidence.get_abort_depth() > 0 {
