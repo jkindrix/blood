@@ -616,10 +616,23 @@ do_build_blood_runtime() {
     local fg="$BUILD_DIR/first_gen"
     [ -f "$fg" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
     [ -f "$rt_dir/lib.blood" ] || die "Blood runtime source not found at $rt_dir/lib.blood"
+    [ -f "$rt_dir/rt_mprompt_shim.c" ] || die "rt_mprompt_shim.c not found at $rt_dir/rt_mprompt_shim.c"
+    [ -f "$rt_dir/rt_hashmap.c" ] || die "rt_hashmap.c not found at $rt_dir/rt_hashmap.c"
     command -v python3 >/dev/null || die "python3 required for IR post-processing"
     command -v "$LLC" >/dev/null || die "$LLC required for object compilation"
+    command -v "$CLANG" >/dev/null || die "$CLANG required for C runtime pieces"
 
     mkdir -p "$rt_build"
+
+    # libmprompt is embedded in libblood_runtime_blood.a so every downstream
+    # link inherits mp_* symbols via the Blood runtime archive — no separate
+    # -lmprompt flag threading through main.blood's 5 emit sites.
+    local mp_build="$REPO_ROOT/vendor/libmprompt/build"
+    if [ ! -f "$mp_build/libmprompt.a" ] \
+       || [ ! -f "$mp_build/mprompt.o" ] \
+       || [ ! -f "$mp_build/longjmp_amd64.o" ]; then
+        do_build_libmprompt
+    fi
 
     step "Compiling Blood runtime to LLVM IR${debug_alloc:+ (debug-alloc mode)}"
     "$fg" build --emit llvm-ir --no-cache --build-dir "$rt_dir/build" "$rt_dir/lib.blood"
@@ -657,7 +670,31 @@ do_build_blood_runtime() {
     # Remove the old object file if llc didn't produce a fresh one to prevent
     # packaging a stale archive on future failures.
     [ -f "$rt_build/lib.o" ] || die "$LLC did not produce $rt_build/lib.o"
-    ar rcs "$rt_build/libblood_runtime_blood.a" "$rt_build/lib.o"
+
+    step "Compiling C runtime pieces (rt_hashmap.c, rt_mprompt_shim.c)"
+    # rt_hashmap.c contains the HashMap type-erased runtime (hashmap_new/get/
+    # insert/iter/...). Was historically baked into bootstrap/ manually, but
+    # freshly-built runtime archives would miss these symbols and fail hashmap
+    # golden tests. Now unconditionally compiled so the archive is complete.
+    "$CLANG" -c -O2 -fPIC \
+        "$rt_dir/rt_hashmap.c" \
+        -o "$rt_build/rt_hashmap.o"
+    "$CLANG" -c -O2 -fPIC \
+        -I"$REPO_ROOT/vendor/libmprompt/include" \
+        "$rt_dir/rt_mprompt_shim.c" \
+        -o "$rt_build/rt_mprompt_shim.o"
+    ok "rt_hashmap.o + rt_mprompt_shim.o"
+
+    # Build the archive fresh. `ar rcs` on an existing archive APPENDS members,
+    # which would leave stale object files in place when the inputs change. `rm`
+    # then `rcs` gives us a clean build.
+    rm -f "$rt_build/libblood_runtime_blood.a"
+    ar rcs "$rt_build/libblood_runtime_blood.a" \
+        "$rt_build/lib.o" \
+        "$rt_build/rt_hashmap.o" \
+        "$rt_build/rt_mprompt_shim.o" \
+        "$mp_build/mprompt.o" \
+        "$mp_build/longjmp_amd64.o"
     ok "libblood_runtime_blood.a ($(stat -c%s "$rt_build/libblood_runtime_blood.a") bytes)"
 }
 
