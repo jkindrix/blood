@@ -18,6 +18,21 @@ bridge "C" IndirectCall {
     fn call_handler_op(fn_ptr: *const u8, state: *mut u8, args: *mut u8, arg_count: i64, cont: i64) -> i64;
 }
 
+// Bridge to rt_mprompt_shim.c for NTR handler dispatch via libmprompt.
+// The shim is compiled separately (by build_selfhost.sh's do_build_blood_runtime)
+// and linked into libblood_runtime_blood.a, so this declare resolves at archive
+// link time — build_runtime.py does not touch it.
+bridge "C" MpromptBridge {
+    fn blood_yield_to_handler(
+        prompt: *mut u8,
+        handler_op_fn: *const u8,
+        state: *mut u8,
+        args: *mut u8,
+        arg_count: i64,
+        is_abort: i32,
+    ) -> *mut u8;
+}
+
 // ============================================================================
 // Global state
 // ============================================================================
@@ -158,6 +173,88 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
         }
 
         result
+    }
+}
+
+// ============================================================================
+// blood_perform_ntr — mprompt-based dispatch for non-tail-resumptive effects
+//
+// Callers: codegen at NTR Perform sites emitted inside extracted body functions
+// (sub-task 6). TR performs continue to use the direct-call fast path; the
+// legacy `blood_perform` path keeps serving NTR handlers that haven't been
+// migrated to the body-fn extraction (setjmp/longjmp).
+//
+// Contract:
+//   - The handler identified by `effect_id` must live on the evidence stack
+//     with a non-zero `prompt_addr` (created via blood_prompt_create by the
+//     PushHandler emission in sub-task 5).
+//   - `is_abort` signals whether the target handler op is abort-style. The
+//     resumable trampoline requires the handler op to call blood_resume; the
+//     abort trampoline drops the continuation before invoking the handler op.
+//   - Returns the i64 value produced by the handler op (abort case) or by the
+//     body's continuation (resume case). Both paths funnel through mp_yield
+//     so the return is the handler's value, widened to i64.
+// ============================================================================
+
+#[export_name = "blood_perform_ntr"]
+pub fn rt_perform_ntr(
+    effect_id: i64,
+    op_index: i32,
+    args: *mut u8,
+    arg_count: i64,
+    is_abort: i32,
+) -> i64 {
+    @unsafe {
+        let ev: i64 = rt_evidence.get_current_evidence_addr();
+        if ev == 0 {
+            rt_panic.rt_panic("perform_ntr: no evidence vector (no handler in scope)");
+        }
+
+        // Reverse linear scan for the matching effect. The inline-evidence hint
+        // is intentionally skipped — NTR perform is the slow path and the hint
+        // was tuned for TR's direct-call pattern.
+        let mut pos: i64 = 0 - 1;
+        let len: i64 = rt_evidence.ev_len(ev);
+        let mut i: i64 = len - 1;
+        while i >= 0 {
+            if rt_evidence.ev_read_effect_id(ev, i) == effect_id {
+                pos = i;
+                i = 0 - 1;
+            }
+            i = i - 1;
+        }
+        if pos < 0 {
+            rt_panic.rt_panic("perform_ntr: unhandled effect");
+        }
+
+        let reg_idx: i64 = rt_evidence.ev_read_registry_index(ev, pos);
+        let saved_state_addr: i64 = rt_evidence.ev_read_state_addr(ev, pos);
+        let saved_prompt_addr: i64 = rt_evidence.ev_read_prompt_addr(ev, pos);
+
+        if saved_prompt_addr == 0 {
+            rt_panic.rt_panic("perform_ntr: handler has no prompt (wrong codegen path?)");
+        }
+
+        let op_index_i64: i64 = op_index as i64;
+        let fn_addr: i64 = rt_evidence.reg_read_op_fn_addr(reg_idx, op_index_i64);
+
+        let prompt_ptr: *mut u8 = alloc.addr_to_ptr(saved_prompt_addr);
+        let fn_ptr: *const u8 = alloc.addr_to_cptr(fn_addr);
+        let state_ptr: *mut u8 = alloc.addr_to_ptr(saved_state_addr);
+
+        let ret_ptr: *mut u8 = MpromptBridge.blood_yield_to_handler(
+            prompt_ptr,
+            fn_ptr,
+            state_ptr,
+            args,
+            arg_count,
+            is_abort,
+        );
+
+        // The shim returns void*; cast back to i64 for the codegen's downstream
+        // narrowing. Abort handlers produce their op's return value; resumable
+        // handlers produce whatever blood_resume eventually yields.
+        alloc.ptr_to_addr(ret_ptr)
     }
 }
 
