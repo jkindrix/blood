@@ -86,7 +86,22 @@ fn vec_ensure_cap(v: *mut u8, needed: i64, elem_size: i64) {
         alloc.rt_blood_memcpy(new_data, old_data, len * elem_size);
     }
     if old_data != 0 {
-        alloc.rt_blood_free_simple(old_data);
+        // S35 fix: under alloc-bypass (parallel codegen workers), leak the
+        // old buffer instead of freeing it. This matches region-mode
+        // semantics — regions never free individual allocations — and
+        // avoids a class of latent UAF bugs in first_gen that hold pointers
+        // into a Vec data buffer across a growth.
+        //
+        // Originally surfaced as `corrupted size vs. prev_size` during
+        // parallel `build second_gen`; reproducible with num_workers=1 (so
+        // not a cross-thread race). The UAF is hidden in region mode because
+        // region_reset defers all frees to scope exit.
+        //
+        // Leak is bounded: bypass is active only during a one-shot parallel
+        // codegen phase; surviving chunks are freed on process exit.
+        if !alloc.is_bypass_tracking() {
+            alloc.rt_blood_free_simple(old_data);
+        }
     }
 
     set_data(v, new_data);

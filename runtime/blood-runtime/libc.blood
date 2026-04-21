@@ -38,19 +38,25 @@ bridge "C" LibcMem {
 }
 
 // CONFLICT: malloc, free, realloc, memcpy are declared by the compiler's runtime.
-// Use __libc_free (glibc internal symbol) to bypass the compiler's @free wrapper
-// which redirects to blood_free_simple (gen unregister only, no actual deallocation).
+// We expose both the glibc internal symbols (__libc_free/__libc_realloc) and the
+// public wrappers (free/realloc). The public symbols are the ones ASan intercepts
+// for alloc tracking — using `free` here keeps sys_calloc (public `calloc`) and
+// sys_free symmetric under -fsanitize=address. The `__libc_*` variants are kept
+// only for compatibility with prior debug-alloc IR-patching. New code should
+// use the public wrappers.
 bridge "C" LibcFree {
     fn __libc_free(ptr: *mut u8);
     fn __libc_realloc(ptr: *mut u8, size: u64) -> *mut u8;
+    fn free(ptr: *mut u8);
+    fn realloc(ptr: *mut u8, size: u64) -> *mut u8;
 }
 
 pub fn sys_free(ptr: *mut u8) {
-    LibcFree.__libc_free(ptr);
+    LibcFree.free(ptr);
 }
 
 pub fn sys_realloc(ptr: *mut u8, size: u64) -> *mut u8 {
-    LibcFree.__libc_realloc(ptr, size)
+    LibcFree.realloc(ptr, size)
 }
 
 bridge "C" LibcAllocInfo {

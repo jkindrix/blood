@@ -82,7 +82,13 @@ fn ensure_cap(s: *mut u8, needed: i64) {
         alloc.rt_blood_memcpy(new_ptr, old_ptr, len);
     }
     if old_ptr != 0 {
-        alloc.rt_blood_free_simple(old_ptr);
+        // S35 fix: see rt_vec.blood vec_ensure_cap for rationale. Under
+        // alloc-bypass, leak old buffer instead of freeing; matches
+        // region-mode semantics and avoids latent UAFs that become
+        // observable when the old buffer is actually returned to malloc.
+        if !alloc.is_bypass_tracking() {
+            alloc.rt_blood_free_simple(old_ptr);
+        }
     }
 
     set_data(s, new_ptr);
