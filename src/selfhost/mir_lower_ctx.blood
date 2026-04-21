@@ -462,10 +462,32 @@ impl MirLowerCtx {
         field_resolutions: Vec<common.FieldResEntry>,
         coercion_entries: Vec<common.CoercionEntry>,
     ) -> MirLowerCtx {
+        // Lazy-init the module-level caches. Per-iteration regions like
+        // `mir_region_sigs` (parallel pre-pass) or `mir_region` (sequential
+        // codegen) are reset between functions — if the cache hash maps were
+        // allocated in such a region, region_reset would zero (mmap mode) or
+        // memset (debug-alloc mode) the bucket data, leaving the cache useless
+        // (lookups return None and fall back to linear scan). Pop ALL active
+        // regions before allocating so the buckets land on the global heap and
+        // remain valid for the whole build. Mirrors the pattern used in
+        // codegen_ctx.register_def_name and type_intern.intern.
         @unsafe {
-            match &MIR_LOWER_CTX_CACHED_METHOD_HASH {
-                &Option.Some(_) => {}
-                &Option.None => {
+            let need_method = match &MIR_LOWER_CTX_CACHED_METHOD_HASH {
+                &Option.Some(_) => false,
+                &Option.None => true,
+            };
+            let need_field = match &MIR_LOWER_CTX_CACHED_FIELD_HASH {
+                &Option.Some(_) => false,
+                &Option.None => true,
+            };
+            if need_method || need_field {
+                let mut saved_regions: Vec<u64> = Vec.new();
+                while true {
+                    let r = region_deactivate_get();
+                    if r == 0 { break; }
+                    saved_regions.push(r);
+                }
+                if need_method {
                     let mut mh = hashmap.HashMapU64U32.with_capacity(method_resolutions.len());
                     let mut i: usize = 0;
                     while i < method_resolutions.len() {
@@ -478,10 +500,7 @@ impl MirLowerCtx {
                     }
                     MIR_LOWER_CTX_CACHED_METHOD_HASH = Option.Some(mh);
                 }
-            }
-            match &MIR_LOWER_CTX_CACHED_FIELD_HASH {
-                &Option.Some(_) => {}
-                &Option.None => {
+                if need_field {
                     let mut fh = hashmap.HashMapU64U32.with_capacity(field_resolutions.len());
                     let mut j: usize = 0;
                     while j < field_resolutions.len() {
@@ -493,6 +512,11 @@ impl MirLowerCtx {
                         j += 1;
                     }
                     MIR_LOWER_CTX_CACHED_FIELD_HASH = Option.Some(fh);
+                }
+                let mut k = saved_regions.len();
+                while k > 0 {
+                    k -= 1;
+                    region_activate(saved_regions[k]);
                 }
             }
         }
