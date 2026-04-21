@@ -14,6 +14,7 @@ mod mir_types;
 mod mir_stmt;
 mod mir_term;
 mod mir_body;
+mod mir_ntr_scope;
 mod codegen_types;
 mod hashmap;
 mod type_intern;
@@ -363,6 +364,16 @@ pub struct CodegenCtx {
     /// Effect-captured local indices for the current function.
     /// Set from escape analysis; used during Perform codegen for snapshot creation.
     pub effect_captured_locals: Vec<u32>,
+    /// Non-tail-resumptive handler scopes in the current function.
+    /// Populated at function codegen start by running mir_ntr_scope.analyze_ntr_scopes
+    /// and filtering to handlers with handler_needs_abort = true. TR scopes stay
+    /// on the direct-call fast path and do not appear here.
+    ///
+    /// Consumers (sub-tasks 4–6): body function emission, PushHandler rewrite
+    /// (mp_prompt_enter in place of setjmp), and Perform rewrite (blood_perform_ntr
+    /// inside body functions). Empty for functions with no NTR handlers — the
+    /// legacy setjmp path remains the behavior when this is empty.
+    pub ntr_scopes: Vec<mir_ntr_scope.NtrScope>,
     /// Backward liveness at basic block entries. Flat grid:
     /// live_at_entry[bb_idx * perform_liveness_locals + local_idx].
     /// Empty if the function has no Perform terminators.
@@ -608,6 +619,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            ntr_scopes: Vec.new(),
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
@@ -712,6 +724,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            ntr_scopes: Vec.new(),
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
@@ -1124,6 +1137,48 @@ impl CodegenCtx {
             Option.Some(effect_id) => self.is_non_tail_resumptive_effect(effect_id),
             Option.None => false,
         }
+    }
+
+    /// Returns true if the current function has a recorded NTR scope for this
+    /// handler DefId. Driven by mir_ntr_scope pre-scan results filtered through
+    /// handler_needs_abort. Used by PushHandler emission (sub-task 5) to switch
+    /// between the legacy setjmp path and the mp_prompt_enter path.
+    pub fn has_ntr_scope_for_handler(self: &CodegenCtx, handler_def_id: u32) -> bool {
+        for i in 0usize..self.ntr_scopes.len() {
+            if self.ntr_scopes[i].handler_id.index == handler_def_id {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns the NTR scope for a given handler DefId, or None if no such
+    /// scope exists in the current function. Consumed by body fn emission
+    /// (sub-task 4) to walk the scope's body_blocks and captures.
+    pub fn ntr_scope_for_handler(self: &CodegenCtx, handler_def_id: u32) -> Option<&mir_ntr_scope.NtrScope> {
+        for i in 0usize..self.ntr_scopes.len() {
+            if self.ntr_scopes[i].handler_id.index == handler_def_id {
+                return Option.Some(&self.ntr_scopes[i]);
+            }
+        }
+        Option.None
+    }
+
+    /// Returns true if the given basic block is part of any recorded NTR
+    /// scope's body. Used by the main function's emission loop to SKIP body
+    /// blocks (they're redirected into the extracted body function).
+    pub fn is_ntr_body_block(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> bool {
+        for i in 0usize..self.ntr_scopes.len() {
+            if self.ntr_scopes[i].contains_block(bb) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Number of NTR scopes in the current function's pre-scan.
+    pub fn ntr_scope_count(self: &CodegenCtx) -> usize {
+        self.ntr_scopes.len()
     }
 
     /// Stores abort label state for a handler (3 strings: abort_store, merge, result_alloca).
@@ -2617,6 +2672,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.new(),
             vtable_name_entries: Vec.new(),
             effect_captured_locals: Vec.new(),
+            ntr_scopes: Vec.new(),
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),

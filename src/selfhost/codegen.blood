@@ -23,6 +23,7 @@ mod codegen_expr;
 mod codegen_stmt;
 mod codegen_term;
 mod mir_escape;
+mod mir_ntr_scope;
 mod mir_liveness;
 mod hashmap;
 mod type_intern;
@@ -435,6 +436,35 @@ pub fn generate_function_with_ctx(
         let local_id = mir_def.MirLocalId { index: eci as u32 };
         if escape_result.needs_effect_snapshot(local_id) {
             ctx.effect_captured_locals.push(eci as u32);
+        }
+    }
+
+    // NTR handler scope pre-scan — populate ctx.ntr_scopes for the current function.
+    // mir_ntr_scope.analyze_ntr_scopes reports ALL handler scopes (TR and NTR); we
+    // filter to NTR-only here via handler_needs_abort so downstream emission
+    // (sub-tasks 4–6) only sees scopes that actually need the mprompt path.
+    // Empty for TR-only or handler-free functions — no behavioral change yet.
+    ctx.ntr_scopes = Vec.new();
+    let ntr_result = mir_ntr_scope.analyze_ntr_scopes(body);
+    for nsi in 0usize..ntr_result.scopes.len() {
+        let scope = &ntr_result.scopes[nsi];
+        if ctx.handler_needs_abort(scope.handler_id.index) {
+            // BasicBlockId / MirLocalId don't impl Clone yet, so copy element-wise.
+            let mut body_blocks_copy: Vec<mir_def.BasicBlockId> = Vec.with_capacity(scope.body_blocks.len());
+            for bbi in 0usize..scope.body_blocks.len() {
+                body_blocks_copy.push(mir_def.BasicBlockId { index: scope.body_blocks[bbi].index });
+            }
+            let mut captures_copy: Vec<mir_def.MirLocalId> = Vec.with_capacity(scope.captures.len());
+            for ci in 0usize..scope.captures.len() {
+                captures_copy.push(mir_def.MirLocalId { index: scope.captures[ci].index });
+            }
+            ctx.ntr_scopes.push(mir_ntr_scope.NtrScope {
+                handler_id: hir_def.DefId { index: scope.handler_id.index },
+                push_block: mir_def.BasicBlockId { index: scope.push_block.index },
+                pop_block: mir_def.BasicBlockId { index: scope.pop_block.index },
+                body_blocks: body_blocks_copy,
+                captures: captures_copy,
+            });
         }
     }
 
