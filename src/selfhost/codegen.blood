@@ -22,6 +22,7 @@ mod codegen_emit;
 mod codegen_expr;
 mod codegen_stmt;
 mod codegen_term;
+mod codegen_body_fn;
 mod mir_escape;
 mod mir_ntr_scope;
 mod mir_liveness;
@@ -528,6 +529,23 @@ pub fn generate_function_with_ctx(
 
     ctx.emit_fn_footer();
     ctx.end_function();
+
+    // Emit one body function per NTR scope (sub-task 4 vertical slice).
+    // Append each body_fn's IR to ctx.output after the outer function's
+    // footer so the module contains the outer function first, then every
+    // body function. Body functions are currently DEAD until sub-task 5
+    // rewrites PushHandler to call `blood_prompt_enter(prompt, body_fn, env)`.
+    //
+    // Each iteration clones scope data into an owned NtrScope so the
+    // shared borrow of ctx.ntr_scopes ends before emit_body_fn takes ctx
+    // mutably — the resulting body_fn emission freely reads ctx.ntr_scopes
+    // again through the intercepts in local_cg / block_label_cg.
+    let ntr_scope_count = ctx.ntr_scopes.len();
+    for si in 0usize..ntr_scope_count {
+        let scope_copy = ctx.ntr_scopes[si].clone_deep();
+        let body_fn_ir = codegen_body_fn.emit_body_fn(ctx, body, &scope_copy, si as u32);
+        ctx.write(body_fn_ir.as_str());
+    }
 
     // Extract and return the function IR
     let result = ctx.output.clone();

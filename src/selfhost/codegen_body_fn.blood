@@ -1,0 +1,373 @@
+module blood.codegen_body_fn;
+
+// Blood Self-Hosted Compiler - NTR Handler Body Function Emission (sub-task 4)
+//
+// For each non-tail-resumptive handler scope identified by mir_ntr_scope,
+// this module emits a separate LLVM function `@body_fn_<handler_def_id>`
+// whose body runs on a libmprompt gstack. PushHandler in the outer function
+// calls `blood_prompt_enter(prompt, body_fn, env)`, which switches to the
+// gstack and invokes body_fn with the packed env struct as the sole
+// argument.
+//
+// Body function layout:
+//
+//   %env_ty_<id> = type { ptr, ptr, ... }   ; one ptr per capture + one for the flag
+//
+//   define internal ptr @body_fn_<id>(ptr %prompt, ptr %env) {
+//   entry:
+//     ; env unpack: load each capture pointer + the normal-flag pointer
+//     %env_slot_0 = getelementptr %env_ty_<id>, ptr %env, i32 0, i32 0
+//     %cap_<N>_ptr = load ptr, ptr %env_slot_0, align 8
+//     ...
+//     %env_slot_<K> = getelementptr %env_ty_<id>, ptr %env, i32 0, i32 <K>
+//     %normal_flag_ptr = load ptr, ptr %env_slot_<K>, align 8
+//
+//     ; body-local allocas for non-capture locals referenced inside body_fn
+//     %_<L> = alloca <T>
+//     ...
+//     br label %<first_body_block>
+//
+//   ; re-emitted body blocks via codegen_term.emit_basic_block
+//   bb<N>: ...
+//
+//   ; synthetic return block reached by any terminator whose target is
+//   ; NOT a body_fn block (e.g., Call returning to pop_block, Goto pop_block,
+//   ; SwitchInt branch into post-scope code)
+//   body_fn_return:
+//     store i1 1, ptr %normal_flag_ptr, align 1
+//     ret ptr null
+//   }
+//
+// The CodegenCtx's `in_ntr_body_fn_handler_id` flag is set for the duration
+// of body_fn emission so that the existing statement and terminator emitters
+// automatically substitute `%cap_<N>_ptr` for captured local accesses (via
+// `local_cg` / `local_alloca_name`) and `body_fn_return` for out-of-body
+// branch targets (via `block_label_cg`).
+
+mod common;
+mod hir_def;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+mod mir_body;
+mod mir_ntr_scope;
+mod codegen_types;
+mod codegen_ctx;
+mod codegen_size;
+mod codegen_term;
+mod type_intern;
+
+// ============================================================
+// Public helpers (name computation)
+// ============================================================
+
+/// LLVM type name for the env struct of a given NTR scope.
+///
+/// Shape: `%env_ty_<fn_def_id>_<push_block_idx>`. The (fn, push_block)
+/// pair uniquely identifies a scope within the module — handler_def_id
+/// alone is insufficient because a single function can use the same
+/// handler in multiple `with H handle { ... }` blocks, producing distinct
+/// scopes with distinct capture sets.
+pub fn env_ty_name(fn_def_id: u32, push_block_idx: u32) -> String {
+    let mut s = common.make_string("%env_ty_");
+    s.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+    s.push_str("_");
+    s.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+    s
+}
+
+/// LLVM symbol name for the body function of a given NTR scope.
+///
+/// Returned with the leading `@` so the name is directly usable as a
+/// function operand in LLVM IR. Shape: `@body_fn_<fn_def_id>_<push_block_idx>`.
+pub fn body_fn_name(fn_def_id: u32, push_block_idx: u32) -> String {
+    let mut s = common.make_string("@body_fn_");
+    s.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+    s.push_str("_");
+    s.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+    s
+}
+
+/// Emits the module-level `%env_ty_<fn_id>_<pb_idx> = type { ptr, ptr, ... }`
+/// declaration for this scope's env struct. The struct has
+/// `captures.len() + 1` fields: one pointer per capture, plus a trailing
+/// `ptr` for the normal-return flag alloca passed in by PushHandler.
+pub fn append_env_type_decl(
+    fn_def_id: u32,
+    scope: &mir_ntr_scope.NtrScope,
+    out: &mut String,
+) {
+    out.push_str(env_ty_name(fn_def_id, scope.push_block.index).as_str());
+    out.push_str(" = type { ");
+    let field_count = scope.captures.len() + 1;
+    for i in 0usize..field_count {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str("ptr");
+    }
+    out.push_str(" }\n");
+}
+
+// ============================================================
+// Body function emission
+// ============================================================
+
+/// Emits the complete LLVM IR for a single NTR scope's body function.
+///
+/// Returns the IR as a String. The outer function's emission pipeline
+/// concatenates this to its own output once per NTR scope.
+///
+/// The function temporarily takes over `ctx.output`, `ctx.handler_depth`
+/// and `ctx.deferred_entry_allocas` to emit body_fn's instructions without
+/// interleaving them into the outer function's buffer. All three are
+/// restored before returning.
+pub fn emit_body_fn(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    body: &mir_body.MirBody,
+    scope: &mir_ntr_scope.NtrScope,
+    scope_idx: u32,
+) -> String {
+    // Save outer-function state that the inner emission touches.
+    let saved_output = ctx.output;
+    let saved_deferred = ctx.deferred_entry_allocas;
+    let saved_handler_depth = ctx.handler_depth;
+
+    ctx.output = String.new();
+    ctx.deferred_entry_allocas = Vec.new();
+    ctx.handler_depth = 0u32;
+
+    // Mark: capture substitution and body-fn-return redirection become active.
+    // Keyed on scope INDEX (not handler_id) — multiple scopes in a single
+    // function may share a handler_id but have distinct body_blocks/captures.
+    ctx.enter_body_fn(scope_idx);
+
+    let fn_def_id = body.def_id.index;
+
+    // Env struct type (module-level declaration).
+    append_env_type_decl(fn_def_id, scope, &mut ctx.output);
+    ctx.write("\n");
+
+    // Function header + entry label.
+    ctx.write("define internal ptr ");
+    let fn_name = body_fn_name(fn_def_id, scope.push_block.index);
+    ctx.write(fn_name.as_str());
+    ctx.write("(ptr %prompt, ptr %env) {\n");
+    ctx.write("entry:\n");
+
+    // If any capture is a region- or persistent-allocated local, body_fn
+    // would need to also access its companion `_<N>_gen` alloca (for stale
+    // reference tracking) which is NOT a MIR local — it is a codegen-side
+    // helper, and the capture-all-inside policy doesn't cover it. Until
+    // sub-task 5 wires PushHandler to the mprompt path, body_fn is dead
+    // code, so for NOW we emit a trivial stub for any scope that captures a
+    // gen-tracked local. Non-gen-tracked scopes still get a full body_fn so
+    // end-to-end verification of the new emission code continues to run.
+    let has_gen_tracked_capture = scope_captures_any_gen_tracked(ctx, scope);
+    if has_gen_tracked_capture {
+        ctx.write("  ret ptr null\n");
+        ctx.write("}\n\n");
+
+        let ir = ctx.output.clone();
+
+        ctx.output = saved_output;
+        ctx.deferred_entry_allocas = saved_deferred;
+        ctx.handler_depth = saved_handler_depth;
+        ctx.exit_body_fn();
+
+        return ir;
+    }
+
+    // Entry prologue: unpack env only. Under the capture-all-inside policy
+    // in mir_ntr_scope.compute_captures, every body-referenced local is a
+    // capture, so body_fn itself allocates nothing — each read/write flows
+    // through a `%cap_<N>_ptr` pointer loaded from the env struct here.
+    emit_env_unpack(ctx, body, scope);
+
+    // Two-pass buffer flip (mirrors generate_function_with_ctx): emit the
+    // body blocks into a SEPARATE buffer so that any `defer_entry_alloca_cg`
+    // calls triggered during block emission (e.g., nested PushHandler state
+    // shadows) get flushed into body_fn's entry block BEFORE the branch to
+    // the first body block.
+    let header_ir = ctx.output;
+    ctx.output = String.new();
+
+    let body_entry_bb = find_body_fn_entry(body, scope);
+
+    for bbi in 0usize..body.basic_blocks.len() {
+        let bb_id = mir_def.BasicBlockId.new(bbi as u32);
+        if !scope.body_fn_contains_block(bb_id) {
+            continue;
+        }
+        codegen_term.emit_basic_block(ctx, bb_id, &body.basic_blocks[bbi]);
+    }
+
+    let blocks_ir = ctx.output;
+    ctx.output = header_ir;
+
+    // Flush deferred entry allocas (may be non-empty if body blocks emitted
+    // nested PushHandlers). Clear before writing so we don't mutate while
+    // iterating the shared hashmap inside write().
+    let deferred = ctx.deferred_entry_allocas;
+    ctx.deferred_entry_allocas = Vec.new();
+    for di in 0usize..deferred.len() {
+        ctx.write(deferred[di].as_str());
+    }
+
+    // Branch from entry to the first body block.
+    ctx.write("  br label %");
+    let entry_label = ctx.block_label_cg(body_entry_bb);
+    ctx.write_cgname(&entry_label);
+    ctx.write("\n\n");
+
+    // Append the body blocks.
+    ctx.write(blocks_ir.as_str());
+
+    // Synthesized return block. Reached by any redirected branch.
+    ctx.write("body_fn_return:\n");
+    ctx.write("  store i1 1, ptr %normal_flag_ptr, align 1\n");
+    ctx.write("  ret ptr null\n");
+
+    // Function footer.
+    ctx.write("}\n\n");
+
+    let ir = ctx.output.clone();
+
+    // Restore outer-function state and clear the body_fn mode flag.
+    ctx.output = saved_output;
+    ctx.deferred_entry_allocas = saved_deferred;
+    ctx.handler_depth = saved_handler_depth;
+    ctx.exit_body_fn();
+
+    ir
+}
+
+// ============================================================
+// Entry-block helpers
+// ============================================================
+
+/// Emits the env struct unpack at body_fn's entry:
+///   - One `%cap_<L>_ptr = load ptr, ptr %env_slot_<i>` per capture.
+///   - A trailing `%normal_flag_ptr = load ptr, ptr %env_slot_<K>` for the
+///     normal-return signal alloca.
+fn emit_env_unpack(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    body: &mir_body.MirBody,
+    scope: &mir_ntr_scope.NtrScope,
+) {
+    let env_ty = env_ty_name(body.def_id.index, scope.push_block.index);
+
+    for i in 0usize..scope.captures.len() {
+        let cap_local = &scope.captures[i];
+        let local_idx_str = codegen_types.format_u64(cap_local.index as u64);
+        let i_str = codegen_types.format_u64(i as u64);
+
+        // GEP to the i-th env slot.
+        ctx.write("  %env_slot_");
+        ctx.write(i_str.as_str());
+        ctx.write(" = getelementptr ");
+        ctx.write(env_ty.as_str());
+        ctx.write(", ptr %env, i32 0, i32 ");
+        ctx.write(i_str.as_str());
+        ctx.write("\n");
+
+        // Load the outer-function alloca pointer into %cap_<L>_ptr.
+        ctx.write("  %cap_");
+        ctx.write(local_idx_str.as_str());
+        ctx.write("_ptr = load ptr, ptr %env_slot_");
+        ctx.write(i_str.as_str());
+        ctx.write(", align 8\n");
+    }
+
+    let flag_idx = scope.captures.len();
+    let flag_idx_str = codegen_types.format_u64(flag_idx as u64);
+    ctx.write("  %env_slot_");
+    ctx.write(flag_idx_str.as_str());
+    ctx.write(" = getelementptr ");
+    ctx.write(env_ty.as_str());
+    ctx.write(", ptr %env, i32 0, i32 ");
+    ctx.write(flag_idx_str.as_str());
+    ctx.write("\n");
+    ctx.write("  %normal_flag_ptr = load ptr, ptr %env_slot_");
+    ctx.write(flag_idx_str.as_str());
+    ctx.write(", align 8\n");
+}
+
+// Note: a prior revision emitted per-local allocas for body-only locals
+// here, but the current policy (mir_ntr_scope.compute_captures) treats
+// every body-referenced local as a capture, so body_fn requires no
+// function-local allocas. Removing the helper keeps the invariant explicit.
+
+/// Finds the body_fn's control-flow entry: the block that the push_block's
+/// terminator flows into. In well-formed MIR for a handler scope, push_block
+/// ends with `goto body_entry` (or a Call whose return target is the body
+/// entry). Prefer a successor that is itself a body_fn block; fall back to
+/// the first successor if none match, which indicates a malformed or
+/// unsupported scope shape and will surface as a link error on body_fn_return.
+fn find_body_fn_entry(
+    body: &mir_body.MirBody,
+    scope: &mir_ntr_scope.NtrScope,
+) -> mir_def.BasicBlockId {
+    let push_idx = scope.push_block.as_usize();
+    if push_idx >= body.basic_blocks.len() {
+        return scope.push_block;
+    }
+    let push_block = &body.basic_blocks[push_idx];
+    match &push_block.terminator {
+        &Option.Some(ref term) => {
+            let succs = term.successors();
+            for si in 0usize..succs.len() {
+                if scope.body_fn_contains_block(succs[si]) {
+                    return succs[si];
+                }
+            }
+            if succs.len() > 0 {
+                return succs[0];
+            }
+            scope.push_block
+        }
+        &Option.None => scope.push_block,
+    }
+}
+
+// ============================================================
+// Small utilities
+// ============================================================
+
+/// True if any of the scope's captured locals is region- or persistent-
+/// allocated. Those locals carry a companion `%_<N>_gen` alloca emitted by
+/// the outer function's codegen; until body_fn learns to thread gen
+/// tracking through captures as well (or skip stale-ref checks), we fall
+/// back to a stub body_fn for scopes that would reference the missing
+/// allocas.
+fn scope_captures_any_gen_tracked(
+    ctx: &codegen_ctx.CodegenCtx,
+    scope: &mir_ntr_scope.NtrScope,
+) -> bool {
+    for i in 0usize..scope.captures.len() {
+        let local = scope.captures[i];
+        if ctx.is_region_allocated(local) || ctx.is_persistent_allocated(local) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if the LLVM type string represents the zero-sized unit type.
+fn is_unit_llvm_ty(ty: &str) -> bool {
+    let bytes = ty.as_bytes();
+    if bytes.len() == 2 {
+        // "{}" — the canonical unit rendering.
+        if bytes[0] == 123u8 && bytes[1] == 125u8 {
+            return true;
+        }
+    }
+    if bytes.len() == 4 {
+        // "void" — LLVM void type. Not allocable but safe to skip.
+        if bytes[0] == 118u8 && bytes[1] == 111u8 && bytes[2] == 105u8 && bytes[3] == 100u8 {
+            return true;
+        }
+    }
+    false
+}

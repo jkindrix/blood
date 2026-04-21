@@ -892,6 +892,19 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
 }
 
 fn emit_return(ctx: &mut codegen_ctx.CodegenCtx) {
+    // Inside an NTR body function, a MIR Return terminator represents an
+    // early exit from the handler-scoped body (e.g., `if c { return 1; }`
+    // appearing inside a `with H handle { ... }` block). The body's target
+    // value is already stored to _0 via the capture alloca — redirect to
+    // body_fn_return, which sets the normal-return flag and `ret`s the
+    // body_fn's ptr, and let the outer function's pop_block path run the
+    // return clause against the captured _0 just like the natural fall-out.
+    if ctx.is_in_ntr_body_fn() {
+        ctx.write_indent();
+        ctx.write("br label %body_fn_return\n");
+        return;
+    }
+
     // For handler op bodies with multiple state fields: write back field values
     // from local allocas to the state pointer before returning.
     emit_handler_state_writeback(ctx);

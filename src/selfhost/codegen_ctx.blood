@@ -374,6 +374,19 @@ pub struct CodegenCtx {
     /// inside body functions). Empty for functions with no NTR handlers — the
     /// legacy setjmp path remains the behavior when this is empty.
     pub ntr_scopes: Vec<mir_ntr_scope.NtrScope>,
+    /// Index into `ntr_scopes` identifying the scope currently being emitted
+    /// as a body function, or -1 when emitting the outer function. We key on
+    /// scope INDEX rather than handler_def_id because a single function can
+    /// contain multiple `with H handle { ... }` blocks with the same handler
+    /// but different captures and body blocks — those are distinct scopes
+    /// with distinct body functions, and the intercepts in local_cg and
+    /// block_label_cg need the exact scope to answer correctly.
+    ///
+    /// Threaded through statement and terminator emission so capture-aware
+    /// reads/writes and body_fn_return redirection trigger at the right
+    /// sites. Initialized to -1, set by codegen_body_fn.emit_body_fn before
+    /// emitting body blocks, reset to -1 immediately after.
+    pub in_ntr_body_fn_scope_idx: i32,
     /// Backward liveness at basic block entries. Flat grid:
     /// live_at_entry[bb_idx * perform_liveness_locals + local_idx].
     /// Empty if the function has no Perform terminators.
@@ -620,6 +633,7 @@ impl CodegenCtx {
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
+            in_ntr_body_fn_scope_idx: -1i32,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
@@ -725,6 +739,7 @@ impl CodegenCtx {
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
+            in_ntr_body_fn_scope_idx: -1i32,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
@@ -1179,6 +1194,40 @@ impl CodegenCtx {
     /// Number of NTR scopes in the current function's pre-scan.
     pub fn ntr_scope_count(self: &CodegenCtx) -> usize {
         self.ntr_scopes.len()
+    }
+
+    /// Marks that statement/terminator emission is happening inside the
+    /// extracted body function for the scope at `scope_idx` in `ntr_scopes`.
+    /// Sub-task 4's body_fn emitter sets this immediately before re-emitting
+    /// body blocks and clears it when body_fn emission completes.
+    pub fn enter_body_fn(self: &mut CodegenCtx, scope_idx: u32) {
+        self.in_ntr_body_fn_scope_idx = scope_idx as i32;
+    }
+
+    /// Clears the body_fn-emission flag. Must be called before returning to
+    /// outer-function emission so capture substitution and body_fn_return
+    /// redirection do not leak into outer code.
+    pub fn exit_body_fn(self: &mut CodegenCtx) {
+        self.in_ntr_body_fn_scope_idx = -1i32;
+    }
+
+    /// True if the codegen is currently emitting inside an NTR body function.
+    pub fn is_in_ntr_body_fn(self: &CodegenCtx) -> bool {
+        self.in_ntr_body_fn_scope_idx >= 0i32
+    }
+
+    /// Returns the active body_fn scope if the codegen is inside one, None
+    /// otherwise. Used by emit_place / local_alloca_name (sub-task 4) to
+    /// substitute env-pointer reads/writes for captured locals.
+    pub fn current_body_fn_scope(self: &CodegenCtx) -> Option<&mir_ntr_scope.NtrScope> {
+        if self.in_ntr_body_fn_scope_idx < 0i32 {
+            return Option.None;
+        }
+        let idx = self.in_ntr_body_fn_scope_idx as usize;
+        if idx >= self.ntr_scopes.len() {
+            return Option.None;
+        }
+        Option.Some(&self.ntr_scopes[idx])
     }
 
     /// Stores abort label state for a handler (3 strings: abort_store, merge, result_alloca).
@@ -1708,11 +1757,44 @@ impl CodegenCtx {
 
     /// Returns a CgName for a basic block label. Zero allocation.
     pub fn block_label_cg(self: &CodegenCtx, block: mir_def.BasicBlockId) -> CgName {
+        // When emitting an NTR body function (sub-task 4), any branch whose
+        // target is OUTSIDE the body function's block set (e.g., pop_block or
+        // post-scope code) is redirected to the synthesized `body_fn_return`
+        // label, which body_fn emits once at the end to set the normal-return
+        // flag and `ret`. This lets the existing terminator emission code
+        // (Call, Goto, SwitchInt, Perform) stay unchanged while body_fn
+        // terminates cleanly at every exit edge.
+        if self.in_ntr_body_fn_scope_idx >= 0i32 {
+            let idx = self.in_ntr_body_fn_scope_idx as usize;
+            if idx < self.ntr_scopes.len() {
+                if !self.ntr_scopes[idx].body_fn_contains_block(block) {
+                    return CgName.Str(common.make_string("body_fn_return"));
+                }
+            }
+        }
         CgName.Block(block.index)
     }
 
-    /// Returns a CgName for a MIR local alloca. Zero allocation.
+    /// Returns a CgName for a MIR local alloca.
+    ///
+    /// In body_fn mode (sub-task 4), a captured local is NOT a local alloca
+    /// inside body_fn — its storage lives on the outer function's stack, and
+    /// body_fn accesses it via a pointer loaded from the env struct at entry.
+    /// For those, this returns the env-loaded pointer name (`%cap_<N>_ptr`).
+    /// Non-capture locals emit the normal `%_<N>` — body_fn allocates those
+    /// on its own gstack in its entry block.
     pub fn local_cg(self: &CodegenCtx, local: mir_def.MirLocalId) -> CgName {
+        if self.in_ntr_body_fn_scope_idx >= 0i32 {
+            let idx = self.in_ntr_body_fn_scope_idx as usize;
+            if idx < self.ntr_scopes.len() {
+                if self.ntr_scopes[idx].captures_local(local) {
+                    let mut s = common.make_string("%cap_");
+                    s.push_str(codegen_types.format_u64(local.index as u64).as_str());
+                    s.push_str("_ptr");
+                    return CgName.Str(s);
+                }
+            }
+        }
         CgName.Local(local.index)
     }
 
@@ -1976,6 +2058,7 @@ impl CodegenCtx {
         self.effect_captured_locals = Vec.new();
         self.deferred_entry_allocas = Vec.new();
         self.handler_state_shadows = Vec.new();
+        self.in_ntr_body_fn_scope_idx = -1i32;
     }
 
     // ======== Error Reporting ========
@@ -2226,8 +2309,21 @@ impl CodegenCtx {
         }
     }
 
-    /// Generates the name for a MIR local alloca.
+    /// Generates the name for a MIR local alloca. In body_fn mode returns
+    /// the env-loaded capture pointer name for captured locals; see
+    /// `local_cg` for the rationale.
     pub fn local_alloca_name(self: &mut CodegenCtx, local: mir_def.MirLocalId) -> String {
+        if self.in_ntr_body_fn_scope_idx >= 0i32 {
+            let idx = self.in_ntr_body_fn_scope_idx as usize;
+            if idx < self.ntr_scopes.len() {
+                if self.ntr_scopes[idx].captures_local(local) {
+                    let mut s = common.make_string("%cap_");
+                    s.push_str(codegen_types.format_u64(local.index as u64).as_str());
+                    s.push_str("_ptr");
+                    return s;
+                }
+            }
+        }
         let mut name = common.make_string("%_");
         let num_str = codegen_types.format_u64(local.index as u64);
         name.push_str(num_str.as_str());
@@ -2673,6 +2769,7 @@ impl CodegenCtx {
             vtable_name_entries: Vec.new(),
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
+            in_ntr_body_fn_scope_idx: -1i32,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),

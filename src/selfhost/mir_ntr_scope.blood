@@ -86,6 +86,52 @@ impl NtrScope {
         }
         false
     }
+
+    /// True if the given block should be emitted inside the extracted body
+    /// function. This excludes push_block (which keeps its statements before
+    /// PushHandler in the outer function) and pop_block (whose statements
+    /// PopHandler/CallReturnClause/CallFinallyClause run in the outer
+    /// function after mp_prompt_enter returns).
+    pub fn body_fn_contains_block(self: &NtrScope, bb: mir_def.BasicBlockId) -> bool {
+        if bb.index == self.push_block.index || bb.index == self.pop_block.index {
+            return false;
+        }
+        self.contains_block(bb)
+    }
+
+    /// Returns the zero-based index of a captured local within this scope's
+    /// env struct. Returns -1 if the local is not a capture.
+    pub fn capture_index(self: &NtrScope, local: mir_def.MirLocalId) -> i32 {
+        for i in 0usize..self.captures.len() {
+            if self.captures[i].index == local.index {
+                return i as i32;
+            }
+        }
+        -1i32
+    }
+
+    /// Produces an owned copy of the scope. Exists because BasicBlockId and
+    /// MirLocalId do not implement Clone yet, so `Vec<...>.clone()` on the
+    /// body_blocks and captures fields is unavailable. Callers needing to
+    /// pass scope data through a `&mut CodegenCtx` without holding a
+    /// shared borrow of `ctx.ntr_scopes` use this to obtain an owned copy.
+    pub fn clone_deep(self: &NtrScope) -> NtrScope {
+        let mut bbs: Vec<mir_def.BasicBlockId> = Vec.with_capacity(self.body_blocks.len());
+        for i in 0usize..self.body_blocks.len() {
+            bbs.push(mir_def.BasicBlockId { index: self.body_blocks[i].index });
+        }
+        let mut caps: Vec<mir_def.MirLocalId> = Vec.with_capacity(self.captures.len());
+        for i in 0usize..self.captures.len() {
+            caps.push(mir_def.MirLocalId { index: self.captures[i].index });
+        }
+        NtrScope {
+            handler_id: hir_def.DefId { index: self.handler_id.index },
+            push_block: mir_def.BasicBlockId { index: self.push_block.index },
+            pop_block: mir_def.BasicBlockId { index: self.pop_block.index },
+            body_blocks: bbs,
+            captures: caps,
+        }
+    }
 }
 
 /// The result of running the pre-scan over one MIR body.
@@ -133,7 +179,7 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
     for i in 0usize..pairs.len() {
         let pair = &pairs[i];
         let body_blocks = compute_body_blocks(body, pair.push_block, pair.pop_block, pair.handler_id);
-        let captures = compute_captures(body, &body_blocks);
+        let captures = compute_captures(body, &body_blocks, pair.pop_block);
 
         result.scopes.push(NtrScope {
             handler_id: pair.handler_id,
@@ -345,74 +391,72 @@ fn compute_body_blocks(
 /// Compute the set of locals that must be captured by the body function's
 /// environment struct.
 ///
-/// A local is a capture if:
-///   - It is referenced (read or written) by at least one statement or
-///     terminator inside any body block, AND
-///   - It is referenced by at least one statement or terminator outside
-///     all body blocks.
+/// A local is a capture iff it is referenced (read or written) by at least
+/// one statement or terminator inside a body_fn block — i.e., any block in
+/// `body_blocks` OTHER than `pop_block`. `pop_block` is excluded because
+/// its statements (PopHandler, CallReturnClause, CallFinallyClause) run in
+/// the outer function after mp_prompt_enter returns; locals referenced
+/// only from pop_block don't need to flow through the env struct.
 ///
-/// The return place (local 0) and arguments (locals 1..param_count) are
-/// always considered "defined outside" since their storage is established
-/// by the function prologue before any basic block runs. They are captured
-/// iff referenced inside body blocks.
+/// Locals that are referenced inside body_fn AND NOT referenced outside
+/// (pure body-temps like a loop counter) are still captured: this keeps
+/// body_fn free of its own allocas. The outer function's emit_allocas_with_escapes
+/// already reserves storage for every MIR local, so capturing is essentially
+/// free — body_fn simply reads/writes through env pointers to the outer
+/// frame's allocas, including companion storage like `_<N>_gen` that
+/// codegen adds for region- and persistent-allocated locals. Without
+/// this, body_fn would need to replicate region/persistent/gen-tracking
+/// alloca emission, which is non-trivial.
 ///
-/// This is a conservative over-approximation: it may capture locals that
-/// are technically dead after the body ends, but correctness is preserved.
+/// The tradeoff is a larger env struct per scope. For typical handler
+/// scopes the struct has <10 pointers, so the overhead is negligible.
 fn compute_captures(
     body: &mir_body.MirBody,
     body_blocks: &Vec<mir_def.BasicBlockId>,
+    pop_block: mir_def.BasicBlockId,
 ) -> Vec<mir_def.MirLocalId> {
     let n = body.locals.len();
     let mut used_inside: Vec<bool> = Vec.new();
+    // `used_outside` is irrelevant under the "capture-all-inside" rule but
+    // collect_* helpers take it as a parameter; pass a throwaway vector.
     let mut used_outside: Vec<bool> = Vec.new();
     for i in 0usize..n {
         used_inside.push(false);
         used_outside.push(false);
     }
 
-    // Build a fast membership check for body blocks.
+    // body_fn's block set excludes pop_block.
     let mut is_body: Vec<bool> = Vec.new();
     for i in 0usize..body.basic_blocks.len() {
         is_body.push(false);
     }
     for bi in 0usize..body_blocks.len() {
         let idx = body_blocks[bi].as_usize();
-        if idx < is_body.len() {
+        if idx < is_body.len() && body_blocks[bi].index != pop_block.index {
             is_body[idx] = true;
         }
     }
 
-    // Walk every block, collecting local references.
+    // Mark every local that any body_fn block references.
     for bb_idx in 0usize..body.basic_blocks.len() {
-        let block = &body.basic_blocks[bb_idx];
-        let inside = is_body[bb_idx];
-
-        for stmt in &block.statements {
-            collect_stmt_locals(stmt, inside, &mut used_inside, &mut used_outside);
+        if !is_body[bb_idx] {
+            continue;
         }
-
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            collect_stmt_locals(stmt, true, &mut used_inside, &mut used_outside);
+        }
         match &block.terminator {
             &Option.Some(ref term) => {
-                collect_term_locals(term, inside, &mut used_inside, &mut used_outside);
+                collect_term_locals(term, true, &mut used_inside, &mut used_outside);
             }
             &Option.None => {}
         }
     }
 
-    // Arguments and return place are always defined outside the body.
-    // param_count + 1 (for return place) locals count as "used outside"
-    // unconditionally.
-    let arg_and_ret_count = (body.param_count as usize) + 1;
-    for i in 0usize..arg_and_ret_count {
-        if i < used_outside.len() {
-            used_outside[i] = true;
-        }
-    }
-
-    // Captures = used inside AND used outside.
     let mut captures: Vec<mir_def.MirLocalId> = Vec.new();
     for i in 0usize..n {
-        if used_inside[i] && used_outside[i] {
+        if used_inside[i] {
             captures.push(mir_def.MirLocalId.new(i as u32));
         }
     }
