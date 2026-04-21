@@ -15,8 +15,17 @@ mod alloc;
 // Data layout constants (manual pointer arithmetic)
 // ============================================================================
 
-// EvidenceEntry: { effect_id: i64, registry_index: i64, state_addr: i64 }
-pub fn EV_ENTRY_SIZE() -> i64 { 24 }
+// EvidenceEntry: { effect_id: i64, registry_index: i64, state_addr: i64, prompt_addr: i64 }
+// prompt_addr is the libmprompt prompt marker for NTR handlers (0 for TR-only or
+// handlers still on the legacy setjmp path). Populated by codegen at PushHandler
+// sites that create a prompt; read by blood_perform_ntr to route the yield.
+pub fn EV_ENTRY_SIZE() -> i64 { 32 }
+
+// DeepHandlerEntry: { effect_id: i64, registry_index: i64, state_addr: i64 }
+// The deep handler stack stores the handler's resumed frame during dispatch; it
+// does not carry the prompt marker — the prompt lives in the evidence entry
+// that's been temporarily removed during dispatch (see blood_perform).
+fn DEEP_ENTRY_SIZE() -> i64 { 24 }
 
 // EffectHandlerEntry: { effect_id: i64, ops_ptr_addr: i64, op_count: i64, is_deep: i64 }
 pub fn REG_ENTRY_SIZE() -> i64 { 32 }
@@ -101,11 +110,20 @@ pub fn ev_read_state_addr(ev: i64, idx: i64) -> i64 {
     read_i64(ev_entry_addr(ev, idx) + 16)
 }
 
-fn ev_write_entry(ev: i64, idx: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+pub fn ev_read_prompt_addr(ev: i64, idx: i64) -> i64 {
+    read_i64(ev_entry_addr(ev, idx) + 24)
+}
+
+pub fn ev_write_prompt_addr(ev: i64, idx: i64, prompt_addr: i64) {
+    write_i64(ev_entry_addr(ev, idx) + 24, prompt_addr);
+}
+
+fn ev_write_entry(ev: i64, idx: i64, effect_id: i64, reg_idx: i64, state_addr: i64, prompt_addr: i64) {
     let base: i64 = ev_entry_addr(ev, idx);
     write_i64(base, effect_id);
     write_i64(base + 8, reg_idx);
     write_i64(base + 16, state_addr);
+    write_i64(base + 24, prompt_addr);
 }
 
 fn ev_grow(ev: i64) {
@@ -131,12 +149,12 @@ fn ev_grow(ev: i64) {
     }
 }
 
-pub fn ev_push(ev: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+pub fn ev_push(ev: i64, effect_id: i64, reg_idx: i64, state_addr: i64, prompt_addr: i64) {
     let len: i64 = ev_len(ev);
     if len >= ev_cap(ev) {
         ev_grow(ev);
     }
-    ev_write_entry(ev, len, effect_id, reg_idx, state_addr);
+    ev_write_entry(ev, len, effect_id, reg_idx, state_addr, prompt_addr);
     ev_set_len(ev, len + 1);
 }
 
@@ -164,7 +182,7 @@ pub fn ev_remove(ev: i64, pos: i64) {
     }
 }
 
-pub fn ev_insert(ev: i64, pos: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+pub fn ev_insert(ev: i64, pos: i64, effect_id: i64, reg_idx: i64, state_addr: i64, prompt_addr: i64) {
     @unsafe {
         let len: i64 = ev_len(ev);
         if len >= ev_cap(ev) {
@@ -176,7 +194,7 @@ pub fn ev_insert(ev: i64, pos: i64, effect_id: i64, reg_idx: i64, state_addr: i6
             let bytes: i64 = (len - pos) * EV_ENTRY_SIZE();
             libc.sys_memmove(alloc.addr_to_ptr(dst), alloc.addr_to_cptr(src), bytes as u64);
         }
-        ev_write_entry(ev, pos, effect_id, reg_idx, state_addr);
+        ev_write_entry(ev, pos, effect_id, reg_idx, state_addr, prompt_addr);
         ev_set_len(ev, len + 1);
     }
 }
@@ -266,7 +284,7 @@ fn ensure_deep_stack() {
     @unsafe {
         if DEEP_DATA == 0 {
             DEEP_CAP = 16;
-            let p: *mut u8 = libc.sys_calloc(16, EV_ENTRY_SIZE() as u64);
+            let p: *mut u8 = libc.sys_calloc(16, DEEP_ENTRY_SIZE() as u64);
             DEEP_DATA = alloc.ptr_to_addr(p);
             if DEEP_DATA == 0 {
                 rt_panic.rt_panic("evidence: failed to init deep stack");
@@ -280,7 +298,7 @@ pub fn deep_push(effect_id: i64, reg_idx: i64, state_addr: i64) {
         ensure_deep_stack();
         if DEEP_LEN >= DEEP_CAP {
             let new_cap: i64 = DEEP_CAP * 2;
-            let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, EV_ENTRY_SIZE() as u64);
+            let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, DEEP_ENTRY_SIZE() as u64);
             let new_addr: i64 = alloc.ptr_to_addr(new_p);
             if new_addr == 0 {
                 rt_panic.rt_panic("evidence: failed to grow deep stack");
@@ -288,12 +306,12 @@ pub fn deep_push(effect_id: i64, reg_idx: i64, state_addr: i64) {
             libc.sys_memmove(
                 alloc.addr_to_ptr(new_addr),
                 alloc.addr_to_cptr(DEEP_DATA),
-                (DEEP_LEN * EV_ENTRY_SIZE()) as u64,
+                (DEEP_LEN * DEEP_ENTRY_SIZE()) as u64,
             );
             DEEP_DATA = new_addr;
             DEEP_CAP = new_cap;
         }
-        let base: i64 = DEEP_DATA + DEEP_LEN * EV_ENTRY_SIZE();
+        let base: i64 = DEEP_DATA + DEEP_LEN * DEEP_ENTRY_SIZE();
         write_i64(base, effect_id);
         write_i64(base + 8, reg_idx);
         write_i64(base + 16, state_addr);
@@ -372,7 +390,7 @@ pub fn rt_evidence_set_current(ev: *mut u8) {
 }
 
 #[export_name = "blood_evidence_push_with_state"]
-pub fn rt_evidence_push_with_state(ev: *mut u8, effect_id: i64, state: *mut u8) {
+pub fn rt_evidence_push_with_state(ev: *mut u8, effect_id: i64, state: *mut u8, prompt_addr: i64) {
     @unsafe {
         let ev_addr: i64 = alloc.ptr_to_addr(ev);
         // Find handler in registry by effect_id (search from end)
@@ -381,17 +399,17 @@ pub fn rt_evidence_push_with_state(ev: *mut u8, effect_id: i64, state: *mut u8) 
             rt_panic.rt_panic("evidence_push: handler not registered for effect");
         }
         let state_addr: i64 = alloc.ptr_to_addr(state);
-        ev_push(ev_addr, effect_id, reg_idx, state_addr);
+        ev_push(ev_addr, effect_id, reg_idx, state_addr, prompt_addr);
     }
 }
 
 #[export_name = "blood_evidence_push_by_index"]
-pub fn rt_evidence_push_by_index(ev: *mut u8, registry_index: i64, state: *mut u8) {
+pub fn rt_evidence_push_by_index(ev: *mut u8, registry_index: i64, state: *mut u8, prompt_addr: i64) {
     @unsafe {
         let ev_addr: i64 = alloc.ptr_to_addr(ev);
         let effect_id: i64 = reg_read_effect_id(registry_index);
         let state_addr: i64 = alloc.ptr_to_addr(state);
-        ev_push(ev_addr, effect_id, registry_index, state_addr);
+        ev_push(ev_addr, effect_id, registry_index, state_addr, prompt_addr);
     }
 }
 

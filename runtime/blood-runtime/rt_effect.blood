@@ -91,6 +91,7 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
         let saved_effect_id: i64 = rt_evidence.ev_read_effect_id(ev, pos);
         let reg_idx: i64 = rt_evidence.ev_read_registry_index(ev, pos);
         let saved_state_addr: i64 = rt_evidence.ev_read_state_addr(ev, pos);
+        let saved_prompt_addr: i64 = rt_evidence.ev_read_prompt_addr(ev, pos);
         let is_deep: i64 = rt_evidence.reg_read_is_deep(reg_idx);
 
         // Get function pointer: ops_ptr[op_index]
@@ -130,7 +131,7 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
         if is_deep != 0 {
             rt_evidence.deep_pop();
         }
-        rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr);
+        rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr, saved_prompt_addr);
 
         // ABORT IF NOT RESUMED
         //
