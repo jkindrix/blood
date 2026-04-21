@@ -2460,9 +2460,28 @@ fn codegen_pass2(
         // new types legitimately.
         type_intern.set_parallel_phase(false);
 
-        // Disable alloc bypass, re-activate codegen region, free arg buffers
-        set_alloc_bypass_tracking(0);
-        region_activate(saved_codegen_region);
+        // S36: keep alloc bypass ON through the post-parallel merge phase.
+        //
+        // Rationale: the merge loops below read worker-produced Strings/Vecs
+        // whose allocations occurred under bypass (no gen table registration,
+        // address may later be reused by region_activate). Turning bypass off
+        // before the merge makes `blood_validate_generation` compare a fat
+        // ref's snapshot gen against a stale/mismatched current gen, tripping
+        // a spurious stale-ref panic in `impl Clone for String` (observed as
+        // expected=NNNNNNN, actual=KKKK, both non-zero).
+        //
+        // Under bypass, `blood_validate_generation` returns 1 unconditionally
+        // and `blood_get_generation` returns 0 — so any fat ref constructed
+        // during the merge pre-bypass-off carries gen=0, and both validate
+        // and later accesses treat those addresses as trusted. The S35
+        // leak-under-bypass guards in vec_ensure_cap and string.ensure_cap
+        // make subsequent growth of ctx.string_table / ctx.fn_ptr_wrapper_defs
+        // / ctx.inline_stubs / fn_signatures safe under bypass.
+        //
+        // free(arg_bufs[w]) under bypass still calls sys_free (libc). The
+        // region_activate is delayed to after the merge so the merge's
+        // allocations go to heap (matching worker data), not the codegen
+        // region.
         for w in 0usize..num_workers {
             free(arg_bufs[w]);
         }
@@ -2583,6 +2602,13 @@ fn codegen_pass2(
                 );
             }
         }
+
+        // S36: merge complete — now safe to disable bypass and reactivate
+        // codegen region for subsequent passes. Any fat ref taken against
+        // ctx.* below this line will compute its gen via blood_get_generation
+        // under normal semantics.
+        set_alloc_bypass_tracking(0);
+        region_activate(saved_codegen_region);
 
         // Print perf summary (parallel replaces the per-phase breakdown)
         main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
