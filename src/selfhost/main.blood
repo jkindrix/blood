@@ -2425,6 +2425,12 @@ fn codegen_pass2(
             worker_outputs.push(String.new());
         }
 
+        // S34 diagnostic: flag the interner so any write from a worker panics
+        // loud, naming the specific write path. See type_intern.blood
+        // "Parallel-phase write diagnostic" comment. Cleared immediately
+        // after thread_join so sequential post-processing is unaffected.
+        type_intern.set_parallel_phase(true);
+
         // Pack args and spawn worker threads.
         // Worker ctxs and outputs are in Vecs — get element addresses via &mut vec[i].
         let mut handles: Vec<u64> = Vec.new();
@@ -2449,6 +2455,10 @@ fn codegen_pass2(
             let worker_errors: u64 = thread_join(handles[w]);
             parallel_mir_errors += worker_errors as usize;
         }
+
+        // S34 diagnostic off — post-processing (merge, IR emission) may intern
+        // new types legitimately.
+        type_intern.set_parallel_phase(false);
 
         // Disable alloc bypass, re-activate codegen region, free arg buffers
         set_alloc_bypass_tracking(0);

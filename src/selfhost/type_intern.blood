@@ -14,6 +14,41 @@ mod hir_ty;
 mod hashmap;
 
 // ============================================================
+// Parallel-phase write diagnostic (S34)
+// ============================================================
+//
+// Set to 1 by main.blood immediately before spawning codegen workers and
+// cleared immediately after thread_join. Each TypeInterner write path
+// (intern, intern_ty_list, push_ty_list, intern_effect_row,
+// intern_record_field_list) consults this flag; any write under
+// parallel-phase panics with a distinct message naming the offending path.
+//
+// Rationale: session 8's SOUND-04 counter tracks only `types.len()`
+// deltas, which is ONE of the interner's six mutable Vec/HashMap fields.
+// Racy writes to ty_list_data / ty_list_meta / ty_list_hash_index /
+// effect_rows / record_field_lists would be invisible to that counter.
+// This diagnostic fires on the first racy write regardless of which
+// field is touched, with a backtrace that points at the call site.
+//
+// After the offending call site is identified, either (a) pre-warm the
+// type in the sequential pre-pass or (b) protect the write with a mutex.
+static mut TYPE_INTERN_PARALLEL_PHASE: i32 = 0;
+
+pub fn set_parallel_phase(on: bool) {
+    @unsafe {
+        if on {
+            TYPE_INTERN_PARALLEL_PHASE = 1;
+        } else {
+            TYPE_INTERN_PARALLEL_PHASE = 0;
+        }
+    }
+}
+
+pub fn is_parallel_phase() -> bool {
+    @unsafe { TYPE_INTERN_PARALLEL_PHASE != 0 }
+}
+
+// ============================================================
 // Interned ID Types
 // ============================================================
 
@@ -708,6 +743,9 @@ impl TypeInterner {
             }
             Option.None => {
                 // Not in hash index — new type, add it.
+                if is_parallel_phase() {
+                    panic("ICE [sound-04]: TypeInterner.intern (hash-miss path) pushed to .types during parallel codegen — pre-pass missed this type");
+                }
                 // Deactivate the current region so Vec/HashMap growth allocations
                 // go to the parent region (or global allocator), NOT a transient
                 // region like mir_region that will be reset between functions.
@@ -728,6 +766,9 @@ impl TypeInterner {
         }
 
         // Not found — new type (collision case, hash already in use)
+        if is_parallel_phase() {
+            panic("ICE [sound-04]: TypeInterner.intern (hash-collision path) pushed to .types during parallel codegen — pre-pass missed this type");
+        }
         let saved_region = region_deactivate_get();
         let index = self.types.len() as u32;
         self.types.push(kind);
@@ -834,6 +875,9 @@ impl TypeInterner {
 
     /// Internal: push a new type list and register its hash.
     fn push_ty_list(self: &mut TypeInterner, ids: &Vec<TyId>, hash: u64) -> TyListId {
+        if is_parallel_phase() {
+            panic("ICE [sound-04]: TypeInterner.push_ty_list pushed to .ty_list_data/.ty_list_meta during parallel codegen — pre-pass missed this list");
+        }
         // Deactivate current region so growth allocations go to parent/global
         let saved_region = region_deactivate_get();
         let start = self.ty_list_data.len() as u32;
@@ -850,6 +894,9 @@ impl TypeInterner {
 
     /// Internal: push a new type list without registering hash (collision case).
     fn push_ty_list_no_hash(self: &mut TypeInterner, ids: &Vec<TyId>) -> TyListId {
+        if is_parallel_phase() {
+            panic("ICE [sound-04]: TypeInterner.push_ty_list_no_hash pushed to .ty_list_data/.ty_list_meta during parallel codegen — pre-pass missed this list");
+        }
         // Deactivate current region so growth allocations go to parent/global
         let saved_region = region_deactivate_get();
         let start = self.ty_list_data.len() as u32;
@@ -916,6 +963,9 @@ impl TypeInterner {
             }
         }
         // Not found — push new row.
+        if is_parallel_phase() {
+            panic("ICE [sound-04]: TypeInterner.intern_effect_row pushed to .effect_rows during parallel codegen — pre-pass missed this effect row");
+        }
         let saved_region = region_deactivate_get();
         let index = self.effect_rows.len() as u32;
         self.effect_rows.push(row);
@@ -938,6 +988,9 @@ impl TypeInterner {
 
     /// Interns a record field list (no dedup — sequential allocation).
     pub fn intern_record_field_list(self: &mut TypeInterner, list: InternedRecordFieldList) -> RecordFieldListId {
+        if is_parallel_phase() {
+            panic("ICE [sound-04]: TypeInterner.intern_record_field_list pushed to .record_field_lists during parallel codegen — pre-pass missed this record field list");
+        }
         let saved_region = region_deactivate_get();
         let index = self.record_field_lists.len() as u32;
         self.record_field_lists.push(list);
