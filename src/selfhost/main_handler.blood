@@ -635,6 +635,276 @@ fn handler_op_is_tail_resumptive(
     false
 }
 
+/// B1a-1b classification walker: recurses through every HIR body looking
+/// for `InlineHandle` expressions (try-with). For each inline op handler,
+/// classifies the op body as tail-resumptive (TR) or non-tail-resumptive
+/// (NTR) using `expr_is_tail_resume`, and flags the effect as NTR when
+/// any op body is non-TR. Also registers `effect_has_resume` when the op
+/// body contains a `resume(...)` anywhere in its tree — the libmprompt
+/// trampoline selector (codegen_stmt's Perform → blood_perform_ntr)
+/// reads this to choose between the abort-style op_fn (drops resume via
+/// mp_resume_drop) and the resumable op_fn (keeps %__cont for the body
+/// to route through blood_resume).
+///
+/// Without this pass, inline effects never participate in the mprompt
+/// pipeline because `collect_handler_info` only inspects top-level
+/// `Handler` items — inline handlers are expressions nested inside
+/// function bodies, so they escape that walk. Before B1a-1b, this was
+/// observationally correct for unit-return ops (the identity-continuation
+/// collapse is invisible for `()`) but produced wrong values for non-unit
+/// ops (see S44 audit — `.tmp/b1_audit/test1_ntr_inline.blood` observed
+/// 210 instead of 110). S44's typeck restriction (E0215) rejected that
+/// case at compile time; B1a-1b replaces the restriction with real
+/// mprompt dispatch so non-unit inline handlers work.
+///
+/// Called from `collect_and_register_handlers` (main.blood) right after
+/// `collect_handler_info` so that by the time codegen consults
+/// `is_mprompt_eligible_effect`, inline-only effects are already
+/// registered as NTR.
+///
+/// Closure bodies are NOT recursed into: a closure introduces its own
+/// handler context when invoked, and any inline handler inside its body
+/// is handled when the closure's own BodyEntry is walked. Walking through
+/// the enclosing body would double-register (harmless for the registry
+/// itself — it's idempotent — but misleading in intent).
+pub fn register_inline_handler_effects(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
+) {
+    for bi in 0usize..bodies.len() {
+        walk_expr_for_inline(ctx, &bodies[bi].body.expr);
+    }
+}
+
+fn walk_expr_for_inline(ctx: &mut codegen_ctx.CodegenCtx, expr: &hir_expr.Expr) {
+    match &expr.kind {
+        &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
+            // Classify each op in the inline handler set. Named-handler
+            // logic in `collect_handler_info` does the same thing for
+            // `handler_def.op_impls` — we mirror it here over HIR's
+            // `InlineOpHandler`. The predicates are identical.
+            let mut has_ntr_op = false;
+            let mut effect_def_id: u32 = 0u32;
+            for hi in 0usize..handlers.len() {
+                let hdlr = &handlers[hi];
+                effect_def_id = hdlr.effect_id.index;
+                if expr_is_tail_resume(&hdlr.body) {
+                    ctx.register_tail_resumptive_op(hdlr.effect_id.index, hdlr.op_name.index);
+                } else {
+                    has_ntr_op = true;
+                    ctx.register_non_tail_resumptive_op(hdlr.effect_id.index, hdlr.op_name.index);
+                }
+                if expr_contains_resume(&hdlr.body) {
+                    ctx.register_effect_has_resume(hdlr.effect_id.index);
+                }
+                // The handler op's body may itself contain further inline
+                // handlers (e.g. an inline handler within an inline op's
+                // logic). Recurse so those effects also get registered.
+                walk_expr_for_inline(ctx, &hdlr.body);
+            }
+            if has_ntr_op {
+                ctx.register_non_tail_resumptive_effect(effect_def_id);
+            }
+            // The try body may itself contain inline handlers (nested
+            // try-with). Recurse.
+            walk_expr_for_inline(ctx, body.as_ref());
+        }
+        &hir_expr.ExprKind.Literal(_) => {}
+        &hir_expr.ExprKind.Local(_) => {}
+        &hir_expr.ExprKind.Path(_) => {}
+        &hir_expr.ExprKind.Default => {}
+        &hir_expr.ExprKind.Error => {}
+        &hir_expr.ExprKind.Continue { label: _ } => {}
+        &hir_expr.ExprKind.Binary { operator: _, ref left, ref right } => {
+            walk_expr_for_inline(ctx, left.as_ref());
+            walk_expr_for_inline(ctx, right.as_ref());
+        }
+        &hir_expr.ExprKind.Unary { operator: _, ref operand } => {
+            walk_expr_for_inline(ctx, operand.as_ref());
+        }
+        &hir_expr.ExprKind.Call { ref callee, ref args } => {
+            walk_expr_for_inline(ctx, callee.as_ref());
+            for i in 0usize..args.len() {
+                walk_expr_for_inline(ctx, &args[i]);
+            }
+        }
+        &hir_expr.ExprKind.MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+            walk_expr_for_inline(ctx, receiver.as_ref());
+            for i in 0usize..args.len() {
+                walk_expr_for_inline(ctx, &args[i]);
+            }
+        }
+        &hir_expr.ExprKind.Field { ref base, field: _ } => {
+            walk_expr_for_inline(ctx, base.as_ref());
+        }
+        &hir_expr.ExprKind.Index { ref base, ref idx } => {
+            walk_expr_for_inline(ctx, base.as_ref());
+            walk_expr_for_inline(ctx, idx.as_ref());
+        }
+        &hir_expr.ExprKind.Tuple(ref exprs) => {
+            for i in 0usize..exprs.len() {
+                walk_expr_for_inline(ctx, &exprs[i]);
+            }
+        }
+        &hir_expr.ExprKind.Array(ref array_expr) => {
+            match array_expr {
+                &hir_expr.ArrayExpr.List(ref exprs) => {
+                    for i in 0usize..exprs.len() {
+                        walk_expr_for_inline(ctx, &exprs[i]);
+                    }
+                }
+                &hir_expr.ArrayExpr.Repeat { ref val, count: _ } => {
+                    walk_expr_for_inline(ctx, val.as_ref());
+                }
+            }
+        }
+        &hir_expr.ExprKind.Struct { path: _, ref fields, ref base } => {
+            for i in 0usize..fields.len() {
+                walk_expr_for_inline(ctx, &fields[i].val);
+            }
+            match base {
+                &Option.Some(ref b) => walk_expr_for_inline(ctx, b.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.AnonRecord { ref fields } => {
+            for i in 0usize..fields.len() {
+                walk_expr_for_inline(ctx, &fields[i].val);
+            }
+        }
+        &hir_expr.ExprKind.Range { ref start, ref end_val, inclusive: _ } => {
+            match start {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+            match end_val {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
+            walk_expr_for_inline(ctx, expr.as_ref());
+        }
+        &hir_expr.ExprKind.Assign { ref target, ref val } => {
+            walk_expr_for_inline(ctx, target.as_ref());
+            walk_expr_for_inline(ctx, val.as_ref());
+        }
+        &hir_expr.ExprKind.AssignOp { operator: _, ref target, ref val } => {
+            walk_expr_for_inline(ctx, target.as_ref());
+            walk_expr_for_inline(ctx, val.as_ref());
+        }
+        &hir_expr.ExprKind.Block(ref block) => {
+            walk_block_for_inline(ctx, block);
+        }
+        &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
+            walk_expr_for_inline(ctx, condition.as_ref());
+            walk_expr_for_inline(ctx, then_branch.as_ref());
+            match else_branch {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
+            walk_expr_for_inline(ctx, scrutinee.as_ref());
+            for i in 0usize..arms.len() {
+                let arm = &arms[i];
+                match &arm.guard {
+                    &Option.Some(ref g) => walk_expr_for_inline(ctx, g),
+                    &Option.None => {}
+                }
+                walk_expr_for_inline(ctx, &arm.body);
+            }
+        }
+        &hir_expr.ExprKind.Loop { label: _, ref body } => {
+            walk_expr_for_inline(ctx, body.as_ref());
+        }
+        &hir_expr.ExprKind.Return(ref opt) => {
+            match opt {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Break { label: _, ref val } => {
+            match val {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => {
+            // A closure's body is a separate BodyEntry and is walked via
+            // the outer loop in register_inline_handler_effects — don't
+            // recurse here.
+        }
+        &hir_expr.ExprKind.WithHandle { ref handler, ref body } => {
+            walk_expr_for_inline(ctx, handler.as_ref());
+            walk_expr_for_inline(ctx, body.as_ref());
+        }
+        &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
+            for i in 0usize..args.len() {
+                walk_expr_for_inline(ctx, &args[i]);
+            }
+        }
+        &hir_expr.ExprKind.Resume(ref inner) => {
+            walk_expr_for_inline(ctx, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Try(ref inner) => {
+            walk_expr_for_inline(ctx, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+            for i in 0usize..stmts.len() {
+                walk_stmt_for_inline(ctx, &stmts[i]);
+            }
+            match expr {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Unsafe(ref inner) => {
+            walk_expr_for_inline(ctx, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => {
+            walk_expr_for_inline(ctx, body.as_ref());
+        }
+        &hir_expr.ExprKind.Heap(ref inner) => {
+            walk_expr_for_inline(ctx, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Stack(ref inner) => {
+            walk_expr_for_inline(ctx, inner.as_ref());
+        }
+        &hir_expr.ExprKind.ForIter { label: _, pattern: _, ref iter, ref body } => {
+            walk_expr_for_inline(ctx, iter.as_ref());
+            walk_expr_for_inline(ctx, body.as_ref());
+        }
+    }
+}
+
+fn walk_block_for_inline(ctx: &mut codegen_ctx.CodegenCtx, block: &hir_expr.Block) {
+    for i in 0usize..block.stmts.len() {
+        walk_stmt_for_inline(ctx, &block.stmts[i]);
+    }
+    match &block.expr {
+        &Option.Some(ref e) => walk_expr_for_inline(ctx, e.as_ref()),
+        &Option.None => {}
+    }
+}
+
+fn walk_stmt_for_inline(ctx: &mut codegen_ctx.CodegenCtx, stmt: &hir_expr.Stmt) {
+    match stmt {
+        &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
+            match init {
+                &Option.Some(ref e) => walk_expr_for_inline(ctx, e),
+                &Option.None => {}
+            }
+        }
+        &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
+            walk_expr_for_inline(ctx, expr);
+        }
+        &hir_expr.Stmt.Item(_) => {
+            // A nested item's body is walked separately via the BodyEntry list.
+        }
+    }
+}
+
 /// Collects handler information from HIR items.
 /// Populates handler→effect mappings in the codegen context and returns
 /// HandlerInfo for wrapper/registration generation.

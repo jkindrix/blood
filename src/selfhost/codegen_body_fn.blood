@@ -261,13 +261,26 @@ pub fn emit_body_fn(
     // Returns body's final value as a ptr-shaped i64 so the libmprompt
     // chain propagates it up through mp_resume → handler_op → dispatch
     // → yield_fn → mp_prompt_enter's return. The body_result_local is
-    // the outer-fn local that CallReturnClause's body_result references;
-    // its value was captured-written by body during normal execution
-    // (including via the pop_pre trailer above when present).
+    // the outer-fn local that CallReturnClause's body_result references
+    // (named scopes); for inline scopes we use inline_dest.local
+    // instead (body writes its tail value to this place via the
+    // env-captured pointer, so loading it here gives the with-handle
+    // body value). Without this, inline handlers with resumable ops
+    // like `let v = resume(5); v + 100` would see resume return 0
+    // (null widened) instead of body's computed value — leaving the
+    // post-resume handler code with a stale v.
     ctx.write("body_fn_return:\n");
     ctx.write("  store i1 1, ptr %normal_flag_ptr, align 1\n");
-    if scope.body_result_local >= 0 {
-        let body_result_idx = scope.body_result_local as u32;
+    let effective_result_local: i32 = if scope.is_inline {
+        match &scope.inline_dest {
+            &Option.Some(ref p) => p.local.index as i32,
+            &Option.None => -1i32,
+        }
+    } else {
+        scope.body_result_local
+    };
+    if effective_result_local >= 0 {
+        let body_result_idx = effective_result_local as u32;
         let cap_index = scope.capture_index(mir_def.MirLocalId.new(body_result_idx));
         if cap_index >= 0 {
             let body_result_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[body_result_idx as usize].ty);

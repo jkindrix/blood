@@ -95,6 +95,14 @@ pub enum StatementKind {
         effect_id: hir_def.DefId,
         /// The handler operations.
         operations: Vec<InlineOperation>,
+        /// Where the try-body writes its normal-path value. Codegen's
+        /// mprompt abort path (B1a-1b) stores `abort_result` (the handler
+        /// op's final value when it does not resume) to this place, so
+        /// abort collapses to "with-handle result = handler's value".
+        /// None when the caller passes `Destination.Ignore`, i.e. the
+        /// enclosing context discards the value; abort path skips the
+        /// store in that case.
+        dest: Option<mir_types.Place>,
     },
     /// A return clause for effect handling.
     CallReturnClause {

@@ -3766,6 +3766,14 @@ fn collect_and_register_handlers(
             handler_info.ops[hop_i].effect_def_id,
         );
     }
+    // B1a-1b: classify inline handlers (nested inside bodies rather
+    // than declared as top-level Handler items). Walks all bodies for
+    // `InlineHandle` expressions and registers NTR/TR status per op
+    // plus effect_has_resume for the libmprompt trampoline selector.
+    // Must run AFTER the named-handler registration loop above so
+    // effect-level NTR status is consistent across both sources; both
+    // registrations are idempotent-safe and NTR-wins over TR.
+    main_handler.register_inline_handler_effects(ctx, &lower_result.bodies);
     handler_info
 }
 

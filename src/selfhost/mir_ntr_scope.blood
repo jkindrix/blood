@@ -95,6 +95,21 @@ pub struct NtrScope {
     /// function (or enclosing body_fn) skips this many statements when it
     /// emits pop_block. 0 when pop_block has no pre-PopHandler statements.
     pub pop_pre_stmt_count: u32,
+    /// For inline scopes (is_inline=true), the block control flow joins
+    /// after pop_block's PopHandler runs — i.e. pop_block's terminator
+    /// successor. The abort epilogue (B1a-1b piece 3) branches here
+    /// after manually popping evidence and storing abort_result to
+    /// `inline_dest`, bypassing PopHandler (which would double-pop).
+    /// For named scopes the field is populated defensively from
+    /// pop_block's terminator but unused (CallReturnClause emits its
+    /// own merge_label).
+    pub after_block: mir_def.BasicBlockId,
+    /// For inline scopes, the place PushInlineHandler's stmt carries as
+    /// the try-body's destination. Abort epilogue stores the mprompt
+    /// result to this place. None when the surrounding context ignores
+    /// the try-with value (e.g. expression statement). Always None for
+    /// named scopes (they route through CallReturnClause's destination).
+    pub inline_dest: Option<mir_types.Place>,
 }
 
 impl NtrScope {
@@ -155,6 +170,10 @@ impl NtrScope {
         for i in 0usize..self.captures.len() {
             caps.push(mir_def.MirLocalId { index: self.captures[i].index });
         }
+        let cloned_dest = match &self.inline_dest {
+            &Option.Some(ref p) => Option.Some(p.clone()),
+            &Option.None => Option.None,
+        };
         NtrScope {
             handler_id: hir_def.DefId { index: self.handler_id.index },
             is_inline: self.is_inline,
@@ -164,6 +183,8 @@ impl NtrScope {
             captures: caps,
             body_result_local: self.body_result_local,
             pop_pre_stmt_count: self.pop_pre_stmt_count,
+            after_block: mir_def.BasicBlockId { index: self.after_block.index },
+            inline_dest: cloned_dest,
         }
     }
 }
@@ -224,6 +245,18 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
             find_body_result_local(body, pair.pop_block, pair.handler_id)
         };
 
+        // Compute after_block and, for inline scopes, extract the body
+        // destination carried by PushInlineHandler's statement. For
+        // named scopes the fields are populated defensively (after_block
+        // = pop_block terminator's first successor, inline_dest = None)
+        // but unused — CallReturnClause drives named-handler abort flow.
+        let after_block = compute_after_block(body, pair.pop_block);
+        let inline_dest = if pair.is_inline {
+            lookup_inline_dest(body, pair.push_block)
+        } else {
+            Option.None
+        };
+
         result.scopes.push(NtrScope {
             handler_id: pair.handler_id,
             is_inline: pair.is_inline,
@@ -233,10 +266,72 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
             captures: captures,
             body_result_local: body_result_local,
             pop_pre_stmt_count: pop_pre_stmt_count,
+            after_block: after_block,
+            inline_dest: inline_dest,
         });
     }
 
     result
+}
+
+/// Returns the first successor of `pop_block`'s terminator — the point
+/// control flow joins after PopHandler runs. Used by inline scopes'
+/// abort epilogue to branch past PopHandler (which the abort path has
+/// manually replaced with an `evidence_pop`). Falls back to pop_block
+/// itself when the block has no terminator or a terminator with zero
+/// successors — both indicate malformed MIR that earlier passes should
+/// have rejected, but we return something well-formed defensively.
+fn compute_after_block(
+    body: &mir_body.MirBody,
+    pop_block: mir_def.BasicBlockId,
+) -> mir_def.BasicBlockId {
+    let idx = pop_block.as_usize();
+    if idx >= body.basic_blocks.len() {
+        return pop_block;
+    }
+    let block = &body.basic_blocks[idx];
+    match &block.terminator {
+        &Option.Some(ref term) => {
+            let succs = term.successors();
+            if succs.len() > 0 {
+                succs[0]
+            } else {
+                pop_block
+            }
+        }
+        &Option.None => pop_block,
+    }
+}
+
+/// Extract the `dest` field from the PushInlineHandler statement in
+/// `push_block`. Returns None when no PushInlineHandler is found (caller
+/// paired a PushHandler — should not happen for inline pairs) or when
+/// the statement's `dest` is None (Ignore destination).
+fn lookup_inline_dest(
+    body: &mir_body.MirBody,
+    push_block: mir_def.BasicBlockId,
+) -> Option<mir_types.Place> {
+    let idx = push_block.as_usize();
+    if idx >= body.basic_blocks.len() {
+        return Option.None;
+    }
+    let block = &body.basic_blocks[idx];
+    for si in 0usize..block.statements.len() {
+        match &block.statements[si].kind {
+            &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _, ref dest } => {
+                match dest {
+                    &Option.Some(ref p) => {
+                        return Option.Some(p.clone());
+                    }
+                    &Option.None => {
+                        return Option.None;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Option.None
 }
 
 /// Count the number of statements in `pop_block` that appear BEFORE
@@ -424,6 +519,7 @@ fn find_handler_pairs(body: &mir_body.MirBody) -> Vec<HandlerPair> {
                 &mir_stmt.StatementKind.PushInlineHandler {
                     effect_id,
                     operations: _,
+                    dest: _,
                 } => {
                     let push_bb = mir_def.BasicBlockId.new(bb_idx as u32);
                     match find_matching_pop(body, push_bb, effect_id) {
@@ -714,10 +810,14 @@ fn collect_stmt_locals(
         &mir_stmt.StatementKind.PopHandler { handler_id: _ } => {
             // No locals referenced.
         }
-        &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _ } => {
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _, ref dest } => {
             // Inline handlers' operations carry their own bodies; the
             // referenced locals (if any) will appear in the enclosing
-            // block's other statements. Conservative: no extra marking.
+            // block's other statements. The inline dest, if present,
+            // is written by body blocks or the abort epilogue and is
+            // already marked inside-body by those sites — no direct
+            // action required here.
+            let _ = dest;
         }
         &mir_stmt.StatementKind.CallReturnClause {
             handler_id: _,

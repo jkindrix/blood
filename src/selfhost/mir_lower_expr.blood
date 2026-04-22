@@ -2734,11 +2734,17 @@ fn lower_inline_handle_expr(
         all_ops.push(op_entry);
     }
 
-    // Emit PushInlineHandler with the operations list
+    // Emit PushInlineHandler with the operations list.
+    // Surface the caller's `dest` so codegen's mprompt abort path
+    // (B1a-1b) can store the handler's abort value to the inline
+    // body's destination when `dest` is a concrete place. `Ignore`
+    // becomes `None`; the abort path skips the store in that case.
+    let inline_dest: Option<mir_types.Place> = dest.as_place();
     ctx.emit_stmt(mir_stmt.Statement.new(
         mir_stmt.StatementKind.PushInlineHandler {
             effect_id: current_effect_id,
             operations: all_ops,
+            dest: inline_dest,
         },
         span,
     ));

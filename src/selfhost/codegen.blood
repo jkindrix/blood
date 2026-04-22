@@ -406,6 +406,10 @@ pub fn generate_function_with_ctx(
         for ci in 0usize..scope.captures.len() {
             captures_copy.push(mir_def.MirLocalId { index: scope.captures[ci].index });
         }
+        let inline_dest_copy = match &scope.inline_dest {
+            &Option.Some(ref p) => Option.Some(p.clone()),
+            &Option.None => Option.None,
+        };
         ctx.ntr_scopes.push(mir_ntr_scope.NtrScope {
             handler_id: hir_def.DefId { index: scope.handler_id.index },
             is_inline: scope.is_inline,
@@ -415,6 +419,8 @@ pub fn generate_function_with_ctx(
             captures: captures_copy,
             body_result_local: scope.body_result_local,
             pop_pre_stmt_count: scope.pop_pre_stmt_count,
+            after_block: mir_def.BasicBlockId { index: scope.after_block.index },
+            inline_dest: inline_dest_copy,
         });
     }
 

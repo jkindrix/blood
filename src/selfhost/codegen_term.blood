@@ -468,69 +468,7 @@ pub fn emit_terminator(
             // Resume from a TR or inline handler op body.
             // Store-back: write capture locals back through parent pointers.
             // This ensures mutations (e.g., total = total + value) persist.
-            if ctx.handler_capture_locals.len() > 0 {
-                // Build env struct type (all ptr)
-                let mut sb_env_ty = common.make_string("{ ");
-                for sbi in 0usize..ctx.handler_capture_tys.len() {
-                    if sbi > 0 { sb_env_ty.push_str(", "); }
-                    sb_env_ty.push_str("ptr");
-                }
-                sb_env_ty.push_str(" }");
-
-                // Load state ptr from local 1
-                let sb_env = ctx.fresh_temp_cg();
-                let sb_local1 = ctx.local_cg(mir_def.MirLocalId.new(1));
-                ctx.write("    ");
-                ctx.write_cgname(&sb_env);
-                ctx.write(" = load ptr, ptr ");
-                ctx.write_cgname(&sb_local1);
-                ctx.write("\n");
-
-                for sbi in 0usize..ctx.handler_capture_locals.len() {
-                    let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, ctx.handler_capture_tys[sbi]);
-                    let cap_local_idx = ctx.handler_capture_locals[sbi];
-
-                    // Load current value from capture local
-                    let cap_local_name = ctx.local_cg(mir_def.MirLocalId.new(cap_local_idx));
-                    let cur_val = ctx.fresh_temp_cg();
-                    ctx.write("    ");
-                    ctx.write_cgname(&cur_val);
-                    ctx.write(" = load ");
-                    ctx.write_string(&cap_ty_llvm);
-                    ctx.write(", ptr ");
-                    ctx.write_cgname(&cap_local_name);
-                    ctx.write("\n");
-
-                    // GEP into state struct to get parent pointer
-                    let sb_field = ctx.fresh_temp_cg();
-                    ctx.write("    ");
-                    ctx.write_cgname(&sb_field);
-                    ctx.write(" = getelementptr ");
-                    ctx.write_string(&sb_env_ty);
-                    ctx.write(", ptr ");
-                    ctx.write_cgname(&sb_env);
-                    ctx.write(", i32 0, i32 ");
-                    ctx.write(codegen_types.format_u64(sbi as u64).as_str());
-                    ctx.write("\n");
-
-                    // Load parent alloca pointer
-                    let parent_ptr = ctx.fresh_temp_cg();
-                    ctx.write("    ");
-                    ctx.write_cgname(&parent_ptr);
-                    ctx.write(" = load ptr, ptr ");
-                    ctx.write_cgname(&sb_field);
-                    ctx.write("\n");
-
-                    // Store value back through parent pointer
-                    ctx.write("    store ");
-                    ctx.write_string(&cap_ty_llvm);
-                    ctx.write(" ");
-                    ctx.write_cgname(&cur_val);
-                    ctx.write(", ptr ");
-                    ctx.write_cgname(&parent_ptr);
-                    ctx.write("\n");
-                }
-            }
+            emit_inline_capture_writeback(ctx);
 
             // --- Snapshot: validate before resume ---
             ctx.write("    ; snapshot: validate before resume\n");
@@ -887,8 +825,23 @@ fn emit_resume_mprompt(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Write handler state fields back before resuming so the outer function
-    // (and any deeper performs) sees the updated values.
+    // (and any deeper performs) sees the updated values. Two distinct
+    // writeback mechanisms coexist:
+    //   1. Named-handler state fields (handler_op_state_field_count > 1)
+    //      — written back through local 1's state ptr, fields 2..N.
+    //   2. Inline-handler captures (handler_capture_locals) — written
+    //      back through local 1's state_arg struct, one slot per capture
+    //      pointer. Without this, mutations inside an inline handler op
+    //      body (e.g., `total = total + value; resume(())`) are dropped
+    //      because the handler's local alloca shadows the outer frame's
+    //      storage and is popped when the handler returns. Before B1a-1b
+    //      this writeback was skipped for mprompt because the mprompt
+    //      path was exclusively used by named handlers; inline scopes
+    //      took the TR-identity fallthrough where writeback ran inline.
+    //      Now that inline scopes route through blood_resume, the same
+    //      writeback must run here too.
     emit_handler_state_writeback(ctx);
+    emit_inline_capture_writeback(ctx);
 
     // Materialize the resume value as i64 (widening integers, zeroing unit,
     // ptrtoint'ing pointers, spilling aggregates through an i64 alloca).
@@ -1001,6 +954,55 @@ fn emit_resume_mprompt(
         return;
     }
 
+    // For non-tail-resume handlers that don't explicitly write to _0,
+    // the handler op body's return value is undefined — the default
+    // `ret i64 load _0` loads uninitialized memory and mp_prompt_enter
+    // propagates garbage up the mprompt chain. Pre-store resume_i64
+    // (narrowed to _0's alloca type) to _0 so that a handler with
+    // only `stmts; resume(v);` (no trailing expression, no post-resume
+    // write to _0) returns body's final value through mp_resume's
+    // chain — matching the Koka semantics where
+    // `with handle { body } with op(args) => resume(v)` evaluates to
+    // body's value. Handlers that DO write to _0 later (e.g.,
+    // `let v = resume(5); v + 100`) still take the higher-priority
+    // post-resume write; this pre-store is only a safety net for the
+    // "drop-resume-value" case.
+    //
+    // _0's alloca type is the op's natural return type (not the forced
+    // i64 function-return type). For i32/i16/i8/i1 ops we trunc; for
+    // ptr we inttoptr; for i64 we store directly. For zero-sized or
+    // unsupported dest types we skip the pre-store — no harm, the
+    // uninit `ret i64 load _0` still returns garbage but only in cases
+    // where no goldens exercise that path.
+    if ctx.is_handler_op {
+        let ret_local_name = ctx.local_cg(mir_def.MirLocalId.new(0));
+        let ret_addr = cgname_to_string(&ret_local_name);
+        let ret_ty = ctx.get_local_type(mir_def.MirLocalId.new(0));
+        let ret_ty_str = ret_ty.as_str();
+        if str_eq(ret_ty_str, "{}") || is_void_type(ret_ty_str) {
+            // Unit / void — nothing to store.
+        } else if str_eq(ret_ty_str, "i64") {
+            ctx.emit_store_cg("i64", &resume_i64, ret_addr.as_str());
+        } else if str_eq(ret_ty_str, "i32") || str_eq(ret_ty_str, "i16") || str_eq(ret_ty_str, "i8") || str_eq(ret_ty_str, "i1") {
+            let narrowed = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&narrowed);
+            ctx.write(" = trunc i64 ");
+            ctx.write_cgname(&resume_i64);
+            ctx.write(" to ");
+            ctx.write(ret_ty_str);
+            ctx.write("\n");
+            ctx.emit_store_cg(ret_ty_str, &narrowed, ret_addr.as_str());
+        } else if str_eq(ret_ty_str, "ptr") {
+            ctx.emit_store_cg("ptr", &resume_result, ret_addr.as_str());
+        } else {
+            // Aggregate / unsupported — skip. Handler op falls through
+            // to the uninit-_0 read if no post-resume write lands;
+            // affects only drop-resume handlers on aggregates, which
+            // are not yet covered by the golden suite.
+        }
+    }
+
     match target {
         &Option.Some(tgt) => {
             match destination {
@@ -1062,6 +1064,84 @@ fn emit_resume_mprompt(
 /// Emits a return from the function.
 /// Writes back handler state fields from local allocas to the state pointer.
 /// Called before any return/resume from a handler op body with multiple state fields.
+/// Write every value currently held in inline-handler capture locals back
+/// through the parent-pointer slots of the state_arg struct (local 1's
+/// loaded ptr). Matches the inverse of `emit_capture_loads`'s
+/// `is_ptr_captures` branch: that function loaded `*state[i]` into
+/// `capture_local[i]`; this function loads from `capture_local[i]` and
+/// stores through `*state[i]`.
+///
+/// Called both from the TR-identity Resume fallthrough and from
+/// `emit_resume_mprompt`; identical semantics — the only difference is
+/// which resume mechanism follows. No-op when there are no captures.
+fn emit_inline_capture_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
+    if ctx.handler_capture_locals.len() == 0 {
+        return;
+    }
+
+    // Build env struct type (all ptr).
+    let mut sb_env_ty = common.make_string("{ ");
+    for sbi in 0usize..ctx.handler_capture_tys.len() {
+        if sbi > 0 { sb_env_ty.push_str(", "); }
+        sb_env_ty.push_str("ptr");
+    }
+    sb_env_ty.push_str(" }");
+
+    // Load state ptr from local 1.
+    let sb_env = ctx.fresh_temp_cg();
+    let sb_local1 = ctx.local_cg(mir_def.MirLocalId.new(1));
+    ctx.write("    ");
+    ctx.write_cgname(&sb_env);
+    ctx.write(" = load ptr, ptr ");
+    ctx.write_cgname(&sb_local1);
+    ctx.write("\n");
+
+    for sbi in 0usize..ctx.handler_capture_locals.len() {
+        let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, ctx.handler_capture_tys[sbi]);
+        let cap_local_idx = ctx.handler_capture_locals[sbi];
+
+        // Load current value from capture local.
+        let cap_local_name = ctx.local_cg(mir_def.MirLocalId.new(cap_local_idx));
+        let cur_val = ctx.fresh_temp_cg();
+        ctx.write("    ");
+        ctx.write_cgname(&cur_val);
+        ctx.write(" = load ");
+        ctx.write_string(&cap_ty_llvm);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&cap_local_name);
+        ctx.write("\n");
+
+        // GEP into state struct to get parent pointer.
+        let sb_field = ctx.fresh_temp_cg();
+        ctx.write("    ");
+        ctx.write_cgname(&sb_field);
+        ctx.write(" = getelementptr ");
+        ctx.write_string(&sb_env_ty);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&sb_env);
+        ctx.write(", i32 0, i32 ");
+        ctx.write(codegen_types.format_u64(sbi as u64).as_str());
+        ctx.write("\n");
+
+        // Load parent alloca pointer.
+        let parent_ptr = ctx.fresh_temp_cg();
+        ctx.write("    ");
+        ctx.write_cgname(&parent_ptr);
+        ctx.write(" = load ptr, ptr ");
+        ctx.write_cgname(&sb_field);
+        ctx.write("\n");
+
+        // Store value back through parent pointer.
+        ctx.write("    store ");
+        ctx.write_string(&cap_ty_llvm);
+        ctx.write(" ");
+        ctx.write_cgname(&cur_val);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&parent_ptr);
+        ctx.write("\n");
+    }
+}
+
 fn emit_handler_state_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
     if ctx.handler_op_state_field_count > 1 {
         let state_local = mir_def.MirLocalId.new(1);

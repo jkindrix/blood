@@ -707,9 +707,20 @@ pub fn emit_statement(
                 ctx.handler_depth = ctx.handler_depth - 1;
             }
         }
-        &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations } => {
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations, ref dest } => {
             // Inline effect handler push via evidence API
             let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
+
+            // B1a-1b: check whether this inline scope was classified as
+            // NTR-eligible by the pre-scan. When so, we wrap the try-body
+            // in blood_prompt_enter (libmprompt) so the handler ops can
+            // abort or resume under the same semantics as named handlers.
+            // When the classification walker didn't flag this effect (all
+            // ops are TR, or ops use unit return and we kept the S44
+            // compatibility path), use_mprompt stays false and we retain
+            // the pre-B1a-1b identity-continuation path unchanged.
+            let inline_ntr_scope_idx = ctx.ntr_scope_idx_for_push_block(ctx.current_bb);
+            let use_mprompt = inline_ntr_scope_idx >= 0i32;
 
             // For each operation, generate a wrapper function that adapts the
             // handler ABI (ptr state, ptr args, i64 arg_count, i64 cont) -> i64
@@ -1011,6 +1022,30 @@ pub fn emit_statement(
                 null_cg
             };
 
+            // B1a-1b: for NTR-eligible inline scopes, create an mprompt
+            // prompt BEFORE evidence_push_by_index so the prompt address
+            // travels into the evidence entry's prompt_addr slot. The
+            // libmprompt dispatcher (blood_perform_ntr) reads that slot
+            // at perform sites to locate the target gstack. Mirrors the
+            // named PushHandler emission above.
+            let mut inline_prompt_cgname = common.make_string("");
+            let mut inline_prompt_i64 = common.make_string("0");
+            if use_mprompt {
+                let pt_tmp = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&pt_tmp);
+                ctx.write(" = call ptr @blood_prompt_create()\n");
+                inline_prompt_cgname = cgname_to_string(&pt_tmp);
+
+                let pi_tmp = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&pi_tmp);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write_cgname(&pt_tmp);
+                ctx.write(" to i64\n");
+                inline_prompt_i64 = cgname_to_string(&pi_tmp);
+            }
+
             // Push using exact registry index from inline registration
             ctx.write_indent();
             ctx.write("call void @blood_evidence_push_by_index(ptr ");
@@ -1019,7 +1054,9 @@ pub fn emit_statement(
             ctx.write_cgname(&reg_idx);
             ctx.write(", ptr ");
             ctx.write_cgname(&state_arg);
-            ctx.write(", i64 0)\n");
+            ctx.write(", i64 ");
+            ctx.write_string(&inline_prompt_i64);
+            ctx.write(")\n");
 
             // EFF-OPT-003: Only set inline hint for single-handler scopes
             ctx.handler_depth = ctx.handler_depth + 1;
@@ -1029,6 +1066,248 @@ pub fn emit_statement(
                 ctx.write_string(&effect_id_val);
                 ctx.write(")\n");
             }
+
+            // B1a-1b: mprompt vertical slice for inline scopes.
+            //
+            // Parallels the named PushHandler mprompt emission at the top
+            // of this function. Inline scopes differ from named scopes in
+            // four ways:
+            //   1. handler_id stored on NtrScope is actually effect_id
+            //      (see mir_ntr_scope.blood doc).
+            //   2. No CallReturnClause emits the per-path merge — we emit
+            //      the dest-store + manual evidence pop + branch to
+            //      after_block directly in PushInlineHandler.
+            //   3. body_result_local is -1 (nothing to return from body_fn
+            //      to mp_prompt_enter's caller). body_fn still runs any
+            //      write-to-dest the body produces via the env-captured
+            //      dest pointer during normal resumption, but the
+            //      with-handle value comes from mp_prompt_enter's return
+            //      (see 4. below) regardless of path.
+            //   4. Koka deep-handler semantics: the with-handle result is
+            //      the outermost handler-op's final value, which is what
+            //      mp_prompt_enter returns when the handler runs to
+            //      completion (on resume, handler op's post-resume code
+            //      runs after body returns, and the handler's return
+            //      value propagates through the mp_yield dispatcher).
+            //      For the abort case, mp_prompt_enter returns the
+            //      handler op's direct return value. Either way, the
+            //      same `mp_result` is the right value to store to dest.
+            //      We therefore skip the normal_flag branch entirely —
+            //      it was a workaround for a model where body's value
+            //      would be the with-handle result on the normal path,
+            //      which doesn't match the mpeff semantics.
+            if use_mprompt {
+                let scope_clone = ctx.ntr_scopes[inline_ntr_scope_idx as usize].clone_deep();
+                let fn_def_id = ctx.current_fn_def_id;
+                let push_block_idx = scope_clone.push_block.index;
+                let capture_count = scope_clone.captures.len();
+
+                // Reconstruct env struct type name and body_fn symbol
+                // (kept in sync with codegen_body_fn.env_ty_name /
+                // body_fn_name).
+                let mut env_ty = common.make_string("%env_ty_");
+                env_ty.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+                env_ty.push_str("_");
+                env_ty.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+
+                let mut body_fn_sym = common.make_string("@body_fn_");
+                body_fn_sym.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+                body_fn_sym.push_str("_");
+                body_fn_sym.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+
+                // 1. normal_flag alloca — unused by the inline path (we
+                //    always use mp_prompt_enter's return as the value)
+                //    but env_ty still reserves the trailing slot for it
+                //    because both named and inline scopes share the
+                //    codegen_body_fn layout. Initialize to 0 so body_fn
+                //    can safely write to it (body_fn always does, even
+                //    for inline).
+                let inline_normal_flag = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_normal_flag);
+                ctx.write(" = alloca i1, align 1\n");
+                ctx.write_indent();
+                ctx.write("store i1 0, ptr ");
+                ctx.write_cgname(&inline_normal_flag);
+                ctx.write(", align 1\n");
+
+                // 2. env struct alloca. Layout: captures.len() * 2 slots
+                //    for (base, gen) pairs + 1 trailing slot for
+                //    normal_flag_ptr. See codegen_body_fn.append_env_type_decl.
+                let inline_env = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_env);
+                ctx.write(" = alloca ");
+                ctx.write(env_ty.as_str());
+                ctx.write(", align 8\n");
+
+                // 3. Pack captures: per capture i, store &_<L> at slot 2*i
+                //    (base) and &_<L>_gen (or null) at slot 2*i+1 (gen).
+                for ci in 0usize..capture_count {
+                    let cap_local = scope_clone.captures[ci];
+                    let cap_alloca = ctx.local_cg(cap_local);
+
+                    let env_slot_base = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&env_slot_base);
+                    ctx.write(" = getelementptr ");
+                    ctx.write(env_ty.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&inline_env);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64((ci * 2) as u64).as_str());
+                    ctx.write("\n");
+
+                    ctx.write_indent();
+                    ctx.write("store ptr ");
+                    ctx.write_cgname(&cap_alloca);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&env_slot_base);
+                    ctx.write(", align 8\n");
+
+                    let env_slot_gen = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&env_slot_gen);
+                    ctx.write(" = getelementptr ");
+                    ctx.write(env_ty.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&inline_env);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64((ci * 2 + 1) as u64).as_str());
+                    ctx.write("\n");
+
+                    let gen_value_str: String = match ctx.get_heap_gen_name(cap_local) {
+                        Option.Some(gen_name) => common.make_string(gen_name.as_str()),
+                        Option.None => common.make_string("null"),
+                    };
+                    ctx.write_indent();
+                    ctx.write("store ptr ");
+                    ctx.write(gen_value_str.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&env_slot_gen);
+                    ctx.write(", align 8\n");
+                }
+
+                // 4. Trailing env slot holds normal_flag_ptr.
+                let inline_flag_slot = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_flag_slot);
+                ctx.write(" = getelementptr ");
+                ctx.write(env_ty.as_str());
+                ctx.write(", ptr ");
+                ctx.write_cgname(&inline_env);
+                ctx.write(", i32 0, i32 ");
+                ctx.write(codegen_types.format_u64((capture_count * 2) as u64).as_str());
+                ctx.write("\n");
+                ctx.write_indent();
+                ctx.write("store ptr ");
+                ctx.write_cgname(&inline_normal_flag);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&inline_flag_slot);
+                ctx.write(", align 8\n");
+
+                // 5. Run the try body on a fresh gstack.
+                let inline_mp_result = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_mp_result);
+                ctx.write(" = call ptr @blood_prompt_enter(ptr ");
+                ctx.write_string(&inline_prompt_cgname);
+                ctx.write(", ptr ");
+                ctx.write(body_fn_sym.as_str());
+                ctx.write(", ptr ");
+                ctx.write_cgname(&inline_env);
+                ctx.write(")\n");
+
+                let inline_mp_i64 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_mp_i64);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write_cgname(&inline_mp_result);
+                ctx.write(" to i64\n");
+
+                // 6. Unconditionally narrow-and-store mp_result into
+                //    inline_dest. Both the resume-completed and abort
+                //    paths produce mp_result = handler op's final value
+                //    per Koka deep-handler semantics. Body's own write to
+                //    dest (via env-captured pointer during normal
+                //    execution) is overwritten here — that's intentional.
+                //    When scope_clone.inline_dest is None the caller
+                //    passed Destination.Ignore and the value is discarded.
+                match &scope_clone.inline_dest {
+                    &Option.Some(ref dest_place) => {
+                        let dest_ptr = {
+                            let addr = codegen_place.emit_place_addr(ctx, dest_place);
+                            cgname_to_string(&addr)
+                        };
+                        let dest_ty = ctx.get_local_type(dest_place.local);
+                        if strs_equal(dest_ty.as_str(), "i64") {
+                            ctx.emit_store_cg("i64", &inline_mp_i64, dest_ptr.as_str());
+                        } else if strs_equal(dest_ty.as_str(), "{}") || strs_equal(dest_ty.as_str(), "void") {
+                            // Unit destination — nothing to store (zero-sized).
+                        } else if strs_equal(dest_ty.as_str(), "ptr") {
+                            ctx.emit_store_cg("ptr", &inline_mp_result, dest_ptr.as_str());
+                        } else {
+                            let narrowed = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&narrowed);
+                            ctx.write(" = trunc i64 ");
+                            ctx.write_cgname(&inline_mp_i64);
+                            ctx.write(" to ");
+                            ctx.write_string(&dest_ty);
+                            ctx.write("\n");
+                            ctx.emit_store_cg(dest_ty.as_str(), &narrowed, dest_ptr.as_str());
+                        }
+                    }
+                    &Option.None => {
+                        // Destination.Ignore — no dest to write.
+                    }
+                }
+
+                // 7. Manually pop the evidence — we bypass pop_block's
+                //    PopHandler because the body has already been
+                //    consumed by mp_prompt_enter. Matches the pattern
+                //    in PopHandler emission above.
+                let inline_ev_cur = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_ev_cur);
+                ctx.write(" = call ptr @blood_evidence_current()\n");
+
+                let inline_ev_pop = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&inline_ev_pop);
+                ctx.write(" = call i64 @blood_evidence_pop(ptr ");
+                ctx.write_cgname(&inline_ev_cur);
+                ctx.write(")\n");
+
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_clear_inline()\n");
+
+                // Mirror PopHandler's handler_depth bookkeeping — we set
+                // it one line earlier (set_inline depends on it) so we
+                // undo both there and here atomically. `set_inline`
+                // already ran up above; decrement back to match.
+                if ctx.handler_depth > 0 {
+                    ctx.handler_depth = ctx.handler_depth - 1;
+                }
+
+                // 8. Branch to after_block. This bypasses pop_block
+                //    entirely (its PopHandler would double-pop). The
+                //    outer MIR emission still emits pop_block as a
+                //    reachable block, but no predecessor branches to it
+                //    — it becomes dead code that llc/LLVM DCE will
+                //    remove in later passes.
+                let inline_after_label = ctx.block_label_cg(scope_clone.after_block);
+                ctx.emit_br_cg(&inline_after_label);
+
+                // Suppress push_block's MIR terminator (the `goto body_block`
+                // emitted by lower_inline_handle_expr) — we replaced it
+                // with the `br after_block` above.
+                ctx.block_terminated_by_stmt = true;
+            }
+            // Reference `dest` to avoid "unused binding" diagnostics on
+            // the identity-path (use_mprompt = false). The real consumer
+            // is the scope_clone.inline_dest branch above.
+            let _ = dest;
         }
         &mir_stmt.StatementKind.CallReturnClause {
             handler_id,
