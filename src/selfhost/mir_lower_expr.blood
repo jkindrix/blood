@@ -2739,19 +2739,47 @@ fn lower_inline_handle_expr(
         span,
     ));
 
-    // Lower the try body
+    // Create blocks for body execution and continuation. Mirrors
+    // lower_with_handle_expr so that `mir_ntr_scope` and
+    // `codegen_body_fn.emit_body_fn` can treat inline and named scopes
+    // uniformly in B1a-1b: push_block terminates with `goto body_block`,
+    // so body statements live in a block that `body_fn_contains_block`
+    // does not exclude, and pop_block terminates with `goto after_block`
+    // so the outer function's control flow joins after the scope.
+    // Pre-B1a-1b-prep, inline emitted body statements + PopHandler
+    // directly after PushInlineHandler in push_block, which made the
+    // body invisible to body_fn extraction (both push_block and the
+    // matching pop_block are excluded from body_fn).
+    let body_block = ctx.new_block();
+    let after_block = ctx.new_block();
+
+    // Jump to body block.
+    ctx.builder.terminate(mir_term.Terminator.goto(body_block, span));
+
+    // Execute body in body_block.
+    ctx.set_current_block(body_block);
+
+    // Lower the try body.
     lower_expr(ctx, body, dest);
 
-    // Pop handlers in reverse order
-    for pi in 0usize..handlers.len() {
-        let rev_idx = handlers.len() - 1 - pi;
-        ctx.emit_stmt(mir_stmt.Statement.new(
-            mir_stmt.StatementKind.PopHandler {
-                handler_id: handlers[rev_idx].effect_id,
-            },
-            span,
-        ));
+    // Pop handlers in reverse order (only if block not terminated).
+    if !ctx.is_terminated() {
+        for pi in 0usize..handlers.len() {
+            let rev_idx = handlers.len() - 1 - pi;
+            ctx.emit_stmt(mir_stmt.Statement.new(
+                mir_stmt.StatementKind.PopHandler {
+                    handler_id: handlers[rev_idx].effect_id,
+                },
+                span,
+            ));
+        }
+
+        // Jump to continuation.
+        ctx.builder.terminate(mir_term.Terminator.goto(after_block, span));
     }
+
+    // Set current block to continuation.
+    ctx.set_current_block(after_block);
 }
 
 fn lower_with_handle_expr(
