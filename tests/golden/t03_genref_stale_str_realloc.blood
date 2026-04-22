@@ -1,17 +1,10 @@
-// Canary: &str from String.as_str() uses gen=0 (untracked).
-//
-// String data buffer gen tracking via blood_lazy_register_gen was removed
-// from the string_as_str codegen path because it caused thousands of false
-// positive stale ref panics per compilation. Root cause: effect handler
-// snapshot validation checks ALL gen-tracked allocas at every perform site,
-// including dead &str temporaries whose backing String buffers were freed
-// by ensure_cap during normal growth. Until snapshot liveness analysis can
-// exclude dead references, &str from as_str() is intentionally untracked.
-//
-// This test verifies the compiler does NOT panic on stale &str references.
-// The &str points to freed memory after the String grows, but gen=0 means
-// validation is skipped. We do NOT read through the stale reference (that
-// would be reading freed memory).
+// Canary: &str from String.as_str() now has lazily-registered gen (A3).
+// String reallocation invalidates the old buffer's gen via blood_free_simple,
+// so the stale &str would fail validation if dereferenced. This test
+// deliberately does NOT deref the stale ref — verifying that the realloc
+// path itself does not produce a spurious panic from snapshot validation
+// or any other code path. See t03_genref_stale_str_deref.blood for the
+// companion that verifies TRUE positive detection on deref.
 //
 // EXPECT: ok
 

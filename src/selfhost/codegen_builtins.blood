@@ -815,16 +815,27 @@ pub fn emit_string_as_str_call(
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
-    // String data buffers use gen=0 (untracked). Even with liveness-filtered
-    // snapshots (S27), the compiler code holds &str references across perform
-    // sites while backing String buffers are reallocated — a real stale pattern
-    // that gen tracking correctly detects but cannot yet be fixed without
-    // restructuring the compiler's string handling. The liveness analysis
-    // still filters dead locals from all OTHER snapshot entries (region,
-    // persistent, unsized refs from non-string sources).
-    let data_gen_opt: Option<codegen_ctx.CgName> = Option.None;
+    // Lazily register the data buffer in the gen hash table; free of the
+    // underlying buffer (via blood_free_simple → unregister_allocation) bumps
+    // the gen, so old &str references see a mismatch on deref.
+    let data_ptr = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&data_ptr);
+    ctx.write(" = extractvalue { ptr, i64 } ");
+    ctx.write_cgname(&result);
+    ctx.write(", 0\n");
+    let data_addr = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&data_addr);
+    ctx.write(" = ptrtoint ptr ");
+    ctx.write_cgname(&data_ptr);
+    ctx.write(" to i64\n");
+    let data_gen = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&data_gen), "i32", "@blood_lazy_register_gen");
+    ctx.call_arg_cg(true, "i64", &data_addr);
+    ctx.end_call();
+    let data_gen_opt = Option.Some(data_gen);
 
-    // Pack result with gen=0 (untracked — no gen bits in upper 32)
     let packed_result = pack_gen_into_str_result(ctx, &result, &data_gen_opt);
 
     // Store result to destination

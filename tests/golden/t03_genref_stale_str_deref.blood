@@ -1,0 +1,25 @@
+// Test: dereferencing a stale &str after String reallocation panics.
+// String.as_str() lazily registers the data buffer in the gen hash table
+// (codegen_builtins.blood emit_string_as_str_call → @blood_lazy_register_gen).
+// When ensure_cap allocates a new buffer and frees the old one, the old
+// buffer's gen is incremented by blood_free_simple. The stale &str retains
+// the old gen, so blood_validate_generation on deref returns 0 → stale.
+//
+// Companion to t03_genref_stale_str_realloc.blood, which verifies the
+// no-deref case does NOT spuriously panic.
+//
+// EXPECT_EXIT: nonzero
+
+fn main() -> i32 {
+    let mut stale: &str = "";
+    region {
+        let mut s: String = String.new();
+        s.push_str("hello");
+        stale = s.as_str();
+        // Force ensure_cap: from cap 16 to >16, allocates new buffer + frees old.
+        s.push_str("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    }
+    // Read through the stale ref — triggers validate_generation → panic.
+    println(stale);
+    0
+}

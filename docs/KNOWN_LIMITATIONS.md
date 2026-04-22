@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 576 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 579 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 273 Coq theorems/lemmas across 22 theory files, 219 proved (Qed/Defined), 14 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -17,17 +17,13 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ## Known soundness gaps (compile-time or runtime correctness)
 
-### GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers
+### ~~GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers~~ RESOLVED (session 51, 2026-04-22)
 
-**Status:** intentionally disabled (session 23, 2026-04-14). Registration in `rt_blood_alloc_simple` and `blood_lazy_register_gen` in `string_as_str` codegen both removed.
+**Resolution:** `emit_string_as_str_call` (codegen_builtins.blood) now calls `@blood_lazy_register_gen` on the data buffer pointer and packs the returned generation into the upper 32 bits of the `{ ptr, i64 }` &str. When `ensure_cap` reallocates the underlying String buffer, `blood_free_simple` increments the gen for the old address, so a stale `&str` derived from `as_str()` fails validation on deref. Three-generation byte-identical bootstrap verified at seed `f71ef58c`. Tests: `t03_genref_stale_str_realloc.blood` (no spurious panic when stale ref is unread) and `t03_genref_stale_str_deref.blood` (TRUE positive — deref → panic).
 
-**History:** commit 6080f21 (2026-04-10) added registration in `rt_blood_alloc_simple`. Session 23 investigation revealed two blocking issues:
+**Why the earlier attempts failed:** S23 (2026-04-14) tried registration via `rt_blood_alloc_simple` (every allocation registers). That produced thousands of false-positive stale ref panics from snapshot validation checking dead `&str` temporaries at every `perform` site. S27 (2026-04-14) added backward liveness analysis (`mir_liveness.blood`) and wired it into `codegen_term.blood`'s three snapshot loops, eliminating the false-positive class — but `string_as_str` codegen was kept at gen=0 pending audit. A3 reintroduces lazy registration solely at the codegen call site (one entry per distinct buffer regardless of how many `as_str()` calls), which is sufficient because `blood_free_simple` handles source=2 buffers correctly via gen-increment-on-free.
 
-1. **Snapshot false positives (thousands per compilation):** Effect handler snapshot validation checks ALL gen-tracked allocas at every `perform` site, including dead `&str` temporaries whose backing String buffers were freed by `ensure_cap` during normal growth. A minimal `fn main() -> i32 { 0 }` triggered 12 false stale detections; self-compilation triggered thousands.
-
-2. **`blood_realloc` registration asymmetry:** `blood_realloc` allocates new buffers via `libc.sys_calloc` (bypasses registration) but old buffers were registered via `alloc_simple`. This caused Vec data buffers to be tracked on initial allocation but not after reallocation, breaking gen validation in for-in loops.
-
-**What's needed:** snapshot liveness analysis to exclude dead references from perform-site validation. Until then, `&str` from `String.as_str()` uses gen=0 (untracked). Region and explicit-alloc gen tracking remain active.
+**Note (out of scope):** `string_as_bytes` codegen still uses `blood_get_generation` (lookup-only, returns 0 for unregistered) — &[u8] from `as_bytes()` remains untracked. Symmetric fix would mirror the A3 change in `emit_string_as_bytes_call`. `blood_realloc`'s registration asymmetry (new buffer via sys_calloc bypasses registration) is also unchanged; rt_string/rt_vec growth uses `alloc_simple + free_simple` directly, not `blood_realloc`, so the asymmetry doesn't affect String/Vec stale detection.
 
 ### GAP-2: `Frozen<T>` deep traversal is shallow
 
