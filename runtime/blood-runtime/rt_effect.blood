@@ -31,6 +31,13 @@ bridge "C" MpromptBridge {
         arg_count: i64,
         is_abort: i32,
     ) -> *mut u8;
+
+    // Sub-task 3g — consulted by rt_perform_ntr's evidence scan so an
+    // ongoing handler's prompt is skipped when the handler re-performs
+    // its own effect. Returns 1 if the prompt is currently executing
+    // inside a dispatch trampoline (mp_yield will assert otherwise),
+    // 0 otherwise.
+    fn blood_is_active_dispatch(prompt_addr: i64) -> i32;
 }
 
 // ============================================================================
@@ -213,18 +220,28 @@ pub fn rt_perform_ntr(
         // Reverse linear scan for the matching effect. The inline-evidence hint
         // is intentionally skipped — NTR perform is the slow path and the hint
         // was tuned for TR's direct-call pattern.
+        //
+        // Sub-task 3g — skip entries whose prompt is currently executing
+        // inside a dispatch trampoline (reperform from within a handler op
+        // must yield past itself to the next-outer handler; yielding back
+        // to the dispatching prompt would trip mp_yield's ancestor
+        // assertion).
         let mut pos: i64 = 0 - 1;
         let len: i64 = rt_evidence.ev_len(ev);
         let mut i: i64 = len - 1;
         while i >= 0 {
             if rt_evidence.ev_read_effect_id(ev, i) == effect_id {
-                pos = i;
-                i = 0 - 1;
+                let entry_prompt: i64 = rt_evidence.ev_read_prompt_addr(ev, i);
+                let active: i32 = MpromptBridge.blood_is_active_dispatch(entry_prompt);
+                if active == 0 {
+                    pos = i;
+                    i = 0 - 1;
+                }
             }
             i = i - 1;
         }
         if pos < 0 {
-            rt_panic.rt_panic("perform_ntr: unhandled effect");
+            rt_panic.rt_panic("perform_ntr: unhandled effect (all matching handlers are currently dispatching)");
         }
 
         let reg_idx: i64 = rt_evidence.ev_read_registry_index(ev, pos);

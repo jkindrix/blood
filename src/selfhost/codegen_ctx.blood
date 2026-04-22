@@ -1237,31 +1237,32 @@ impl CodegenCtx {
         }
     }
 
-    /// True if the effect's handlers are safe for libmprompt dispatch.
-    /// Sub-task 3d wired blood_resume into the mprompt Resume codegen
-    /// and body_fn now propagates the body's final value via the chain,
-    /// so resumable-NTR handlers are technically routable through
-    /// mprompt. However, full correctness still needs:
-    ///   - Gen-tracked capture plumbing (body_fn misses `_N_gen` allocas).
-    ///   - `body_result` computation moved into body_fn (currently
-    ///     materialized in pop_block, so bodies with non-Copy tail
-    ///     expressions like `x + 16` lose the value).
-    ///   - Nested handler reperform (libmprompt's mp_yield asserts
-    ///     `mp_prompt_is_ancestor`, which fails when an inner handler
-    ///     re-performs back to an outer handler across gstacks).
-    /// Until those gaps close, keep the effect-level gate conservative:
-    /// only abort-only effects (no `resume(...)` anywhere in any handler
-    /// op) route through mprompt. The 3d machinery below is live but
-    /// dormant for resumable-NTR effects — expanding the gate after the
-    /// follow-up work lands re-enables it without any further code change.
+    /// True if the effect's handlers route through the libmprompt
+    /// body-fn extraction path. Every non-tail-resumptive effect
+    /// (abort-only and resumable alike) is eligible after sub-tasks
+    /// 3d, 3f, 3f-body and 3g landed — each closed one of the gaps
+    /// that previously kept resumable-NTR handlers on the legacy
+    /// setjmp path:
+    ///
+    ///   - 3d wired blood_resume into the Resume codegen so body's
+    ///     final value propagates back through the mp_resume chain.
+    ///   - 3f threaded the `_N_gen` alloca pointer through the env
+    ///     so Rvalue.Ref inside body_fn resolves companion generation
+    ///     storage to `%cap_N_gen_ptr`.
+    ///   - 3f-body moved pop_block's pre-PopHandler statements into
+    ///     body_fn so bodies with non-Copy tail expressions compute
+    ///     their body_result on the gstack before body_fn_return
+    ///     propagates it.
+    ///   - 3g added an active-dispatch skip to blood_perform_ntr so a
+    ///     handler re-performing its own effect yields past itself to
+    ///     the next-outer handler instead of tripping mp_yield's
+    ///     ancestor assertion.
+    ///
+    /// Returns true for every effect that has any handler op marked
+    /// non-tail-resumptive; the legacy setjmp path remains only as a
+    /// defensive fallback while sub-task 3e removes it entirely.
     pub fn is_mprompt_eligible_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
-        if !self.is_non_tail_resumptive_effect(effect_def_id) {
-            return false;
-        }
-        if self.effect_has_resume(effect_def_id) {
-            return false;
-        }
-        true
+        self.is_non_tail_resumptive_effect(effect_def_id)
     }
 
     /// Returns true if the current function has a recorded NTR scope for this
