@@ -128,27 +128,9 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
             rt_evidence.deep_push(saved_effect_id, reg_idx, saved_state_addr);
         }
 
-        // NON-TAIL-RESUMPTIVE TRACKING
-        //
-        // WAS_RESUMED is a single global, so a nested perform (e.g., a
-        // handler body that does `perform Other.op()` before returning)
-        // would otherwise leak its resume state to the outer perform's
-        // abort check. Save/restore the outer's value around the
-        // handler dispatch so each perform-invocation sees only its
-        // own handler's resume decision.
-        let saved_was_resumed: i32 = rt_evidence.get_was_resumed();
-        if continuation != 0 {
-            rt_evidence.set_was_resumed_val(0);
-        }
-
         // INVOKE HANDLER via indirect call
         let state_ptr: *mut u8 = alloc.addr_to_ptr(saved_state_addr);
         let result: i64 = IndirectCall.call_handler_op(fn_ptr, state_ptr, args, arg_count, continuation);
-
-        // Restore outer's WAS_RESUMED so a re-perform at this level doesn't
-        // see the inner handler's decision (Round 3 will remove WAS_RESUMED
-        // entirely now that the abort branch is gone).
-        rt_evidence.set_was_resumed_val(saved_was_resumed);
 
         // RESTORE HANDLER
         if is_deep != 0 {

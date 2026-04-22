@@ -453,25 +453,19 @@ pub fn emit_terminator(
             }
         }
         &mir_term.TerminatorKind.Resume { ref value, ref destination, ref target } => {
-            // 3d: handler op bodies for mprompt-eligible effects route
-            // Resume through libmprompt blood_resume (mp_resume) instead of
-            // the legacy setjmp trampoline. The mprompt path writes handler
-            // state back (same state-pointer ABI as the legacy path) but
-            // replaces the blood_set_was_resumed + ret i64 sequence with a
-            // blood_resume(cont_ptr, val_ptr) call whose result is returned
-            // as the handler op body's i64 result (or stored into the
-            // destination place and followed by a branch to the target
-            // block for non-tail-resumptive handlers).
+            // Handler op bodies for mprompt-eligible effects route Resume
+            // through libmprompt blood_resume (mp_resume). Every non-tail-
+            // resumptive effect is mprompt-eligible after sub-tasks 3d, 3f,
+            // 3f-body and 3g landed (S42). This branch dispatches to the
+            // mprompt path; the fallthrough below handles tail-resumptive
+            // handler ops and inline handler op closures (neither of which
+            // needs to cross a gstack boundary).
             if ctx.current_handler_op_uses_mprompt_resume {
                 emit_resume_mprompt(ctx, value, destination, target);
                 return;
             }
 
-            // Resume from handler op body.
-            // Mark that this handler called resume, so blood_perform won't trigger abort
-            ctx.write_indent();
-            ctx.write("call void @blood_set_was_resumed()\n");
-
+            // Resume from a TR or inline handler op body.
             // Store-back: write capture locals back through parent pointers.
             // This ensures mutations (e.g., total = total + value) persist.
             if ctx.handler_capture_locals.len() > 0 {
