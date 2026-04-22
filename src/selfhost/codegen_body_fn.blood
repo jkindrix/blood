@@ -183,7 +183,15 @@ pub fn emit_body_fn(
 
     for bbi in 0usize..body.basic_blocks.len() {
         let bb_id = mir_def.BasicBlockId.new(bbi as u32);
-        if !scope.body_fn_contains_block(bb_id) {
+        // A scope emits a block only when it is the INNERMOST scope
+        // strictly containing it. Without this, outer scopes would
+        // duplicate inner scopes' body blocks (outer.body_blocks is a
+        // superset of inner.body_blocks). Nested scopes' push/pop blocks
+        // are emitted here because the inner scope does not "own" its
+        // own push/pop (push_block/pop_block are excluded from each
+        // scope's own contains check), so the next-outer scope becomes
+        // their owner — giving them the correct mprompt setup context.
+        if ctx.ntr_innermost_owning_scope_idx(bb_id) != scope_idx as i32 {
             continue;
         }
         codegen_term.emit_basic_block(ctx, bb_id, &body.basic_blocks[bbi]);

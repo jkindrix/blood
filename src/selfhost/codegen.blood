@@ -570,14 +570,15 @@ pub fn generate_function_with_ctx(
 
         for block_idx in 0usize..body.basic_blocks.len() {
             let block_id = mir_def.BasicBlockId.new(block_idx as u32);
-            // Skip blocks that live inside an NTR scope's body: they will be
-            // re-emitted in the scope's body function (running on the
-            // mprompt gstack). The scope's push_block and pop_block remain
-            // in the outer function — push_block to carry pre-PushHandler
-            // statements + the mprompt setup, pop_block to carry PopHandler
-            // + CallReturnClause + CallFinallyClause after blood_prompt_enter
-            // returns (normal or abort path).
-            if ctx.is_ntr_body_block(block_id) && !ctx.is_ntr_push_or_pop_block(block_id) {
+            // Skip blocks that live inside SOME NTR scope's body (other
+            // than as that scope's own push/pop): they belong inside an
+            // extracted body function. The outer function keeps only the
+            // outermost scope's push_block and pop_block plus blocks not
+            // contained by any scope. For nested scopes, the inner
+            // scope's push/pop blocks are owned by the enclosing scope's
+            // body_fn (which handles their mprompt setup/teardown), not
+            // by the outer function.
+            if ctx.ntr_block_is_strictly_contained(block_id) {
                 continue;
             }
             codegen_term.emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);

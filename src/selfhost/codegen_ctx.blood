@@ -1340,6 +1340,66 @@ impl CodegenCtx {
         false
     }
 
+    /// True when some NTR scope strictly contains the block — i.e. `bb` is
+    /// in some scope S's body_blocks AND `bb` is neither S.push_block nor
+    /// S.pop_block. Such blocks belong inside an extracted body function
+    /// (possibly the body_fn of an enclosing scope, if `bb` itself is a
+    /// nested scope's push/pop) and must be skipped in the outer function's
+    /// block emission.
+    ///
+    /// This replaces the earlier "is_body AND NOT push_or_pop" heuristic,
+    /// which incorrectly kept nested scopes' push/pop blocks in the outer
+    /// function — the innermost enclosing body_fn owns them instead.
+    pub fn ntr_block_is_strictly_contained(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> bool {
+        for i in 0usize..self.ntr_scopes.len() {
+            let scope = &self.ntr_scopes[i];
+            if scope.push_block.index == bb.index {
+                continue;
+            }
+            if scope.pop_block.index == bb.index {
+                continue;
+            }
+            if scope.contains_block(bb) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns the index of the INNERMOST NTR scope that strictly contains
+    /// `bb` (i.e. `bb` is in body_blocks but not the scope's push/pop), or
+    /// -1 when no scope strictly contains it. "Innermost" is approximated
+    /// by smallest `body_blocks.len()` among candidates — safe because
+    /// scopes are either properly nested or disjoint (no overlaps) in
+    /// well-formed MIR.
+    ///
+    /// Consumed by body_fn emission (and block_label_cg): a scope S's
+    /// body_fn emits `bb` iff S is `bb`'s innermost owning scope. This
+    /// prevents duplicate emission of nested scopes' inner bodies in
+    /// enclosing body_fns.
+    pub fn ntr_innermost_owning_scope_idx(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> i32 {
+        let mut best: i32 = -1i32;
+        let mut best_size: usize = 0;
+        for i in 0usize..self.ntr_scopes.len() {
+            let scope = &self.ntr_scopes[i];
+            if scope.push_block.index == bb.index {
+                continue;
+            }
+            if scope.pop_block.index == bb.index {
+                continue;
+            }
+            if !scope.contains_block(bb) {
+                continue;
+            }
+            let size = scope.body_blocks.len();
+            if best < 0 || size < best_size {
+                best = i as i32;
+                best_size = size;
+            }
+        }
+        best
+    }
+
     /// Marks that statement/terminator emission is happening inside the
     /// extracted body function for the scope at `scope_idx` in `ntr_scopes`.
     /// Sub-task 4's body_fn emitter sets this immediately before re-emitting
