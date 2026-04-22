@@ -44,9 +44,22 @@ mod mir_body;
 ///   - `body_blocks`: the set of blocks that become the body function
 ///   - `captures`: locals to pack into the env struct
 pub struct NtrScope {
-    /// The handler DefId. Matches PushHandler.handler_id and PopHandler.handler_id.
+    /// The handler DefId. For named handler scopes this matches
+    /// PushHandler.handler_id and PopHandler.handler_id. For inline handler
+    /// scopes (`try { body } with { op() => ... }`, introduced via
+    /// PushInlineHandler) this holds the effect_id, because the MIR lowering
+    /// emits `PopHandler { handler_id: effect_id }` for the pop side and
+    /// there is no named handler DefId. Callers that use `handler_id` to
+    /// look up named-handler metadata must first check `is_inline`.
     pub handler_id: hir_def.DefId,
-    /// The basic block containing the PushHandler statement for this scope.
+    /// True if this scope originated from a `PushInlineHandler` statement
+    /// rather than a named-handler `PushHandler`. Named and inline scopes
+    /// share the body-blocks/captures/pop-matching logic, but downstream
+    /// codegen consumers differ: named handlers have an associated
+    /// HandlerInfo + CallReturnClause, inline scopes do not (B1a).
+    pub is_inline: bool,
+    /// The basic block containing the PushHandler or PushInlineHandler
+    /// statement for this scope.
     pub push_block: mir_def.BasicBlockId,
     /// The basic block containing the matching PopHandler statement.
     /// May equal `push_block` for an empty body (unusual but legal).
@@ -69,6 +82,9 @@ pub struct NtrScope {
     /// loads from the matching capture and returns that value so mp_resume
     /// propagates body's final value through the handler-op chain. -1 when
     /// no CallReturnClause is present (unusual; legacy/untransformed MIR).
+    /// For inline scopes (is_inline=true) there is no CallReturnClause; the
+    /// field is always -1 and the consumer uses the pushed body destination
+    /// instead (tracked as B1a-1b).
     pub body_result_local: i32,
     /// Number of statements in `pop_block` that appear BEFORE PopHandler.
     /// These compute the handle-block's body_result value (e.g. `_body
@@ -141,6 +157,7 @@ impl NtrScope {
         }
         NtrScope {
             handler_id: hir_def.DefId { index: self.handler_id.index },
+            is_inline: self.is_inline,
             push_block: mir_def.BasicBlockId { index: self.push_block.index },
             pop_block: mir_def.BasicBlockId { index: self.pop_block.index },
             body_blocks: bbs,
@@ -198,10 +215,18 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
         let body_blocks = compute_body_blocks(body, pair.push_block, pair.pop_block, pair.handler_id);
         let pop_pre_stmt_count = compute_pop_pre_stmt_count(body, pair.pop_block, pair.handler_id);
         let captures = compute_captures(body, &body_blocks, pair.pop_block, pop_pre_stmt_count);
-        let body_result_local = find_body_result_local(body, pair.pop_block, pair.handler_id);
+        // Inline handlers have no CallReturnClause — body_result_local stays
+        // -1 for them. B1a-1b introduces a separate mechanism (pushed body
+        // destination) for inline body_fn to report the body's final value.
+        let body_result_local = if pair.is_inline {
+            -1i32
+        } else {
+            find_body_result_local(body, pair.pop_block, pair.handler_id)
+        };
 
         result.scopes.push(NtrScope {
             handler_id: pair.handler_id,
+            is_inline: pair.is_inline,
             push_block: pair.push_block,
             pop_block: pair.pop_block,
             body_blocks: body_blocks,
@@ -340,18 +365,26 @@ fn operand_local_index(op: &mir_types.Operand) -> i32 {
 // Internal: handler pair detection
 // ============================================================
 
-/// A matched (PushHandler, PopHandler) pair located during scanning.
+/// A matched (PushHandler|PushInlineHandler, PopHandler) pair located
+/// during scanning. `is_inline` distinguishes the two statement kinds so
+/// downstream scope construction can set `NtrScope.is_inline` correctly
+/// without re-scanning the block.
 struct HandlerPair {
     handler_id: hir_def.DefId,
+    is_inline: bool,
     push_block: mir_def.BasicBlockId,
     pop_block: mir_def.BasicBlockId,
 }
 
 /// Walks every block's statements in order and produces one HandlerPair
-/// for each PushHandler statement. A `pop_block` is found by linear scan
-/// for a PopHandler with the matching handler_id, looking at all blocks
-/// (not just successors of push_block) because control flow may reach a
-/// pop through a merge from multiple body paths.
+/// for each PushHandler or PushInlineHandler statement. A `pop_block` is
+/// found by linear scan for a PopHandler with the matching handler_id,
+/// looking at all blocks (not just successors of push_block) because
+/// control flow may reach a pop through a merge from multiple body paths.
+///
+/// For PushInlineHandler, the MIR lowering emits `PopHandler { handler_id:
+/// effect_id }`, so we match the pop using the inline handler's effect_id
+/// and store that same effect_id on the HandlerPair.
 ///
 /// If no matching PopHandler is found, the pair is dropped silently — that
 /// indicates a malformed MIR body (callers should validate elsewhere).
@@ -377,12 +410,33 @@ fn find_handler_pairs(body: &mir_body.MirBody) -> Vec<HandlerPair> {
                         Option.Some(pop_bb) => {
                             pairs.push(HandlerPair {
                                 handler_id: handler_id,
+                                is_inline: false,
                                 push_block: push_bb,
                                 pop_block: pop_bb,
                             });
                         }
                         Option.None => {
                             // Malformed: PushHandler without matching PopHandler.
+                            // Skip — validate_mir will diagnose separately.
+                        }
+                    }
+                }
+                &mir_stmt.StatementKind.PushInlineHandler {
+                    effect_id,
+                    operations: _,
+                } => {
+                    let push_bb = mir_def.BasicBlockId.new(bb_idx as u32);
+                    match find_matching_pop(body, push_bb, effect_id) {
+                        Option.Some(pop_bb) => {
+                            pairs.push(HandlerPair {
+                                handler_id: effect_id,
+                                is_inline: true,
+                                push_block: push_bb,
+                                pop_block: pop_bb,
+                            });
+                        }
+                        Option.None => {
+                            // Malformed: PushInlineHandler without matching PopHandler.
                             // Skip — validate_mir will diagnose separately.
                         }
                     }
