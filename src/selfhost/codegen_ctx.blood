@@ -1366,6 +1366,24 @@ impl CodegenCtx {
         false
     }
 
+    /// Returns the number of statements that must be skipped at the start
+    /// of `bb` when the outer function or an enclosing body_fn emits it.
+    /// Nonzero when `bb` is the pop_block of an mprompt scope registered
+    /// in `ntr_scopes`: those leading statements compute the handle-block's
+    /// body_result on the gstack and are emitted as the `pop_pre` trailer
+    /// in body_fn. Zero for every other block, including when body_fn
+    /// itself is emitting the pop_block's pre-statements (body_fn does
+    /// not route through emit_basic_block for that emission).
+    pub fn mprompt_pop_pre_stmt_skip(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> usize {
+        for i in 0usize..self.ntr_scopes.len() {
+            let scope = &self.ntr_scopes[i];
+            if scope.pop_block.index == bb.index {
+                return scope.pop_pre_stmt_count as usize;
+            }
+        }
+        0
+    }
+
     /// Returns the index of the INNERMOST NTR scope that strictly contains
     /// `bb` (i.e. `bb` is in body_blocks but not the scope's push/pop), or
     /// -1 when no scope strictly contains it. "Innermost" is approximated
@@ -1962,16 +1980,27 @@ impl CodegenCtx {
     /// Returns a CgName for a basic block label. Zero allocation.
     pub fn block_label_cg(self: &CodegenCtx, block: mir_def.BasicBlockId) -> CgName {
         // When emitting an NTR body function (sub-task 4), any branch whose
-        // target is OUTSIDE the body function's block set (e.g., pop_block or
-        // post-scope code) is redirected to the synthesized `body_fn_return`
-        // label, which body_fn emits once at the end to set the normal-return
-        // flag and `ret`. This lets the existing terminator emission code
-        // (Call, Goto, SwitchInt, Perform) stay unchanged while body_fn
+        // target is OUTSIDE the body function's block set (e.g. pop_block or
+        // post-scope code) is redirected. Two redirection targets:
+        //
+        //   - `body_fn_prepop` — for branches targeting THIS scope's
+        //     pop_block when it has pre-PopHandler statements (sub-task
+        //     3f-body). body_fn emits those statements under that label
+        //     before falling through to body_fn_return.
+        //   - `body_fn_return` — for every other out-of-body branch.
+        //     body_fn's return trailer sets the normal-return flag and
+        //     returns body's final value to mp_prompt_enter.
+        //
+        // This lets terminator emission stay unchanged while body_fn
         // terminates cleanly at every exit edge.
         if self.in_ntr_body_fn_scope_idx >= 0i32 {
             let idx = self.in_ntr_body_fn_scope_idx as usize;
             if idx < self.ntr_scopes.len() {
-                if !self.ntr_scopes[idx].body_fn_contains_block(block) {
+                let scope = &self.ntr_scopes[idx];
+                if !scope.body_fn_contains_block(block) {
+                    if block.index == scope.pop_block.index && scope.pop_pre_stmt_count > 0 {
+                        return CgName.Str(common.make_string("body_fn_prepop"));
+                    }
                     return CgName.Str(common.make_string("body_fn_return"));
                 }
             }

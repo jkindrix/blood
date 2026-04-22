@@ -55,6 +55,7 @@ mod mir_ntr_scope;
 mod codegen_types;
 mod codegen_ctx;
 mod codegen_size;
+mod codegen_stmt;
 mod codegen_term;
 mod type_intern;
 
@@ -218,12 +219,51 @@ pub fn emit_body_fn(
     // Append the body blocks.
     ctx.write(blocks_ir.as_str());
 
+    // Pop_pre trailer (sub-task 3f-body): when the scope's pop_block has
+    // statements BEFORE PopHandler (e.g. `_body = _x + 16` computed from
+    // a tail expression in the handle-block), emit those statements here
+    // under the `body_fn_prepop` label so they execute on the gstack and
+    // the captures they write (notably body_result_local) are up to date
+    // when body_fn returns. block_label_cg redirects intra-body branches
+    // whose MIR target is pop_block to %body_fn_prepop when this label
+    // exists. After the pre-statements run, fall through to
+    // body_fn_return. The OUTER fn's pop_block emission skips these
+    // statements (emit_basic_block uses mprompt_pop_pre_stmt_skip).
+    if scope.pop_pre_stmt_count > 0 {
+        ctx.write("body_fn_prepop:\n");
+        let pop_idx = scope.pop_block.index as usize;
+        if pop_idx < body.basic_blocks.len() {
+            let pop = &body.basic_blocks[pop_idx];
+            let pre_count = scope.pop_pre_stmt_count as usize;
+            let upper = if pre_count < pop.statements.len() {
+                pre_count
+            } else {
+                pop.statements.len()
+            };
+            let saved_bb = ctx.current_bb;
+            let saved_terminated = ctx.block_terminated_by_stmt;
+            ctx.current_bb = scope.pop_block;
+            ctx.block_terminated_by_stmt = false;
+            ctx.indent();
+            let mut i = 0usize;
+            while i < upper {
+                codegen_stmt.emit_statement(ctx, &pop.statements[i]);
+                i += 1;
+            }
+            ctx.dedent();
+            ctx.current_bb = saved_bb;
+            ctx.block_terminated_by_stmt = saved_terminated;
+        }
+        ctx.write("  br label %body_fn_return\n");
+    }
+
     // Synthesized return block. Reached by any redirected branch.
     // Returns body's final value as a ptr-shaped i64 so the libmprompt
     // chain propagates it up through mp_resume → handler_op → dispatch
     // → yield_fn → mp_prompt_enter's return. The body_result_local is
     // the outer-fn local that CallReturnClause's body_result references;
-    // its value was captured-written by body during normal execution.
+    // its value was captured-written by body during normal execution
+    // (including via the pop_pre trailer above when present).
     ctx.write("body_fn_return:\n");
     ctx.write("  store i1 1, ptr %normal_flag_ptr, align 1\n");
     if scope.body_result_local >= 0 {

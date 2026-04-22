@@ -70,6 +70,15 @@ pub struct NtrScope {
     /// propagates body's final value through the handler-op chain. -1 when
     /// no CallReturnClause is present (unusual; legacy/untransformed MIR).
     pub body_result_local: i32,
+    /// Number of statements in `pop_block` that appear BEFORE PopHandler.
+    /// These compute the handle-block's body_result value (e.g. `_body
+    /// = _x + 16`) and must execute on the mprompt gstack so captures
+    /// they write are visible to body_fn_return. Sub-task 3f-body moves
+    /// this prefix out of the outer function's pop_block emission into
+    /// body_fn via the `pop_pre` trailer before body_fn_return; the outer
+    /// function (or enclosing body_fn) skips this many statements when it
+    /// emits pop_block. 0 when pop_block has no pre-PopHandler statements.
+    pub pop_pre_stmt_count: u32,
 }
 
 impl NtrScope {
@@ -137,6 +146,7 @@ impl NtrScope {
             body_blocks: bbs,
             captures: caps,
             body_result_local: self.body_result_local,
+            pop_pre_stmt_count: self.pop_pre_stmt_count,
         }
     }
 }
@@ -186,7 +196,8 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
     for i in 0usize..pairs.len() {
         let pair = &pairs[i];
         let body_blocks = compute_body_blocks(body, pair.push_block, pair.pop_block, pair.handler_id);
-        let captures = compute_captures(body, &body_blocks, pair.pop_block);
+        let pop_pre_stmt_count = compute_pop_pre_stmt_count(body, pair.pop_block, pair.handler_id);
+        let captures = compute_captures(body, &body_blocks, pair.pop_block, pop_pre_stmt_count);
         let body_result_local = find_body_result_local(body, pair.pop_block, pair.handler_id);
 
         result.scopes.push(NtrScope {
@@ -196,10 +207,41 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
             body_blocks: body_blocks,
             captures: captures,
             body_result_local: body_result_local,
+            pop_pre_stmt_count: pop_pre_stmt_count,
         });
     }
 
     result
+}
+
+/// Count the number of statements in `pop_block` that appear BEFORE
+/// the matching PopHandler. These statements materialize the
+/// handle-block's body_result value (e.g. `_body = _x + const`) and
+/// must execute on the mprompt gstack — body_fn emits them as the
+/// `pop_pre` trailer before body_fn_return so captures they write
+/// (notably body_result_local) are up-to-date when body_fn returns.
+/// Returns 0 if pop_block has no matching PopHandler (malformed MIR).
+fn compute_pop_pre_stmt_count(
+    body: &mir_body.MirBody,
+    pop_block: mir_def.BasicBlockId,
+    handler_id: hir_def.DefId,
+) -> u32 {
+    let idx = pop_block.as_usize();
+    if idx >= body.basic_blocks.len() {
+        return 0u32;
+    }
+    let block = &body.basic_blocks[idx];
+    for si in 0usize..block.statements.len() {
+        match &block.statements[si].kind {
+            &mir_stmt.StatementKind.PopHandler { handler_id: pop_id } => {
+                if pop_id.index == handler_id.index {
+                    return si as u32;
+                }
+            }
+            _ => {}
+        }
+    }
+    0u32
 }
 
 /// Scan pop_block for the CallReturnClause matching `handler_id` and
@@ -515,6 +557,7 @@ fn compute_captures(
     body: &mir_body.MirBody,
     body_blocks: &Vec<mir_def.BasicBlockId>,
     pop_block: mir_def.BasicBlockId,
+    pop_pre_stmt_count: u32,
 ) -> Vec<mir_def.MirLocalId> {
     let n = body.locals.len();
     let mut used_inside: Vec<bool> = Vec.new();
@@ -526,7 +569,10 @@ fn compute_captures(
         used_outside.push(false);
     }
 
-    // body_fn's block set excludes pop_block.
+    // body_fn's block set excludes pop_block as a REGULAR block, but
+    // pop_block's pre-PopHandler statements run as the `pop_pre` trailer
+    // inside body_fn (sub-task 3f-body) and locals they reference count
+    // as inside-body for capture-computation purposes.
     let mut is_body: Vec<bool> = Vec.new();
     for i in 0usize..body.basic_blocks.len() {
         is_body.push(false);
@@ -552,6 +598,22 @@ fn compute_captures(
                 collect_term_locals(term, true, &mut used_inside, &mut used_outside);
             }
             &Option.None => {}
+        }
+    }
+
+    // Also mark locals referenced by pop_block's pre-PopHandler statements.
+    // Those statements execute inside body_fn via the pop_pre trailer.
+    let pop_idx = pop_block.as_usize();
+    if pop_idx < body.basic_blocks.len() {
+        let pop = &body.basic_blocks[pop_idx];
+        let pre_count = pop_pre_stmt_count as usize;
+        let upper = if pre_count < pop.statements.len() {
+            pre_count
+        } else {
+            pop.statements.len()
+        };
+        for si in 0usize..upper {
+            collect_stmt_locals(&pop.statements[si], true, &mut used_inside, &mut used_outside);
         }
     }
 

@@ -2614,10 +2614,23 @@ pub fn emit_basic_block(
     ctx.current_bb = block_id;
     ctx.block_terminated_by_stmt = false;
 
-    // Emit statements
+    // Emit statements. When this block is the pop_block of an mprompt NTR
+    // scope (sub-task 3f-body), skip the leading `pop_pre_stmt_count`
+    // statements — they ran on the gstack inside body_fn's pop_pre trailer
+    // so the outer function's slice of pop_block is just PopHandler +
+    // CallReturnClause + CallFinallyClause + tail.
+    let skip = ctx.mprompt_pop_pre_stmt_skip(block_id);
     ctx.indent();
-    for stmt in &block.statements {
-        codegen_stmt.emit_statement(ctx, stmt);
+    if skip >= block.statements.len() {
+        // Defensive: if the skip covers every statement (malformed MIR),
+        // emit nothing. block_terminated_by_stmt stays false so the
+        // terminator still fires below.
+    } else {
+        let mut i = skip;
+        while i < block.statements.len() {
+            codegen_stmt.emit_statement(ctx, &block.statements[i]);
+            i += 1;
+        }
     }
     ctx.dedent();
 
