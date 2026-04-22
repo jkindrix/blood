@@ -205,17 +205,42 @@ pub fn rt_perform_ntr(
         let reg_idx: i64 = rt_evidence.ev_read_registry_index(ev, pos);
         let saved_state_addr: i64 = rt_evidence.ev_read_state_addr(ev, pos);
         let saved_prompt_addr: i64 = rt_evidence.ev_read_prompt_addr(ev, pos);
-
-        if saved_prompt_addr == 0 {
-            rt_panic.rt_panic("perform_ntr: handler has no prompt (wrong codegen path?)");
-        }
-
         let op_index_i64: i64 = op_index as i64;
         let fn_addr: i64 = rt_evidence.reg_read_op_fn_addr(reg_idx, op_index_i64);
-
-        let prompt_ptr: *mut u8 = alloc.addr_to_ptr(saved_prompt_addr);
         let fn_ptr: *const u8 = alloc.addr_to_cptr(fn_addr);
         let state_ptr: *mut u8 = alloc.addr_to_ptr(saved_state_addr);
+
+        if saved_prompt_addr == 0 {
+            // Fallback: handler installed without a prompt (e.g., the default
+            // StaleReference handler pushed at startup, or any handler installed
+            // via blood_evidence_push_by_index with prompt_addr=0). Without a
+            // prompt we cannot route through mprompt; instead direct-call the
+            // handler op (TR-style). The handler is expected to either panic
+            // (default StaleReference behaviour) or otherwise not return when
+            // is_abort=1; if it does return we have an abort-contract violation.
+            let saved_effect_id: i64 = rt_evidence.ev_read_effect_id(ev, pos);
+            let is_deep: i64 = rt_evidence.reg_read_is_deep(reg_idx);
+
+            // Delimited continuation: remove handler from evidence around the call
+            rt_evidence.ev_remove(ev, pos);
+            if is_deep != 0 {
+                rt_evidence.deep_push(saved_effect_id, reg_idx, saved_state_addr);
+            }
+
+            let result: i64 = IndirectCall.call_handler_op(fn_ptr, state_ptr, args, arg_count, 0);
+
+            if is_deep != 0 {
+                rt_evidence.deep_pop();
+            }
+            rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr, saved_prompt_addr);
+
+            if is_abort != 0 {
+                rt_panic.rt_panic("perform_ntr: handler without prompt returned despite is_abort=1");
+            }
+            return result;
+        }
+
+        let prompt_ptr: *mut u8 = alloc.addr_to_ptr(saved_prompt_addr);
 
         let ret_ptr: *mut u8 = MpromptBridge.blood_yield_to_handler(
             prompt_ptr,

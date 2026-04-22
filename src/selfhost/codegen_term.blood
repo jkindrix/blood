@@ -824,18 +824,16 @@ pub fn emit_terminator(
             ctx.write_string(&actual_str);
             ctx.write(" to i64\n");
             ctx.emit_store_cg2("i64", &sr_a2, &sr_p2);
-            let sr_cont2 = ctx.fresh_temp_cg();
-            ctx.write_indent();
-            ctx.write_cgname(&sr_cont2);
-            ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+            // Route stale-deref through blood_perform_ntr with is_abort=1 (the
+            // matching trailing `unreachable` only holds if the perform never
+            // returns; cont=0 + TR perform would let a non-panicking user
+            // handler fall through and segfault).
             let sr_ret2 = ctx.fresh_temp_cg();
             ctx.write_indent();
             ctx.write_cgname(&sr_ret2);
-            ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+            ctx.write(" = call i64 @blood_perform_ntr(i64 4100, i32 0, ptr ");
             ctx.write_cgname(&sr_args2);
-            ctx.write(", i64 2, i64 ");
-            ctx.write_cgname(&sr_cont2);
-            ctx.write(")\n");
+            ctx.write(", i64 2, i32 1)\n");
             ctx.emit_unreachable();
         }
     }

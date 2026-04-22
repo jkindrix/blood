@@ -919,13 +919,17 @@ pub fn emit_place_addr(
                     ctx.write_cgname(&actual_gen);
                     ctx.write(" to i64\n");
                     ctx.emit_store_cg2("i64", &act_ext, &sr_p1);
-                    // NTR: pass continuation=0 (handler must abort, no resume)
+                    // Route through blood_perform_ntr with is_abort=1: the handler
+                    // for stale-deref must abort (cannot soundly resume past
+                    // reclaimed memory). User handlers installed via PushHandler
+                    // route through mprompt; the default panicking handler hits
+                    // the prompt_addr=0 fallback in rt_perform_ntr.
                     let sr_result = ctx.fresh_temp_cg();
                     ctx.write_indent();
                     ctx.write_cgname(&sr_result);
-                    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+                    ctx.write(" = call i64 @blood_perform_ntr(i64 4100, i32 0, ptr ");
                     ctx.write_cgname(&sr_args);
-                    ctx.write(", i64 2, i64 0)\n");
+                    ctx.write(", i64 2, i32 1)\n");
                     ctx.write("  unreachable\n");
                     // ok → skip: merge and continue
                     ctx.emit_label_cg(&ok_lbl);
@@ -1010,13 +1014,14 @@ pub fn emit_place_addr(
                     ctx.write_cgname(&pactual);
                     ctx.write(" to i64\n");
                     ctx.emit_store_cg2("i64", &pae, &psr_p1);
-                    // NTR: pass continuation=0 (handler must abort, no resume)
+                    // Route through blood_perform_ntr with is_abort=1 (see fat
+                    // { ptr, i32 } branch above for rationale).
                     let psr_ret = ctx.fresh_temp_cg();
                     ctx.write_indent();
                     ctx.write_cgname(&psr_ret);
-                    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+                    ctx.write(" = call i64 @blood_perform_ntr(i64 4100, i32 0, ptr ");
                     ctx.write_cgname(&psr_args);
-                    ctx.write(", i64 2, i64 0)\n");
+                    ctx.write(", i64 2, i32 1)\n");
                     ctx.write("  unreachable\n");
                     ctx.emit_label_cg(&pok);
                     ctx.emit_br_cg(&pskip);
