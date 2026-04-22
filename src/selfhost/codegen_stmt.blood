@@ -1119,8 +1119,26 @@ pub fn emit_statement(
                 cgname_to_string(&addr)
             };
 
-            // Widen body result to i64
-            let widened_result = if strs_equal(result_ty.as_str(), "i64") {
+            // Widen body result to i64. For mprompt-dispatched handlers
+            // (sub-task 3d) the Blood with-handle result is mp_prompt_enter's
+            // return — i.e., the outermost handler op's return after any
+            // post-resume computation. That value lives in `abort_result`
+            // regardless of the abort/normal path. Load from it so Koka-
+            // style handler semantics hold: `op ask() { let v = resume(10);
+            // v + 100 }` yields 110 (handler op's post-resume result), not
+            // 10 (body's final value before return clause). For legacy
+            // setjmp handlers abort_result is only meaningful on the abort
+            // path, so keep body_result for them.
+            let widened_result = if ctx.has_ntr_scope_for_handler(handler_id.index) && ctx.has_abort_labels_for(handler_id.index) {
+                let abort_alloca_str = ctx.get_abort_result_alloca(handler_id.index).clone();
+                let loaded = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&loaded);
+                ctx.write(" = load i64, ptr ");
+                ctx.write_string(&abort_alloca_str);
+                ctx.write(", align 8\n");
+                cgname_to_string(&loaded)
+            } else if strs_equal(result_ty.as_str(), "i64") {
                 result_val.clone()
             } else if strs_equal(result_ty.as_str(), "{}") || strs_equal(result_ty.as_str(), "void") {
                 // Unit type is zero-sized — pass i64 0 to the return clause

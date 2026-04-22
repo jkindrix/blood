@@ -320,10 +320,30 @@ pub struct CodegenCtx {
     /// Number of state fields in the current handler op body (0 if not a handler op).
     /// When > 1, locals 2..1+count are state fields accessed via GEP into the state pointer.
     pub handler_op_state_field_count: u32,
+    /// True while emitting a handler op body whose effect is mprompt-eligible.
+    /// When set, Resume terminators compile to `blood_resume(%__cont, value)`
+    /// (the libmprompt mp_resume path) instead of the legacy
+    /// `blood_set_was_resumed + ret i64` setjmp path. Set by
+    /// codegen.generate_function_with_ctx at function entry based on
+    /// handler_op_body_effect_hash + is_mprompt_eligible_effect; reset
+    /// to false at function exit. Always false for non-handler-op
+    /// functions and for inline handler op bodies (which don't have
+    /// a registered effect mapping).
+    pub current_handler_op_uses_mprompt_resume: bool,
     /// Hash set of handler op body DefIds.  Value 1 = is a handler op body.
     handler_op_body_hash: hashmap.HashMapU64U32,
     /// Vec of handler op body DefIds (for cloning to worker contexts).
     pub handler_op_body_ids: Vec<u32>,
+    /// Maps handler op body DefId → handled effect DefId.
+    /// Populated alongside register_handler_op_body. Consumed by
+    /// generate_function_with_ctx to decide whether Resume terminators
+    /// in this body should call blood_resume (mp_resume) or stay on the
+    /// legacy setjmp path. Inline handler op bodies (closures with
+    /// is_handler_op=true) do NOT get an entry here and always take the
+    /// legacy path.
+    handler_op_body_effect_hash: hashmap.HashMapU64U32,
+    /// Vec of (body_def_id, effect_def_id) pairs for cloning to workers.
+    pub handler_op_body_effect_entries: Vec<HandlerOpBodyEffectEntry>,
     /// Mapping from op DefId → positional op_index within its effect.
     /// MIR stores op_def.index as op_index; codegen resolves via this table.
     op_def_index_hash: hashmap.HashMapU64U32,
@@ -470,6 +490,14 @@ pub struct OpDefIndexEntry {
     pub effect_def_id: u32,
     pub op_name_sym: u32,
     pub positional_index: u32,
+}
+
+/// Entry mapping a handler op body DefId to its handled effect DefId.
+/// Used to decide whether Resume terminators in that body should compile
+/// to the mprompt blood_resume path (sub-task 3d).
+pub struct HandlerOpBodyEffectEntry {
+    pub body_def_id: u32,
+    pub effect_def_id: u32,
 }
 
 /// Vtable layout for a trait: maps method indices to slot positions.
@@ -640,8 +668,11 @@ impl CodegenCtx {
             handler_depth: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
+            current_handler_op_uses_mprompt_resume: false,
             handler_op_body_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_op_body_ids: Vec.with_capacity(16),
+            handler_op_body_effect_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_op_body_effect_entries: Vec.with_capacity(16),
             op_def_index_hash: hashmap.HashMapU64U32.with_capacity(16),
             op_def_index_entries: Vec.with_capacity(16),
             handler_state_shadows: Vec.with_capacity(8),
@@ -750,8 +781,11 @@ impl CodegenCtx {
             handler_depth: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
+            current_handler_op_uses_mprompt_resume: false,
             handler_op_body_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_op_body_ids: Vec.with_capacity(16),
+            handler_op_body_effect_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_op_body_effect_entries: Vec.with_capacity(16),
             op_def_index_hash: hashmap.HashMapU64U32.with_capacity(16),
             op_def_index_entries: Vec.with_capacity(16),
             handler_state_shadows: Vec.with_capacity(8),
@@ -1203,15 +1237,23 @@ impl CodegenCtx {
         }
     }
 
-    /// True if the effect's handlers are collectively safe for libmprompt
-    /// dispatch: the effect is non-tail-resumptive AND no handler op
-    /// contains `resume(...)`. The latter check rules out resumable-NTR
-    /// handlers (e.g., accumulator-style handlers that run statements
-    /// before calling resume) which would break under the current
-    /// abort-only trampoline — the trampoline drops the continuation
-    /// before invoking the handler op, and the legacy Resume terminator's
-    /// codegen does not call mp_resume. Until sub-task 3d rewrites Resume
-    /// to use mp_resume, those effects stay on the setjmp path.
+    /// True if the effect's handlers are safe for libmprompt dispatch.
+    /// Sub-task 3d wired blood_resume into the mprompt Resume codegen
+    /// and body_fn now propagates the body's final value via the chain,
+    /// so resumable-NTR handlers are technically routable through
+    /// mprompt. However, full correctness still needs:
+    ///   - Gen-tracked capture plumbing (body_fn misses `_N_gen` allocas).
+    ///   - `body_result` computation moved into body_fn (currently
+    ///     materialized in pop_block, so bodies with non-Copy tail
+    ///     expressions like `x + 16` lose the value).
+    ///   - Nested handler reperform (libmprompt's mp_yield asserts
+    ///     `mp_prompt_is_ancestor`, which fails when an inner handler
+    ///     re-performs back to an outer handler across gstacks).
+    /// Until those gaps close, keep the effect-level gate conservative:
+    /// only abort-only effects (no `resume(...)` anywhere in any handler
+    /// op) route through mprompt. The 3d machinery below is live but
+    /// dormant for resumable-NTR effects — expanding the gate after the
+    /// follow-up work lands re-enables it without any further code change.
     pub fn is_mprompt_eligible_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
         if !self.is_non_tail_resumptive_effect(effect_def_id) {
             return false;
@@ -2114,6 +2156,28 @@ impl CodegenCtx {
         self.handler_op_body_hash.contains_key(def_id as u64)
     }
 
+    /// Records a handler op body's handled effect. Allows Resume codegen
+    /// inside that body to ask is_mprompt_eligible_effect and branch
+    /// between the legacy setjmp path and the mprompt blood_resume path.
+    pub fn register_handler_op_body_effect(self: &mut CodegenCtx, body_def_id: u32, effect_def_id: u32) {
+        self.handler_op_body_effect_hash.insert(body_def_id as u64, effect_def_id);
+        self.handler_op_body_effect_entries.push(HandlerOpBodyEffectEntry {
+            body_def_id,
+            effect_def_id,
+        });
+    }
+
+    /// Returns the handled effect DefId for a handler op body, if one was
+    /// registered. Returns None for functions that are not handler op bodies
+    /// and for inline handler op bodies (which are not currently registered
+    /// with an effect mapping — they fall through to the legacy Resume path).
+    pub fn handler_op_body_effect(self: &CodegenCtx, body_def_id: u32) -> Option<u32> {
+        match self.handler_op_body_effect_hash.get(body_def_id as u64) {
+            Option.Some(eid) => Option.Some(eid),
+            Option.None => Option.None,
+        }
+    }
+
     /// Returns the number of state fields for a handler op body.
     /// Returns 0 if the handler has no state or the DefId is not a handler op.
     pub fn handler_op_state_count(self: &CodegenCtx, def_id: u32) -> u32 {
@@ -2855,8 +2919,11 @@ impl CodegenCtx {
             handler_depth: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
+            current_handler_op_uses_mprompt_resume: false,
             handler_op_body_hash: hashmap.HashMapU64U32.new(),
             handler_op_body_ids: Vec.new(),
+            handler_op_body_effect_hash: hashmap.HashMapU64U32.new(),
+            handler_op_body_effect_entries: Vec.new(),
             op_def_index_hash: hashmap.HashMapU64U32.new(),
             op_def_index_entries: Vec.new(),
             handler_state_shadows: Vec.new(),
@@ -2902,6 +2969,13 @@ impl CodegenCtx {
             let hbi_def_id = self.handler_op_body_ids[hbi];
             let hbi_state_count = self.handler_op_state_count(hbi_def_id);
             worker.register_handler_op_body(hbi_def_id, hbi_state_count);
+        }
+
+        // Copy handler_op_body_effect entries so worker contexts can
+        // resolve a handler op body's effect during Resume codegen.
+        for hebi in 0usize..self.handler_op_body_effect_entries.len() {
+            let hebe = &self.handler_op_body_effect_entries[hebi];
+            worker.register_handler_op_body_effect(hebe.body_def_id, hebe.effect_def_id);
         }
 
         // Copy handler_effect_entries (read-only, needed during codegen)

@@ -322,6 +322,21 @@ pub fn generate_function_with_ctx(
     // `body` through. Matches the convention used by codegen_body_fn.
     ctx.current_fn_def_id = body.def_id.index;
 
+    // 3d: decide whether Resume terminators in this body should compile
+    // to the libmprompt blood_resume path. Named handler op bodies for
+    // an mprompt-eligible effect route through mp_resume; every other
+    // body keeps the legacy blood_set_was_resumed + ret i64 setjmp path.
+    // Inline handler op bodies (closures with is_handler_op=true) are
+    // not registered with an effect and fall through to the legacy path.
+    ctx.current_handler_op_uses_mprompt_resume = if ctx.is_handler_op {
+        match ctx.handler_op_body_effect(body.def_id.index) {
+            Option.Some(eid) => ctx.is_mprompt_eligible_effect(eid),
+            Option.None => false,
+        }
+    } else {
+        false
+    };
+
     // NTR handler scope pre-scan — populate ctx.ntr_scopes for the current function.
     // mir_ntr_scope.analyze_ntr_scopes reports ALL handler scopes (TR and NTR); we
     // filter to NTR-only here via handler_needs_abort so downstream emission
@@ -366,6 +381,7 @@ pub fn generate_function_with_ctx(
             pop_block: mir_def.BasicBlockId { index: scope.pop_block.index },
             body_blocks: body_blocks_copy,
             captures: captures_copy,
+            body_result_local: scope.body_result_local,
         });
     }
 
@@ -1721,10 +1737,11 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @blood_handler_push_abort_target(ptr)\n");
     output.push_str("declare void @blood_handler_pop_abort_target()\n");
     output.push_str("declare i64 @blood_handler_get_abort_value()\n");
-    output.push_str("\n; libmprompt-based NTR handler dispatch (sub-tasks 4-6 vertical slice)\n");
+    output.push_str("\n; libmprompt-based NTR handler dispatch (sub-tasks 4-6 vertical slice + 3d)\n");
     output.push_str("declare ptr @blood_prompt_create()\n");
     output.push_str("declare ptr @blood_prompt_enter(ptr, ptr, ptr)\n");
     output.push_str("declare i64 @blood_perform_ntr(i64, i32, ptr, i64, i32)\n");
+    output.push_str("declare ptr @blood_resume(ptr, ptr)\n");
     output.push_str("declare void @blood_panic_div_zero()\n");
     output.push_str("declare void @blood_panic_index_out_of_bounds(i64, i64)\n");
     output.push_str("declare void @blood_panic_index_out_of_bounds_loc(i64, i64, ptr)\n");

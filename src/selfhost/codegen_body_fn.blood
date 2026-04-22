@@ -217,9 +217,74 @@ pub fn emit_body_fn(
     ctx.write(blocks_ir.as_str());
 
     // Synthesized return block. Reached by any redirected branch.
+    // Returns body's final value as a ptr-shaped i64 so the libmprompt
+    // chain propagates it up through mp_resume → handler_op → dispatch
+    // → yield_fn → mp_prompt_enter's return. The body_result_local is
+    // the outer-fn local that CallReturnClause's body_result references;
+    // its value was captured-written by body during normal execution.
     ctx.write("body_fn_return:\n");
     ctx.write("  store i1 1, ptr %normal_flag_ptr, align 1\n");
-    ctx.write("  ret ptr null\n");
+    if scope.body_result_local >= 0 {
+        let body_result_idx = scope.body_result_local as u32;
+        let cap_index = scope.capture_index(mir_def.MirLocalId.new(body_result_idx));
+        if cap_index >= 0 {
+            let body_result_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[body_result_idx as usize].ty);
+            let ty_str = body_result_ty.as_str();
+            let idx_str = codegen_types.format_u64(body_result_idx as u64);
+            if is_unit_llvm_ty(ty_str) {
+                ctx.write("  ret ptr null\n");
+            } else {
+                let is_ptr = ty_str_equals(ty_str, "ptr");
+                let is_i64 = ty_str_equals(ty_str, "i64");
+                let is_narrow_int = ty_str_equals(ty_str, "i32")
+                    || ty_str_equals(ty_str, "i16")
+                    || ty_str_equals(ty_str, "i8")
+                    || ty_str_equals(ty_str, "i1");
+                if is_ptr {
+                    ctx.write("  %body_result_ptr = load ptr, ptr %cap_");
+                    ctx.write(idx_str.as_str());
+                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  ret ptr %body_result_ptr\n");
+                } else if is_i64 {
+                    ctx.write("  %body_result_i64 = load i64, ptr %cap_");
+                    ctx.write(idx_str.as_str());
+                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  %body_result_ptr = inttoptr i64 %body_result_i64 to ptr\n");
+                    ctx.write("  ret ptr %body_result_ptr\n");
+                } else if is_narrow_int {
+                    ctx.write("  %body_result_native = load ");
+                    ctx.write(ty_str);
+                    ctx.write(", ptr %cap_");
+                    ctx.write(idx_str.as_str());
+                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  %body_result_i64 = zext ");
+                    ctx.write(ty_str);
+                    ctx.write(" %body_result_native to i64\n");
+                    ctx.write("  %body_result_ptr = inttoptr i64 %body_result_i64 to ptr\n");
+                    ctx.write("  ret ptr %body_result_ptr\n");
+                } else {
+                    // Aggregate or unsupported — spill-and-load to i64 then cast.
+                    ctx.write("  %body_result_tmp = alloca i64\n");
+                    ctx.write("  store i64 0, ptr %body_result_tmp, align 8\n");
+                    ctx.write("  %body_result_native = load ");
+                    ctx.write(ty_str);
+                    ctx.write(", ptr %cap_");
+                    ctx.write(idx_str.as_str());
+                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  store ");
+                    ctx.write(ty_str);
+                    ctx.write(" %body_result_native, ptr %body_result_tmp, align 8\n");
+                    ctx.write("  %body_result_i64 = load i64, ptr %body_result_tmp, align 8\n");
+                    ctx.write("  %body_result_ptr = inttoptr i64 %body_result_i64 to ptr\n");
+                    ctx.write("  ret ptr %body_result_ptr\n");
+                }
+            }
+        } else {
+            ctx.write("  ret ptr null\n");
+        }
+    } else {
+        ctx.write("  ret ptr null\n");
+    }
 
     // Function footer.
     ctx.write("}\n\n");
@@ -344,6 +409,23 @@ fn scope_captures_any_gen_tracked(
         }
     }
     false
+}
+
+/// True if two LLVM type strings match byte-for-byte. Used to pick the
+/// right widening path for body_fn's return value; the built-in str_eq
+/// compares a String against a &str, but we have two &str here.
+fn ty_str_equals(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() {
+        return false;
+    }
+    for i in 0usize..ab.len() {
+        if ab[i] != bb[i] {
+            return false;
+        }
+    }
+    true
 }
 
 /// True if the LLVM type string represents the zero-sized unit type.

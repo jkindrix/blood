@@ -60,15 +60,18 @@ pub fn emit_terminator(
             // op_index is the op_name symbol index — same key used in the TR map.
             let is_tail_resumptive = ctx.is_tail_resumptive_op(effect_id.index, op_index);
 
-            // Non-tail-resumptive effects route through libmprompt when the
-            // effect is eligible: effect is NTR AND no handler op contains
-            // `resume(...)`. Resumable-NTR handlers stay on the legacy
-            // setjmp / blood_perform path because the current Resume
-            // terminator codegen does not call mp_resume (sub-task 3d
-            // rewrite). Keeping both sites (PushHandler and Perform) gated
-            // on the same per-effect flag ensures push and perform agree
-            // on which dispatcher to use.
-            if !is_tail_resumptive && ctx.is_mprompt_eligible_effect(effect_id.index) {
+            // For mprompt-eligible effects, every perform routes through
+            // libmprompt — including per-op tail-resumptive performs. The
+            // handler scope's body runs on a gstack via mp_prompt_enter, so
+            // the direct-call fast path that the legacy TR codegen uses is
+            // not available: a TR perform from inside body_fn must still
+            // yield through mp_yield so the handler op body runs on the
+            // parent stack with a valid mp_resume_t* in `%__cont`. Without
+            // this routing, the Resume terminator's blood_resume call would
+            // crash on a garbage continuation. `is_tail_resumptive` remains
+            // authoritative for effects whose handler is dispatched via the
+            // legacy setjmp path.
+            if ctx.is_mprompt_eligible_effect(effect_id.index) {
                 emit_perform_ntr(ctx, effect_id, op_index, args, destination, target);
                 return;
             }
@@ -450,6 +453,20 @@ pub fn emit_terminator(
             }
         }
         &mir_term.TerminatorKind.Resume { ref value, ref destination, ref target } => {
+            // 3d: handler op bodies for mprompt-eligible effects route
+            // Resume through libmprompt blood_resume (mp_resume) instead of
+            // the legacy setjmp trampoline. The mprompt path writes handler
+            // state back (same state-pointer ABI as the legacy path) but
+            // replaces the blood_set_was_resumed + ret i64 sequence with a
+            // blood_resume(cont_ptr, val_ptr) call whose result is returned
+            // as the handler op body's i64 result (or stored into the
+            // destination place and followed by a branch to the target
+            // block for non-tail-resumptive handlers).
+            if ctx.current_handler_op_uses_mprompt_resume {
+                emit_resume_mprompt(ctx, value, destination, target);
+                return;
+            }
+
             // Resume from handler op body.
             // Mark that this handler called resume, so blood_perform won't trigger abort
             ctx.write_indent();
@@ -862,6 +879,192 @@ fn emit_switch_int(
             ctx.switch_case(discr_ty.as_str(), val_str.as_str(), &case_label);
         }
         ctx.end_switch();
+    }
+}
+
+/// Emits the libmprompt Resume path for a handler op body whose effect is
+/// mprompt-eligible (sub-task 3d). Replaces the legacy blood_set_was_resumed +
+/// ret i64 setjmp sequence with a blood_resume(cont_ptr, val_ptr) call, where
+/// %__cont is the mp_resume_t* (cast to i64 by blood_dispatch_resumable in
+/// rt_mprompt_shim.c) and val is widened to a ptr-shaped i64 bit pattern.
+/// Handler state write-back still runs here because the state-pointer ABI
+/// is orthogonal to yield/resume dispatch.
+fn emit_resume_mprompt(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    value: &Option<mir_types.Operand>,
+    destination: &Option<mir_types.Place>,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // Write handler state fields back before resuming so the outer function
+    // (and any deeper performs) sees the updated values.
+    emit_handler_state_writeback(ctx);
+
+    // Materialize the resume value as i64 (widening integers, zeroing unit,
+    // ptrtoint'ing pointers, spilling aggregates through an i64 alloca).
+    let resume_val_i64 = ctx.fresh_temp_cg();
+    match value {
+        &Option.Some(ref v) => {
+            let (val, ty) = codegen_expr.emit_operand_typed(ctx, v);
+            if str_eq(ty.as_str(), "{}") || is_void_type(ty.as_str()) {
+                ctx.write_indent();
+                ctx.write_cgname(&resume_val_i64);
+                ctx.write(" = add i64 0, 0\n");
+            } else if str_eq(ty.as_str(), "i64") {
+                ctx.write_indent();
+                ctx.write_cgname(&resume_val_i64);
+                ctx.write(" = add i64 ");
+                ctx.write(val.as_str());
+                ctx.write(", 0\n");
+            } else if str_eq(ty.as_str(), "i32") || str_eq(ty.as_str(), "i16") || str_eq(ty.as_str(), "i8") || str_eq(ty.as_str(), "i1") {
+                ctx.write_indent();
+                ctx.write_cgname(&resume_val_i64);
+                ctx.write(" = zext ");
+                ctx.write(ty.as_str());
+                ctx.write(" ");
+                ctx.write(val.as_str());
+                ctx.write(" to i64\n");
+            } else if str_eq(ty.as_str(), "ptr") {
+                ctx.write_indent();
+                ctx.write_cgname(&resume_val_i64);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write(val.as_str());
+                ctx.write(" to i64\n");
+            } else {
+                let tmp_alloca = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&tmp_alloca);
+                ctx.write(" = alloca i64\n");
+                ctx.write_indent();
+                ctx.write("store i64 0, ptr ");
+                ctx.write_cgname(&tmp_alloca);
+                ctx.write(", align 8\n");
+                ctx.write_indent();
+                ctx.write("store ");
+                ctx.write(ty.as_str());
+                ctx.write(" ");
+                ctx.write(val.as_str());
+                ctx.write(", ptr ");
+                ctx.write_cgname(&tmp_alloca);
+                ctx.write(", align 8\n");
+                ctx.write_indent();
+                ctx.write_cgname(&resume_val_i64);
+                ctx.write(" = load i64, ptr ");
+                ctx.write_cgname(&tmp_alloca);
+                ctx.write(", align 8\n");
+            }
+        }
+        &Option.None => {
+            ctx.write_indent();
+            ctx.write_cgname(&resume_val_i64);
+            ctx.write(" = add i64 0, 0\n");
+        }
+    }
+
+    // Cast i64 value → ptr for blood_resume's void* arg slot.
+    let val_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_ptr);
+    ctx.write(" = inttoptr i64 ");
+    ctx.write_cgname(&resume_val_i64);
+    ctx.write(" to ptr\n");
+
+    // Cast %__cont (i64 holding mp_resume_t*) → ptr for blood_resume.
+    let cont_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&cont_ptr);
+    ctx.write(" = inttoptr i64 %__cont to ptr\n");
+
+    // call ptr @blood_resume(ptr %cont_ptr, ptr %val_ptr)
+    let resume_result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&resume_result), "ptr", "@blood_resume");
+    ctx.call_arg_cg(true, "ptr", &cont_ptr);
+    ctx.call_arg_cg(false, "ptr", &val_ptr);
+    ctx.end_call();
+
+    // Narrow ptr result back to i64 for the handler op's native return type
+    // (and for storing into non-ptr destinations on the non-tail path).
+    let resume_i64 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&resume_i64);
+    ctx.write(" = ptrtoint ptr ");
+    ctx.write_cgname(&resume_result);
+    ctx.write(" to i64\n");
+
+    // Detect "resume in tail position" via MIR structure: the lowering in
+    // lower_resume_expr picks `_0` as the destination iff the resume
+    // expression is the op body's tail (return slot). In that case the
+    // synthetic post-resume block just loads `_0` and returns — running
+    // it under mprompt would overwrite mp_resume's return value with a
+    // bogus unit/reload and break chain propagation (e.g., a `put` op
+    // that does `state = s; resume(())` would `ret i64 0` instead of
+    // forwarding the body's final value). Bypass the target block and
+    // return mp_resume's value directly; any handler_op that discards
+    // the chain value must say so explicitly by not being tail-resume.
+    let is_mprompt_tail = match destination {
+        &Option.Some(ref d) => d.local.index == 0,
+        &Option.None => true,
+    };
+
+    if is_mprompt_tail {
+        ctx.emit_ret_cg("i64", &resume_i64);
+        return;
+    }
+
+    match target {
+        &Option.Some(tgt) => {
+            match destination {
+                &Option.Some(ref dest) => {
+                    let dest_addr = codegen_place.emit_place_addr(ctx, dest);
+                    let dest_ty = ctx.get_local_type(dest.local);
+                    if str_eq(dest_ty.as_str(), "{}") || str_eq(dest_ty.as_str(), "void") {
+                        // Unit — nothing to store.
+                    } else if str_eq(dest_ty.as_str(), "i64") {
+                        ctx.emit_store_cg2("i64", &resume_i64, &dest_addr);
+                    } else if str_eq(dest_ty.as_str(), "i32") || str_eq(dest_ty.as_str(), "i16") || str_eq(dest_ty.as_str(), "i8") || str_eq(dest_ty.as_str(), "i1") {
+                        let narrowed = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&narrowed);
+                        ctx.write(" = trunc i64 ");
+                        ctx.write_cgname(&resume_i64);
+                        ctx.write(" to ");
+                        ctx.write(dest_ty.as_str());
+                        ctx.write("\n");
+                        ctx.emit_store_cg2(dest_ty.as_str(), &narrowed, &dest_addr);
+                    } else if str_eq(dest_ty.as_str(), "ptr") {
+                        ctx.emit_store_cg2("ptr", &resume_result, &dest_addr);
+                    } else {
+                        let tmp_alloca = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&tmp_alloca);
+                        ctx.write(" = alloca i64\n");
+                        ctx.write_indent();
+                        ctx.write("store i64 ");
+                        ctx.write_cgname(&resume_i64);
+                        ctx.write(", ptr ");
+                        ctx.write_cgname(&tmp_alloca);
+                        ctx.write(", align 8\n");
+                        let narrowed = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&narrowed);
+                        ctx.write(" = load ");
+                        ctx.write(dest_ty.as_str());
+                        ctx.write(", ptr ");
+                        ctx.write_cgname(&tmp_alloca);
+                        ctx.write(", align 8\n");
+                        ctx.emit_store_cg2(dest_ty.as_str(), &narrowed, &dest_addr);
+                    }
+                }
+                &Option.None => {
+                    // No destination — discard the resume result.
+                }
+            }
+            let target_label = ctx.block_label_cg(tgt);
+            ctx.emit_br_cg(&target_label);
+        }
+        &Option.None => {
+            // Tail-resumptive: resume's return becomes the handler op's return.
+            ctx.emit_ret_cg("i64", &resume_i64);
+        }
     }
 }
 
@@ -2292,6 +2495,18 @@ fn emit_perform_ntr(
         }
     }
 
+    // is_abort=1 when the effect has no handlers that resume (pure abort).
+    // is_abort=0 when at least one handler op calls resume — the resumable
+    // trampoline in the shim keeps the continuation alive and hands its
+    // `mp_resume_t*` to the handler op via the `cont` parameter. The flag
+    // is an effect-level property; we derive it from the same
+    // effect_has_resume classification collected during handler info.
+    let is_abort_val = if ctx.effect_has_resume(effect_id.index) {
+        "0"
+    } else {
+        "1"
+    };
+
     // blood_perform_ntr(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i32 is_abort)
     let result = ctx.fresh_temp_cg();
     ctx.write_indent();
@@ -2308,7 +2523,9 @@ fn emit_perform_ntr(
     }
     ctx.write(", i64 ");
     ctx.write_string(&num_args_val);
-    ctx.write(", i32 1)\n");
+    ctx.write(", i32 ");
+    ctx.write(is_abort_val);
+    ctx.write(")\n");
 
     // Narrow the i64 result to the destination local's native type — same
     // rule as the TR path, extracted as local code because the store must

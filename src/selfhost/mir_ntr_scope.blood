@@ -64,6 +64,12 @@ pub struct NtrScope {
     /// Invariant: no local in `captures` is defined (has its initial
     /// assignment) strictly within `body_blocks`.
     pub captures: Vec<mir_def.MirLocalId>,
+    /// Local index of the handle block's body-result place, extracted
+    /// from the CallReturnClause statement in `pop_block`. body_fn_return
+    /// loads from the matching capture and returns that value so mp_resume
+    /// propagates body's final value through the handler-op chain. -1 when
+    /// no CallReturnClause is present (unusual; legacy/untransformed MIR).
+    pub body_result_local: i32,
 }
 
 impl NtrScope {
@@ -130,6 +136,7 @@ impl NtrScope {
             pop_block: mir_def.BasicBlockId { index: self.pop_block.index },
             body_blocks: bbs,
             captures: caps,
+            body_result_local: self.body_result_local,
         }
     }
 }
@@ -180,6 +187,7 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
         let pair = &pairs[i];
         let body_blocks = compute_body_blocks(body, pair.push_block, pair.pop_block, pair.handler_id);
         let captures = compute_captures(body, &body_blocks, pair.pop_block);
+        let body_result_local = find_body_result_local(body, pair.pop_block, pair.handler_id);
 
         result.scopes.push(NtrScope {
             handler_id: pair.handler_id,
@@ -187,10 +195,103 @@ pub fn analyze_ntr_scopes(body: &mir_body.MirBody) -> NtrScopeAnalysis {
             pop_block: pair.pop_block,
             body_blocks: body_blocks,
             captures: captures,
+            body_result_local: body_result_local,
         });
     }
 
     result
+}
+
+/// Scan pop_block for the CallReturnClause matching `handler_id` and
+/// return the local index body_fn should treat as the "body result". We
+/// start from CallReturnClause's `body_result` operand and, when the MIR
+/// has a chain of simple `_x = Copy/Move(_y)` assignments inside
+/// pop_block before PopHandler, trace backwards to the ultimate source
+/// local. This bridges cases where pop_block materializes the
+/// with-handle value (e.g., `body_result = x` lowered as `_4 = _8; _8 =
+/// _7; CallReturnClause(body_result = Copy(_4))`) — the underlying
+/// `_7` is what body_fn actually writes inside its body blocks and
+/// therefore is a capture. Returns -1 if no suitable local can be
+/// identified.
+fn find_body_result_local(
+    body: &mir_body.MirBody,
+    pop_block: mir_def.BasicBlockId,
+    handler_id: hir_def.DefId,
+) -> i32 {
+    if (pop_block.index as usize) >= body.basic_blocks.len() {
+        return -1i32;
+    }
+    let block = &body.basic_blocks[pop_block.index as usize];
+    let mut crc_index: i32 = -1i32;
+    let mut initial_local: i32 = -1i32;
+    for si in 0usize..block.statements.len() {
+        match &block.statements[si].kind {
+            &mir_stmt.StatementKind.CallReturnClause {
+                handler_id: h,
+                handler_name: _,
+                ref body_result,
+                state_place: _,
+                destination: _,
+            } => {
+                if h.index != handler_id.index {
+                    continue;
+                }
+                crc_index = si as i32;
+                initial_local = operand_local_index(body_result);
+                break;
+            }
+            _ => {}
+        }
+    }
+    if crc_index < 0 || initial_local < 0 {
+        return -1i32;
+    }
+    // Walk the pre-PopHandler statements from latest to earliest, tracing
+    // _current = Copy/Move(_src) assignments back through the chain.
+    let mut current = initial_local;
+    let mut i: i32 = crc_index - 1i32;
+    while i >= 0 {
+        match &block.statements[i as usize].kind {
+            &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                if place.local.index as i32 == current && place.projection.len() == 0 {
+                    match rvalue {
+                        &mir_types.Rvalue.Use(ref op) => {
+                            let src = operand_local_index(op);
+                            if src >= 0 {
+                                current = src;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        i = i - 1;
+    }
+    current
+}
+
+/// Returns the local index if the operand is a projection-free Copy or
+/// Move of a local; returns -1 for Constants or projected places.
+fn operand_local_index(op: &mir_types.Operand) -> i32 {
+    match op {
+        &mir_types.Operand.Copy(ref p) => {
+            if p.projection.len() == 0 {
+                p.local.index as i32
+            } else {
+                -1i32
+            }
+        }
+        &mir_types.Operand.Move(ref p) => {
+            if p.projection.len() == 0 {
+                p.local.index as i32
+            } else {
+                -1i32
+            }
+        }
+        _ => -1i32,
+    }
 }
 
 // ============================================================
