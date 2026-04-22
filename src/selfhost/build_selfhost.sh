@@ -396,7 +396,7 @@ do_build_first_gen() {
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
-    $bootstrap_compiler build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
+    $bootstrap_compiler build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/first_gen.ll" $flags ${BLOOD_EXTRA_COMPILER_FLAGS:-} || rc=$?
     if [ "$rc" -ne 0 ]; then
         fail "Build failed ($(basename "$bootstrap_compiler")): $(decode_exit $rc)"
         return 1
@@ -500,7 +500,7 @@ do_build_second_gen() {
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/second_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/second_gen.ll" ${BLOOD_EXTRA_COMPILER_FLAGS:-} || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
@@ -544,7 +544,7 @@ do_build_third_gen() {
     step "Bootstrap (second_gen → third_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/third_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/third_gen.ll" ${BLOOD_EXTRA_COMPILER_FLAGS:-} || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 

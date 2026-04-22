@@ -113,6 +113,11 @@ jobs:
       RUNTIME_A: ${{ github.workspace }}/bootstrap/libblood_runtime_blood.a
       # Suppress build-time regression alarm (CI hardware differs from dev machine)
       BLOOD_NO_PERF_ALARM: 1
+      # ubuntu-latest has 16 GB RAM. Parallel codegen (4 workers) drives
+      # peak RSS to ~13 GB and thrashes swap near the end of pass 2, after
+      # which the runner's heartbeat misses and the job is SIGTERM'd. Force
+      # sequential codegen in CI: ~6 min/build instead of ~2, but fits.
+      BLOOD_EXTRA_COMPILER_FLAGS: --no-parallel
     steps:
       - uses: actions/checkout@v4
 
@@ -140,7 +145,7 @@ jobs:
       - name: Build first_gen from seed
         working-directory: src/selfhost
         run: ./build_selfhost.sh build first_gen
-        timeout-minutes: 15
+        timeout-minutes: 25
 
       - name: Run golden tests (first_gen)
         working-directory: src/selfhost
@@ -150,7 +155,7 @@ jobs:
       - name: Build second_gen (first_gen → second_gen)
         working-directory: src/selfhost
         run: ./build_selfhost.sh build second_gen
-        timeout-minutes: 15
+        timeout-minutes: 25
 
       - name: Run golden tests (second_gen)
         working-directory: src/selfhost
@@ -160,7 +165,7 @@ jobs:
       - name: Verify byte-identical bootstrap (gate --quick)
         working-directory: src/selfhost
         run: ./build_selfhost.sh gate --quick
-        timeout-minutes: 10
+        timeout-minutes: 25
 
       - name: Upload build logs on failure
         if: failure()
