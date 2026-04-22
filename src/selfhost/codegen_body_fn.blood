@@ -91,8 +91,9 @@ pub fn body_fn_name(fn_def_id: u32, push_block_idx: u32) -> String {
 
 /// Emits the module-level `%env_ty_<fn_id>_<pb_idx> = type { ptr, ptr, ... }`
 /// declaration for this scope's env struct. The struct has
-/// `captures.len() + 1` fields: one pointer per capture, plus a trailing
-/// `ptr` for the normal-return flag alloca passed in by PushHandler.
+/// `captures.len() * 2 + 1` fields: two pointers per capture (base + gen
+/// — see sub-task 3f), plus a trailing `ptr` for the normal-return flag
+/// alloca passed in by PushHandler.
 pub fn append_env_type_decl(
     fn_def_id: u32,
     scope: &mir_ntr_scope.NtrScope,
@@ -100,7 +101,7 @@ pub fn append_env_type_decl(
 ) {
     out.push_str(env_ty_name(fn_def_id, scope.push_block.index).as_str());
     out.push_str(" = type { ");
-    let field_count = scope.captures.len() + 1;
+    let field_count = scope.captures.len() * 2 + 1;
     for i in 0usize..field_count {
         if i > 0 {
             out.push_str(", ");
@@ -160,21 +161,14 @@ pub fn emit_body_fn(
     ctx.write("(ptr %prompt, ptr %env) {\n");
     ctx.write("entry:\n");
 
-    // Prior revisions emitted a stub `ret ptr null` for scopes that capture
-    // region- or persistent-allocated locals, because body_fn's environment
-    // does not include companion `_<N>_gen` allocas used by stale-ref
-    // detection. Under the sub-task 6 rewrite, NTR Perform no longer emits
-    // snapshot validation on the body side, so `_<N>_gen` is unused inside
-    // body_fn's own emission. The stub is now dead code; scopes with
-    // gen-tracked captures still need special handling only when body-side
-    // expressions take references to those locals, which is tracked as a
-    // follow-up (the capture-all-inside policy handles the base pointer
-    // correctly; only the generation companion is missing).
-
     // Entry prologue: unpack env only. Under the capture-all-inside policy
     // in mir_ntr_scope.compute_captures, every body-referenced local is a
     // capture, so body_fn itself allocates nothing — each read/write flows
     // through a `%cap_<N>_ptr` pointer loaded from the env struct here.
+    // Sub-task 3f additionally threads `%cap_<N>_gen_ptr` for region- and
+    // persistent-allocated captures so body-side Rvalue.Ref can extract
+    // the companion generation without referencing the outer-frame
+    // `%_<N>_gen` alloca.
     emit_env_unpack(ctx, body, scope);
 
     // Two-pass buffer flip (mirrors generate_function_with_ctx): emit the
@@ -305,9 +299,15 @@ pub fn emit_body_fn(
 // ============================================================
 
 /// Emits the env struct unpack at body_fn's entry:
-///   - One `%cap_<L>_ptr = load ptr, ptr %env_slot_<i>` per capture.
-///   - A trailing `%normal_flag_ptr = load ptr, ptr %env_slot_<K>` for the
-///     normal-return signal alloca.
+///   - Per capture i: `%cap_<L>_ptr` from env slot 2*i (base) and
+///     `%cap_<L>_gen_ptr` from env slot 2*i+1 (gen, NULL for non-gen-tracked).
+///   - `%normal_flag_ptr` from env slot 2*N for the normal-return flag.
+///
+/// For each gen-tracked capture we additionally re-register the local with
+/// `ctx.mark_region_allocated` so that downstream `get_heap_gen_name` calls
+/// inside body_fn emission (e.g. from Rvalue.Ref in codegen_expr) return
+/// `%cap_<L>_gen_ptr` instead of the outer-frame `%_<L>_gen`, which does not
+/// exist inside body_fn.
 fn emit_env_unpack(
     ctx: &mut codegen_ctx.CodegenCtx,
     body: &mir_body.MirBody,
@@ -316,29 +316,58 @@ fn emit_env_unpack(
     let env_ty = env_ty_name(body.def_id.index, scope.push_block.index);
 
     for i in 0usize..scope.captures.len() {
-        let cap_local = &scope.captures[i];
+        let cap_local = scope.captures[i];
         let local_idx_str = codegen_types.format_u64(cap_local.index as u64);
-        let i_str = codegen_types.format_u64(i as u64);
+        let base_slot_str = codegen_types.format_u64((i * 2) as u64);
+        let gen_slot_str = codegen_types.format_u64((i * 2 + 1) as u64);
 
-        // GEP to the i-th env slot.
+        // Base slot: GEP + load %cap_<L>_ptr.
         ctx.write("  %env_slot_");
-        ctx.write(i_str.as_str());
+        ctx.write(base_slot_str.as_str());
         ctx.write(" = getelementptr ");
         ctx.write(env_ty.as_str());
         ctx.write(", ptr %env, i32 0, i32 ");
-        ctx.write(i_str.as_str());
+        ctx.write(base_slot_str.as_str());
         ctx.write("\n");
-
-        // Load the outer-function alloca pointer into %cap_<L>_ptr.
         ctx.write("  %cap_");
         ctx.write(local_idx_str.as_str());
         ctx.write("_ptr = load ptr, ptr %env_slot_");
-        ctx.write(i_str.as_str());
+        ctx.write(base_slot_str.as_str());
         ctx.write(", align 8\n");
+
+        // Gen slot: GEP + load %cap_<L>_gen_ptr. Emit unconditionally — for
+        // non-gen-tracked captures the slot holds NULL and the load result
+        // is unused (dead after LLVM DCE). This keeps the layout uniform
+        // between PushHandler's env pack and body_fn's env unpack.
+        ctx.write("  %env_slot_");
+        ctx.write(gen_slot_str.as_str());
+        ctx.write(" = getelementptr ");
+        ctx.write(env_ty.as_str());
+        ctx.write(", ptr %env, i32 0, i32 ");
+        ctx.write(gen_slot_str.as_str());
+        ctx.write("\n");
+        ctx.write("  %cap_");
+        ctx.write(local_idx_str.as_str());
+        ctx.write("_gen_ptr = load ptr, ptr %env_slot_");
+        ctx.write(gen_slot_str.as_str());
+        ctx.write(", align 8\n");
+
+        // For gen-tracked captures, re-register with the body_fn-local
+        // gen pointer name so subsequent get_heap_gen_name calls return
+        // %cap_<L>_gen_ptr. mark_region_allocated pushes a new entry and
+        // updates the hash to point at it; the outer-frame entry is
+        // shadowed but still present in the Vec.
+        let is_gen_tracked = ctx.is_region_allocated(cap_local)
+            || ctx.is_persistent_allocated(cap_local);
+        if is_gen_tracked {
+            let mut gen_cap_name = common.make_string("%cap_");
+            gen_cap_name.push_str(local_idx_str.as_str());
+            gen_cap_name.push_str("_gen_ptr");
+            ctx.mark_region_allocated(cap_local, gen_cap_name);
+        }
     }
 
-    let flag_idx = scope.captures.len();
-    let flag_idx_str = codegen_types.format_u64(flag_idx as u64);
+    let flag_idx_str = codegen_types.format_u64((scope.captures.len() * 2) as u64);
     ctx.write("  %env_slot_");
     ctx.write(flag_idx_str.as_str());
     ctx.write(" = getelementptr ");
@@ -391,25 +420,6 @@ fn find_body_fn_entry(
 // ============================================================
 // Small utilities
 // ============================================================
-
-/// True if any of the scope's captured locals is region- or persistent-
-/// allocated. Those locals carry a companion `%_<N>_gen` alloca emitted by
-/// the outer function's codegen; until body_fn learns to thread gen
-/// tracking through captures as well (or skip stale-ref checks), we fall
-/// back to a stub body_fn for scopes that would reference the missing
-/// allocas.
-fn scope_captures_any_gen_tracked(
-    ctx: &codegen_ctx.CodegenCtx,
-    scope: &mir_ntr_scope.NtrScope,
-) -> bool {
-    for i in 0usize..scope.captures.len() {
-        let local = scope.captures[i];
-        if ctx.is_region_allocated(local) || ctx.is_persistent_allocated(local) {
-            return true;
-        }
-    }
-    false
-}
 
 /// True if two LLVM type strings match byte-for-byte. Used to pick the
 /// right widening path for body_fn's return value; the built-in str_eq

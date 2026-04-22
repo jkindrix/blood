@@ -389,6 +389,12 @@ pub fn generate_function_with_ctx(
     // ahead of the function header. Matches the layout produced by
     // codegen_body_fn.append_env_type_decl so PushHandler's alloca/GEP and
     // body_fn's env unpack reference the same shape.
+    //
+    // Layout (sub-task 3f): for each capture i we reserve TWO pointer slots
+    // at indices 2*i (base alloca ptr) and 2*i+1 (gen alloca ptr). The gen
+    // slot is NULL for non-gen-tracked captures and holds `&_<N>_gen` for
+    // region/persistent-allocated captures. Slot 2*N holds the normal_flag
+    // alloca ptr. Total field count = 2*N + 1.
     let ntr_scope_count_pre = ctx.ntr_scopes.len();
     if ntr_scope_count_pre > 0 {
         let fn_def_id = ctx.current_fn_def_id;
@@ -400,7 +406,7 @@ pub fn generate_function_with_ctx(
             ctx.write("_");
             ctx.write(codegen_types.format_u64(push_idx as u64).as_str());
             ctx.write(" = type { ");
-            let field_count = cap_count + 1;
+            let field_count = cap_count * 2 + 1;
             for fi in 0usize..field_count {
                 if fi > 0 {
                     ctx.write(", ");

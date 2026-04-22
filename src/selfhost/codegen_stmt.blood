@@ -504,10 +504,19 @@ pub fn emit_statement(
                 // 3. Pack captures. local_cg returns %_N (the outer-frame
                 // alloca) because we are NOT in body_fn mode here — the env
                 // is populated from the outer function.
+                //
+                // Sub-task 3f: two slots per capture — base_ptr at 2*ci and
+                // gen_ptr at 2*ci+1. gen_ptr is &_<N>_gen for gen-tracked
+                // (region/persistent-allocated) captures, NULL otherwise.
+                // body_fn's emit_env_unpack mirrors this layout and wires
+                // the gen_ptr into ctx.region_locals so code emitted inside
+                // body_fn sees %cap_N_gen_ptr instead of the outer-frame
+                // %_<N>_gen (which does not exist inside body_fn).
                 for ci in 0usize..capture_count {
                     let cap_local = scope_clone.captures[ci];
                     let cap_alloca = ctx.local_cg(cap_local);
 
+                    // Base slot (2*ci): &_<N>.
                     let env_slot = ctx.fresh_temp_cg();
                     ctx.write_indent();
                     ctx.write_cgname(&env_slot);
@@ -516,7 +525,7 @@ pub fn emit_statement(
                     ctx.write(", ptr ");
                     ctx.write_cgname(&env);
                     ctx.write(", i32 0, i32 ");
-                    ctx.write(codegen_types.format_u64(ci as u64).as_str());
+                    ctx.write(codegen_types.format_u64((ci * 2) as u64).as_str());
                     ctx.write("\n");
 
                     ctx.write_indent();
@@ -525,10 +534,35 @@ pub fn emit_statement(
                     ctx.write(", ptr ");
                     ctx.write_cgname(&env_slot);
                     ctx.write(", align 8\n");
+
+                    // Gen slot (2*ci+1): &_<N>_gen for gen-tracked captures,
+                    // NULL otherwise. Read via get_heap_gen_name (which
+                    // returns Some for region/persistent-allocated locals).
+                    let gen_slot = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&gen_slot);
+                    ctx.write(" = getelementptr ");
+                    ctx.write(env_ty.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&env);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64((ci * 2 + 1) as u64).as_str());
+                    ctx.write("\n");
+
+                    let gen_value_str: String = match ctx.get_heap_gen_name(cap_local) {
+                        Option.Some(gen_name) => common.make_string(gen_name.as_str()),
+                        Option.None => common.make_string("null"),
+                    };
+                    ctx.write_indent();
+                    ctx.write("store ptr ");
+                    ctx.write(gen_value_str.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&gen_slot);
+                    ctx.write(", align 8\n");
                 }
 
-                // 4. Trailing env slot holds the normal_flag pointer so
-                // body_fn can signal successful return.
+                // 4. Trailing env slot (2*N) holds the normal_flag pointer
+                // so body_fn can signal successful return.
                 let flag_slot = ctx.fresh_temp_cg();
                 ctx.write_indent();
                 ctx.write_cgname(&flag_slot);
@@ -537,7 +571,7 @@ pub fn emit_statement(
                 ctx.write(", ptr ");
                 ctx.write_cgname(&env);
                 ctx.write(", i32 0, i32 ");
-                ctx.write(codegen_types.format_u64(capture_count as u64).as_str());
+                ctx.write(codegen_types.format_u64((capture_count * 2) as u64).as_str());
                 ctx.write("\n");
 
                 ctx.write_indent();
