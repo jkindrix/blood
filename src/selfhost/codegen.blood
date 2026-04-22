@@ -367,15 +367,35 @@ pub fn generate_function_with_ctx(
         // check (is_mprompt_eligible_effect) is now tautological with
         // handler_needs_abort — it stays as defense-in-depth in case the
         // classification rules change.
-        if !ctx.handler_needs_abort(scope.handler_id.index) {
+        //
+        // Named scopes key on handler_id and consult lookup_handler_effect
+        // to find the effect's NTR classification. Inline scopes (B1a-1b)
+        // key on effect_id directly because `handler_id == effect_id` —
+        // there is no named handler DefId to look up. Today no inline
+        // handler's effect is classified NTR, so `scope_eligible` is
+        // always false for inline and the branch is dead code; B1a-1b's
+        // classification walker will flip this once it lands.
+        let scope_eligible = if scope.is_inline {
+            ctx.is_non_tail_resumptive_effect(scope.handler_id.index)
+        } else {
+            ctx.handler_needs_abort(scope.handler_id.index)
+        };
+        if !scope_eligible {
             continue;
         }
-        let effect_id_opt = ctx.lookup_handler_effect(scope.handler_id.index);
-        let mprompt_ok = match effect_id_opt {
-            Option.Some(eid) => ctx.is_mprompt_eligible_effect(eid),
-            Option.None => false,
+        let effect_id_for_mprompt: u32 = if scope.is_inline {
+            scope.handler_id.index
+        } else {
+            match ctx.lookup_handler_effect(scope.handler_id.index) {
+                Option.Some(eid) => eid,
+                Option.None => {
+                    // Named scope without a handler→effect mapping is
+                    // malformed; skip defensively.
+                    continue;
+                }
+            }
         };
-        if !mprompt_ok {
+        if !ctx.is_mprompt_eligible_effect(effect_id_for_mprompt) {
             continue;
         }
         let mut body_blocks_copy: Vec<mir_def.BasicBlockId> = Vec.with_capacity(scope.body_blocks.len());
