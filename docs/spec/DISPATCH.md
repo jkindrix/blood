@@ -168,6 +168,8 @@ When a function call `f(a₁, a₂, ..., aₙ)` is encountered:
 3. **Order by specificity**: Rank candidates from most to least specific
 4. **Select best**: Choose the unique most specific method, or error
 
+> **Non-normative clarification (auto-deref)**: Method resolution operates on the receiver's declared type. Deref chains are not consulted during method lookup; if the receiver has type `Wrapper<T>` (or `Box<T>`, `Rc<T>`, etc.), the lookup considers methods defined on `Wrapper<T>` only, not methods defined on `T`. To dispatch on the wrapped value, dereference explicitly with `*expr.method(...)`. This is a deliberate departure from Rust's auto-deref behavior.
+
 ### 3.2 Applicability Check
 
 A method `m` with parameter types `[P₁, ..., Pₙ]` is **applicable** to arguments with types `[A₁, ..., Aₙ]` if:

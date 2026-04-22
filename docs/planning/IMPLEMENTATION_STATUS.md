@@ -1,14 +1,16 @@
 # Blood Compiler Implementation Status
 
-> **STALE — January 2026.** This document has not been updated since 2026-01-29 and predates the deep audit completed 2026-04-10. For current status, use these files instead:
+> **RETIRED — see `.tmp/BACKLOG_2026-04-22.md` for the live work order.** This document has not been updated since 2026-01-29 and predates the deep audit completed 2026-04-10 plus 44 sessions of subsequent work (most recently the libmprompt vertical slice + cleanup landed S39–S43). For current status, use these files instead:
 >
+> - **`.tmp/BACKLOG_2026-04-22.md`** — prioritized work order (44 sessions of context distilled into one ranked list)
+> - **`.tmp/CONTINUATION_PROMPT.md`** — empirical session-open ground truth + chosen next task
+> - **`.tmp/NEXT_SESSION.md`** — concrete kickoff steps for the next session
 > - **`docs/KNOWN_LIMITATIONS.md`** — outward-facing gap enumeration
-> - **`.tmp/DEEP_AUDIT_2026-04-10.md`** — comprehensive code-verified audit (23 open gaps)
-> - **`.tmp/LEVEL_UP.md`** — active work plan with per-session results (16 sessions)
-> - **`.tmp/LEVEL_UP_PROMPT.md`** — prioritized entry point for picking up work
+> - **`.tmp/DEEP_AUDIT_2026-04-10.md`** — comprehensive code-verified audit (origin of the 7.3/10 score and post-audit work plan)
+> - **`.tmp/LEVEL_UP.md`** — per-item DOD / technical detail (refreshed S44; BACKLOG is the ordering authority)
 
 **Version**: 0.5.3
-**Last Updated**: 2026-01-29
+**Last Updated**: 2026-01-29 (formally retired 2026-04-22)
 **Audit Date**: 2026-01-29
 
 ---
