@@ -63,14 +63,14 @@ pub fn emit_terminator(
             // For mprompt-eligible effects, every perform routes through
             // libmprompt — including per-op tail-resumptive performs. The
             // handler scope's body runs on a gstack via mp_prompt_enter, so
-            // the direct-call fast path that the legacy TR codegen uses is
+            // the direct-call fast path that the non-NTR TR codegen uses is
             // not available: a TR perform from inside body_fn must still
             // yield through mp_yield so the handler op body runs on the
             // parent stack with a valid mp_resume_t* in `%__cont`. Without
             // this routing, the Resume terminator's blood_resume call would
             // crash on a garbage continuation. `is_tail_resumptive` remains
-            // authoritative for effects whose handler is dispatched via the
-            // legacy setjmp path.
+            // authoritative for effects whose handler is not mprompt-eligible
+            // (TR-only effects whose performs stay on the direct-call path).
             if ctx.is_mprompt_eligible_effect(effect_id.index) {
                 emit_perform_ntr(ctx, effect_id, op_index, args, destination, target);
                 return;

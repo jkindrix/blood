@@ -390,14 +390,13 @@ fn expr_is_tail_resume(expr: &hir_expr.Expr) -> bool {
 
 /// Returns true if the expression tree contains a `resume(...)` expression
 /// anywhere. Used to classify a handler op as "abort-only" (no resume anywhere)
-/// versus "resumable" (at least one resume). This classification gates the
-/// libmprompt dispatch path (sub-task 5/6): only effects whose every handler
-/// has every op as abort-only are eligible for mprompt, because the legacy
-/// Resume terminator's codegen does not call mp_resume. A resumable handler
-/// routed through mprompt's abort trampoline would drop the continuation; the
-/// resumable trampoline would let the body run to completion without actually
-/// resuming. Both paths break resumable semantics, so those handlers stay on
-/// the setjmp path until Resume is rewritten (sub-task 3d).
+/// versus "resumable" (at least one resume). Consumed by
+/// register_effect_has_resume, which sub-task 6's NTR perform codegen reads to
+/// pick the right libmprompt trampoline: abort-style op_fn drops the
+/// continuation via mp_resume_drop, resumable op_fn carries %__cont through to
+/// the Resume terminator. Misclassifying here would hand the wrong trampoline
+/// to blood_perform_ntr (abort would silently discard the resume; resumable
+/// would let the body fall off without yielding).
 fn expr_contains_resume(expr: &hir_expr.Expr) -> bool {
     match &expr.kind {
         &hir_expr.ExprKind.Resume(_) => true,
@@ -794,8 +793,8 @@ pub fn collect_handler_info(
 
                 // Register this handler's effect as NTR only if it has NTR ops.
                 // handler_needs_abort checks non_tail_resumptive_effects to decide whether
-                // to emit setjmp at PushHandler. If all ops are tail-resumptive, no setjmp
-                // is needed — blood_perform with continuation=0 + abort_depth=0 skips abort.
+                // PushHandler creates a prompt + body_fn (mprompt path) or just pushes
+                // evidence and runs the body inline (TR-only path).
                 if has_ntr_op {
                     ctx.register_non_tail_resumptive_effect(effect_def_id);
                 }

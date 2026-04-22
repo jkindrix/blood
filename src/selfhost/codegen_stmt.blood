@@ -666,8 +666,10 @@ pub fn emit_statement(
                 let merge_label = ctx.fresh_label_cg();
                 ctx.emit_br_cg(&abort_store_label);
 
-                // CallReturnClause will emit the abort_store block inside
-                // pop_block (same structure as the legacy setjmp path).
+                // CallReturnClause emits the abort_store block inside
+                // pop_block: normal path → store return clause result and
+                // branch to merge; abort epilogue → load abort_result and
+                // store to dest before joining the same merge label.
                 ctx.push_abort_labels(
                     handler_id.index,
                     cgname_to_string(&abort_store_label),

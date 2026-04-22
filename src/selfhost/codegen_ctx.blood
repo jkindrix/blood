@@ -390,10 +390,9 @@ pub struct CodegenCtx {
     /// and filtering to handlers with handler_needs_abort = true. TR scopes stay
     /// on the direct-call fast path and do not appear here.
     ///
-    /// Consumers (sub-tasks 4–6): body function emission, PushHandler rewrite
-    /// (mp_prompt_enter in place of setjmp), and Perform rewrite (blood_perform_ntr
-    /// inside body functions). Empty for functions with no NTR handlers — the
-    /// legacy setjmp path remains the behavior when this is empty.
+    /// Consumers (sub-tasks 4–6): body function emission, PushHandler (mp_prompt_enter),
+    /// and Perform (blood_perform_ntr inside body functions). Empty for functions
+    /// with no NTR handlers — those functions emit no body_fn / prompt plumbing.
     pub ntr_scopes: Vec<mir_ntr_scope.NtrScope>,
     /// Index into `ntr_scopes` identifying the scope currently being emitted
     /// as a body function, or -1 when emitting the outer function. We key on
@@ -1241,9 +1240,7 @@ impl CodegenCtx {
     /// True if the effect's handlers route through the libmprompt
     /// body-fn extraction path. Every non-tail-resumptive effect
     /// (abort-only and resumable alike) is eligible after sub-tasks
-    /// 3d, 3f, 3f-body and 3g landed — each closed one of the gaps
-    /// that previously kept resumable-NTR handlers on the legacy
-    /// setjmp path:
+    /// 3d, 3f, 3f-body and 3g closed the resumable-NTR gaps:
     ///
     ///   - 3d wired blood_resume into the Resume codegen so body's
     ///     final value propagates back through the mp_resume chain.
@@ -1259,17 +1256,18 @@ impl CodegenCtx {
     ///     the next-outer handler instead of tripping mp_yield's
     ///     ancestor assertion.
     ///
-    /// Returns true for every effect that has any handler op marked
-    /// non-tail-resumptive; the legacy setjmp path remains only as a
-    /// defensive fallback while sub-task 3e removes it entirely.
+    /// Sub-task 3e then deleted the setjmp/longjmp abort stack wholesale:
+    /// every NTR handler now funnels through libmprompt; returning `true`
+    /// is the only way an effect reaches codegen's PushHandler rewrite.
     pub fn is_mprompt_eligible_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
         self.is_non_tail_resumptive_effect(effect_def_id)
     }
 
     /// Returns true if the current function has a recorded NTR scope for this
     /// handler DefId. Driven by mir_ntr_scope pre-scan results filtered through
-    /// handler_needs_abort. Used by PushHandler emission (sub-task 5) to switch
-    /// between the legacy setjmp path and the mp_prompt_enter path.
+    /// handler_needs_abort. Used by PushHandler emission to gate the mp_prompt
+    /// setup (env pack + blood_prompt_enter) that distinguishes NTR from TR
+    /// handlers; TR-only handlers skip the prompt and the body-fn extraction.
     pub fn has_ntr_scope_for_handler(self: &CodegenCtx, handler_def_id: u32) -> bool {
         for i in 0usize..self.ntr_scopes.len() {
             if self.ntr_scopes[i].handler_id.index == handler_def_id {
@@ -2249,7 +2247,7 @@ impl CodegenCtx {
 
     /// Records a handler op body's handled effect. Allows Resume codegen
     /// inside that body to ask is_mprompt_eligible_effect and branch
-    /// between the legacy setjmp path and the mprompt blood_resume path.
+    /// between the ret-i64 fallthrough and the mprompt blood_resume path.
     pub fn register_handler_op_body_effect(self: &mut CodegenCtx, body_def_id: u32, effect_def_id: u32) {
         self.handler_op_body_effect_hash.insert(body_def_id as u64, effect_def_id);
         self.handler_op_body_effect_entries.push(HandlerOpBodyEffectEntry {
@@ -2261,7 +2259,7 @@ impl CodegenCtx {
     /// Returns the handled effect DefId for a handler op body, if one was
     /// registered. Returns None for functions that are not handler op bodies
     /// and for inline handler op bodies (which are not currently registered
-    /// with an effect mapping — they fall through to the legacy Resume path).
+    /// with an effect mapping — they fall through to the ret-i64 Resume path).
     pub fn handler_op_body_effect(self: &CodegenCtx, body_def_id: u32) -> Option<u32> {
         match self.handler_op_body_effect_hash.get(body_def_id as u64) {
             Option.Some(eid) => Option.Some(eid),

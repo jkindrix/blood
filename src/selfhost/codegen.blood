@@ -351,12 +351,11 @@ pub fn generate_function_with_ctx(
     let ntr_result = mir_ntr_scope.analyze_ntr_scopes(body);
     for nsi in 0usize..ntr_result.scopes.len() {
         let scope = &ntr_result.scopes[nsi];
-        // Filter: only populate scope data for handlers whose effect is
-        // eligible for mprompt dispatch. handler_needs_abort confirms the
-        // effect is NTR; is_mprompt_eligible_effect additionally confirms
-        // no handler for the effect contains `resume(...)`. Resumable
-        // handlers remain on the setjmp path until sub-task 3d rewrites
-        // Resume to call mp_resume.
+        // Filter: only populate scope data for NTR handlers. Every NTR
+        // handler is mprompt-eligible after S42's gate flip, so the second
+        // check (is_mprompt_eligible_effect) is now tautological with
+        // handler_needs_abort — it stays as defense-in-depth in case the
+        // classification rules change.
         if !ctx.handler_needs_abort(scope.handler_id.index) {
             continue;
         }
