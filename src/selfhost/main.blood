@@ -3638,7 +3638,8 @@ fn begin_codegen_module_with_adts(
     eprint_str("[begin_streaming]");
     let source_filename = source.file_name(path);
     let mod_count: u32 = lower_result.module_names.len() as u32;
-    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count);
+    let main_unit = codegen.main_returns_unit(&lower_result.items);
+    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count, main_unit);
     ctx.trace_codegen = args.trace_codegen;
     ctx.vft_dispatch = args.vft_dispatch;
     eprint_str("[done]");

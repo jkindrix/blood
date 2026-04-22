@@ -39,6 +39,7 @@ pub fn begin_streaming_module(
     output_path: &str,
     items: &Vec<hir_lower_ctx.ItemEntry>,
     module_count: u32,
+    main_returns_unit: bool,
 ) -> codegen_ctx.CodegenCtx {
     let mut ctx = codegen_ctx.CodegenCtx.new();
 
@@ -65,7 +66,7 @@ pub fn begin_streaming_module(
     // Intrinsic and runtime declarations — must come BEFORE function definitions
     // so that `declare @foo` followed by `define @foo` is valid LLVM IR
     // (the reverse order — define then declare — is a redefinition error).
-    let decls = codegen.intrinsic_declarations();
+    let decls = codegen.intrinsic_declarations(main_returns_unit);
     header.push_str(decls.as_str());
 
     // Write header + declarations to file (overwrite/create) and store path for buffered writes

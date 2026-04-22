@@ -195,7 +195,8 @@ pub fn generate_module_with_items(
     // Intrinsic and runtime declarations — must come BEFORE function definitions
     // so that `declare @foo` followed by `define @foo` is valid LLVM IR
     // (the reverse order — define then declare — is a redefinition error).
-    let decls = intrinsic_declarations();
+    let main_unit = main_returns_unit(items);
+    let decls = intrinsic_declarations(main_unit);
     output.push_str(decls.as_str());
 
     // Generate each function using the shared context.
@@ -1741,8 +1742,37 @@ pub fn module_preamble(module_name: &str) -> String {
     output
 }
 
+/// Returns true if the user's `fn main` in `items` has a unit return type
+/// (`fn main()` with no `-> T`). False if `main` returns `i32`, or if no
+/// `main` item is present (legacy `generate_module` path with empty items).
+///
+/// Used by `intrinsic_declarations` to emit the correct C-level `@main`
+/// trampoline: `call void @blood_main(); ret i32 0` for unit-return,
+/// `%ret = call i32 @blood_main(); ret i32 %ret` for i32-return.
+pub fn main_returns_unit(items: &Vec<hir_lower_ctx.ItemEntry>) -> bool {
+    let main_sym_index = interner.SpecialIdents.main_sym().index;
+    let unit_ty_index = type_intern.CommonTypes.unit().index;
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
+                if entry.item.name.symbol.index == main_sym_index {
+                    return fn_def.sig.return_ty.index == unit_ty_index;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Generates standard intrinsic declarations.
-pub fn intrinsic_declarations() -> String {
+///
+/// `main_returns_unit` controls how the C-level `@main` trampoline calls
+/// `@blood_main`: a unit-return `fn main()` is emitted as `define void
+/// @blood_main()`, so calling it as i32 reads whatever the ABI leaves in
+/// RAX (E3-BUG-1). Pass true for unit-return to emit `call void` + `ret i32 0`.
+pub fn intrinsic_declarations(main_returns_unit: bool) -> String {
     let mut output = String.new();
     output.push_str("\n; Intrinsic declarations\n");
     output.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
@@ -2089,8 +2119,18 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("  %__sr_reg = call i64 @blood_evidence_register(ptr %__sr_ev, i64 4100, ptr %__sr_ops, i64 1, i64 1)\n");
     output.push_str("  call void @blood_evidence_push_by_index(ptr %__sr_ev, i64 %__sr_reg, ptr null, i64 0)\n");
 
-    output.push_str("  %ret = call i32 @blood_main()\n");
-    output.push_str("  ret i32 %ret\n");
+    // Call blood_main. The C ABI requires @main to return i32, but the
+    // user's `fn main()` without `-> i32` lowers to `define void @blood_main()`.
+    // Calling a void function as i32 reads whatever the ABI left in RAX, which
+    // leaks the last-computed value as the process exit code (E3-BUG-1). So we
+    // emit the matching call shape and explicitly `ret i32 0` for unit-return.
+    if main_returns_unit {
+        output.push_str("  call void @blood_main()\n");
+        output.push_str("  ret i32 0\n");
+    } else {
+        output.push_str("  %ret = call i32 @blood_main()\n");
+        output.push_str("  ret i32 %ret\n");
+    }
     output.push_str("}\n");
 
     output
