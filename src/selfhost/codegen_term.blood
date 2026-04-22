@@ -56,12 +56,26 @@ pub fn emit_terminator(
             emit_assert(ctx, cond, expected, msg, target);
         }
         &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
-            // Effect perform via evidence API 5-arg call:
-            //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
-            let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
             // Per-op tail-resumptive classification (overrides MIR flag).
             // op_index is the op_name symbol index — same key used in the TR map.
             let is_tail_resumptive = ctx.is_tail_resumptive_op(effect_id.index, op_index);
+
+            // Non-tail-resumptive effects route through libmprompt when the
+            // effect is eligible: effect is NTR AND no handler op contains
+            // `resume(...)`. Resumable-NTR handlers stay on the legacy
+            // setjmp / blood_perform path because the current Resume
+            // terminator codegen does not call mp_resume (sub-task 3d
+            // rewrite). Keeping both sites (PushHandler and Perform) gated
+            // on the same per-effect flag ensures push and perform agree
+            // on which dispatcher to use.
+            if !is_tail_resumptive && ctx.is_mprompt_eligible_effect(effect_id.index) {
+                emit_perform_ntr(ctx, effect_id, op_index, args, destination, target);
+                return;
+            }
+
+            // Effect perform via evidence API 5-arg call:
+            //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
+            let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
             // op_index in MIR is the op_name symbol index; resolve to positional index
             let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
             if resolved_op_index == 0 && op_index != 0 {
@@ -2186,6 +2200,152 @@ fn make_array_type(count: usize) -> String {
     s
 }
 
+/// Emits a non-tail-resumptive Perform via the libmprompt runtime hook.
+///
+/// Called from the `Perform` match arm in `emit_terminator` when per-op
+/// classification reports non-TR. The rt_effect hook (`blood_perform_ntr`)
+/// looks up the target handler in the current evidence stack, reads the
+/// prompt pointer that `PushHandler`'s mprompt path wrote into the entry's
+/// prompt_addr slot, and yields the current gstack to invoke the handler
+/// on the parent stack (via the rt_mprompt_shim trampoline).
+///
+/// Args are packed into an i64 stack array (widened per existing TR rules)
+/// and passed through unchanged. The snapshot / continuation / stale-ref
+/// machinery from the TR path is intentionally omitted:
+///
+///   - Snapshot: body_fn's gen-tracked locals live on the gstack that
+///     mp_yield preserves across a resume, so any stale-ref detection is
+///     a body-side concern handled by the body_fn's own emission.
+///   - Continuation: mp_yield captures the body's remaining work
+///     implicitly; the codegen continuation table is a setjmp-era
+///     artifact that has no role in the mprompt path.
+///   - Active region suspension: the same gstack-capture argument applies.
+///
+/// is_abort: conservatively 1 for every NTR perform in this first slice.
+/// The abort trampoline calls mp_resume_drop before running the handler
+/// op, which is correct for abort-style handlers (CatchFail, Cancel,
+/// Error) and the only style exercised by tests being migrated. Resumable
+/// NTR handlers require is_abort=0 and will need a per-op flag (tracked).
+fn emit_perform_ntr(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    effect_id: hir_def.DefId,
+    op_index: u32,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
+
+    let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
+    if resolved_op_index == 0 && op_index != 0 {
+        let mut err_msg = common.make_string("effect op resolution returned fallback 0 for effect_def_id ");
+        err_msg.push_str(codegen_types.format_u64(effect_id.index as u64).as_str());
+        err_msg.push_str(" op_name_sym ");
+        err_msg.push_str(codegen_types.format_u64(op_index as u64).as_str());
+        ctx.codegen_error(codegen_ctx.CodegenErrorKind.EffectOpLookupFailed, err_msg);
+    }
+    let op_index_val = codegen_types.format_u64(resolved_op_index as u64);
+    let dest = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    // Pack arguments into an [N x i64] stack array, widening each arg to
+    // i64 (same ABI as blood_perform). Mirrors the TR path's packing so
+    // shared helpers (emit_operand_typed, widen_operand_to_i64) do the
+    // heavy lifting.
+    let num_args = args.len();
+    let num_args_val = codegen_types.format_u64(num_args as u64);
+    let args_alloca = ctx.fresh_temp_cg();
+    if num_args > 0 {
+        let arr_ty_str = make_array_type(num_args);
+        ctx.emit_alloca_cg(&args_alloca, arr_ty_str.as_str());
+
+        for ai in 0usize..num_args {
+            let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[ai]);
+            let widened_val = widen_operand_to_i64(ctx, arg_val.as_str(), arg_ty.as_str());
+
+            if ai == 0 {
+                ctx.write_indent();
+                ctx.write("store i64 ");
+                ctx.write_cgname(&widened_val);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&args_alloca);
+                ctx.write(", align 8\n");
+            } else {
+                let idx_str = codegen_types.format_u64(ai as u64);
+                let elem_ptr = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&elem_ptr);
+                ctx.write(" = getelementptr ");
+                ctx.write_string(&arr_ty_str);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&args_alloca);
+                ctx.write(", i64 0, i64 ");
+                ctx.write_string(&idx_str);
+                ctx.write("\n");
+
+                ctx.write_indent();
+                ctx.write("store i64 ");
+                ctx.write_cgname(&widened_val);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&elem_ptr);
+                ctx.write(", align 8\n");
+            }
+        }
+    }
+
+    // blood_perform_ntr(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i32 is_abort)
+    let result = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&result);
+    ctx.write(" = call i64 @blood_perform_ntr(i64 ");
+    ctx.write_string(&effect_id_val);
+    ctx.write(", i32 ");
+    ctx.write_string(&op_index_val);
+    ctx.write(", ptr ");
+    if num_args > 0 {
+        ctx.write_cgname(&args_alloca);
+    } else {
+        ctx.write("null");
+    }
+    ctx.write(", i64 ");
+    ctx.write_string(&num_args_val);
+    ctx.write(", i32 1)\n");
+
+    // Narrow the i64 result to the destination local's native type — same
+    // rule as the TR path, extracted as local code because the store must
+    // happen between the perform call and the branch to target.
+    let dest_ty = ctx.get_local_type(destination.local);
+    if str_eq(dest_ty.as_str(), "i64") {
+        ctx.emit_store_cg("i64", &result, dest.as_str());
+    } else if str_eq(dest_ty.as_str(), "i32") || str_eq(dest_ty.as_str(), "i16") || str_eq(dest_ty.as_str(), "i8") || str_eq(dest_ty.as_str(), "i1") {
+        let truncated = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&truncated);
+        ctx.write(" = trunc i64 ");
+        ctx.write_cgname(&result);
+        ctx.write(" to ");
+        ctx.write_string(&dest_ty);
+        ctx.write("\n");
+        ctx.emit_store_cg(dest_ty.as_str(), &truncated, dest.as_str());
+    } else if str_eq(dest_ty.as_str(), "{}") {
+        // Unit destination — discard the perform result
+    } else {
+        // For other types (ptr, struct, etc.), store the raw i64
+        ctx.emit_store_cg("i64", &result, dest.as_str());
+    }
+
+    // Branch to target block. Option.None means the perform is guaranteed
+    // to abort — emit `unreachable` for the LLVM verifier's benefit.
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
 /// Compares a &str against a &str for equality.
 fn string_eq_str(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
@@ -2230,6 +2390,13 @@ pub fn emit_basic_block(
     let label = ctx.block_label_cg(block_id);
     ctx.emit_label_cg(&label);
 
+    // Track which block we're emitting so statement emitters (PushHandler's
+    // mprompt path) can locate their scope in ctx.ntr_scopes via push_block
+    // match. Cleared at end of block so any mid-block escape (error path)
+    // doesn't leave stale state.
+    ctx.current_bb = block_id;
+    ctx.block_terminated_by_stmt = false;
+
     // Emit statements
     ctx.indent();
     for stmt in &block.statements {
@@ -2237,17 +2404,26 @@ pub fn emit_basic_block(
     }
     ctx.dedent();
 
-    // Emit terminator
-    ctx.indent();
-    match &block.terminator {
-        &Option.Some(ref term) => {
-            emit_terminator(ctx, term);
+    // Emit terminator — unless a statement already ended the block with its
+    // own unconditional branch. PushHandler's mprompt path takes over the
+    // push_block's tail: it allocates the normal_flag + env, calls
+    // blood_prompt_enter, and branches to either the abort epilogue or the
+    // pop_block. The MIR terminator (typically `goto body_entry`) targets a
+    // block that lives in body_fn on the gstack — emitting it would produce
+    // a branch to a label that the outer function no longer contains.
+    if !ctx.block_terminated_by_stmt {
+        ctx.indent();
+        match &block.terminator {
+            &Option.Some(ref term) => {
+                emit_terminator(ctx, term);
+            }
+            &Option.None => {
+                ctx.emit_unreachable();
+            }
         }
-        &Option.None => {
-            ctx.emit_unreachable();
-        }
+        ctx.dedent();
     }
-    ctx.dedent();
+    ctx.block_terminated_by_stmt = false;
 }
 
 // Forward declaration for codegen_stmt

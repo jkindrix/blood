@@ -315,6 +315,87 @@ pub fn generate_function_with_ctx(
     ctx.setup_debug_function(fn_name, body.span.line, module_index, module_count);
     ctx.begin_function(common.make_string(fn_name));
 
+    // Record the DefId of the function being emitted so statement emitters
+    // that reference module-level LLVM symbols derived from it (e.g.,
+    // PushHandler's mprompt path referencing @body_fn_<fn_id>_<pb_idx> and
+    // %env_ty_<fn_id>_<pb_idx>) can reconstruct those names without threading
+    // `body` through. Matches the convention used by codegen_body_fn.
+    ctx.current_fn_def_id = body.def_id.index;
+
+    // NTR handler scope pre-scan — populate ctx.ntr_scopes for the current function.
+    // mir_ntr_scope.analyze_ntr_scopes reports ALL handler scopes (TR and NTR); we
+    // filter to NTR-only here via handler_needs_abort so downstream emission
+    // (sub-tasks 4–6) only sees scopes that actually need the mprompt path.
+    // Run early — BEFORE the function header — so env struct type
+    // declarations can be emitted at module scope ahead of the function's
+    // alloca/GEP uses. LLVM requires the base of GEP/alloca to be a sized
+    // type; named type forward references across the function boundary
+    // have been observed to fail on llc-18.
+    ctx.ntr_scopes = Vec.new();
+    let ntr_result = mir_ntr_scope.analyze_ntr_scopes(body);
+    for nsi in 0usize..ntr_result.scopes.len() {
+        let scope = &ntr_result.scopes[nsi];
+        // Filter: only populate scope data for handlers whose effect is
+        // eligible for mprompt dispatch. handler_needs_abort confirms the
+        // effect is NTR; is_mprompt_eligible_effect additionally confirms
+        // no handler for the effect contains `resume(...)`. Resumable
+        // handlers remain on the setjmp path until sub-task 3d rewrites
+        // Resume to call mp_resume.
+        if !ctx.handler_needs_abort(scope.handler_id.index) {
+            continue;
+        }
+        let effect_id_opt = ctx.lookup_handler_effect(scope.handler_id.index);
+        let mprompt_ok = match effect_id_opt {
+            Option.Some(eid) => ctx.is_mprompt_eligible_effect(eid),
+            Option.None => false,
+        };
+        if !mprompt_ok {
+            continue;
+        }
+        let mut body_blocks_copy: Vec<mir_def.BasicBlockId> = Vec.with_capacity(scope.body_blocks.len());
+        for bbi in 0usize..scope.body_blocks.len() {
+            body_blocks_copy.push(mir_def.BasicBlockId { index: scope.body_blocks[bbi].index });
+        }
+        let mut captures_copy: Vec<mir_def.MirLocalId> = Vec.with_capacity(scope.captures.len());
+        for ci in 0usize..scope.captures.len() {
+            captures_copy.push(mir_def.MirLocalId { index: scope.captures[ci].index });
+        }
+        ctx.ntr_scopes.push(mir_ntr_scope.NtrScope {
+            handler_id: hir_def.DefId { index: scope.handler_id.index },
+            push_block: mir_def.BasicBlockId { index: scope.push_block.index },
+            pop_block: mir_def.BasicBlockId { index: scope.pop_block.index },
+            body_blocks: body_blocks_copy,
+            captures: captures_copy,
+        });
+    }
+
+    // Emit env struct type declarations for each NTR scope at module scope,
+    // ahead of the function header. Matches the layout produced by
+    // codegen_body_fn.append_env_type_decl so PushHandler's alloca/GEP and
+    // body_fn's env unpack reference the same shape.
+    let ntr_scope_count_pre = ctx.ntr_scopes.len();
+    if ntr_scope_count_pre > 0 {
+        let fn_def_id = ctx.current_fn_def_id;
+        for si in 0usize..ntr_scope_count_pre {
+            let push_idx = ctx.ntr_scopes[si].push_block.index;
+            let cap_count = ctx.ntr_scopes[si].captures.len();
+            ctx.write("%env_ty_");
+            ctx.write(codegen_types.format_u64(fn_def_id as u64).as_str());
+            ctx.write("_");
+            ctx.write(codegen_types.format_u64(push_idx as u64).as_str());
+            ctx.write(" = type { ");
+            let field_count = cap_count + 1;
+            for fi in 0usize..field_count {
+                if fi > 0 {
+                    ctx.write(", ");
+                }
+                ctx.write("ptr");
+            }
+            ctx.write(" }\n");
+        }
+        ctx.write("\n");
+    }
+
     // Build parameter list (skip first local which is return place)
     // For handler op bodies with multiple state fields, skip the state field
     // locals (2..1+state_count) — they are loaded from the state pointer, not passed as args.
@@ -440,35 +521,6 @@ pub fn generate_function_with_ctx(
         }
     }
 
-    // NTR handler scope pre-scan — populate ctx.ntr_scopes for the current function.
-    // mir_ntr_scope.analyze_ntr_scopes reports ALL handler scopes (TR and NTR); we
-    // filter to NTR-only here via handler_needs_abort so downstream emission
-    // (sub-tasks 4–6) only sees scopes that actually need the mprompt path.
-    // Empty for TR-only or handler-free functions — no behavioral change yet.
-    ctx.ntr_scopes = Vec.new();
-    let ntr_result = mir_ntr_scope.analyze_ntr_scopes(body);
-    for nsi in 0usize..ntr_result.scopes.len() {
-        let scope = &ntr_result.scopes[nsi];
-        if ctx.handler_needs_abort(scope.handler_id.index) {
-            // BasicBlockId / MirLocalId don't impl Clone yet, so copy element-wise.
-            let mut body_blocks_copy: Vec<mir_def.BasicBlockId> = Vec.with_capacity(scope.body_blocks.len());
-            for bbi in 0usize..scope.body_blocks.len() {
-                body_blocks_copy.push(mir_def.BasicBlockId { index: scope.body_blocks[bbi].index });
-            }
-            let mut captures_copy: Vec<mir_def.MirLocalId> = Vec.with_capacity(scope.captures.len());
-            for ci in 0usize..scope.captures.len() {
-                captures_copy.push(mir_def.MirLocalId { index: scope.captures[ci].index });
-            }
-            ctx.ntr_scopes.push(mir_ntr_scope.NtrScope {
-                handler_id: hir_def.DefId { index: scope.handler_id.index },
-                push_block: mir_def.BasicBlockId { index: scope.push_block.index },
-                pop_block: mir_def.BasicBlockId { index: scope.pop_block.index },
-                body_blocks: body_blocks_copy,
-                captures: captures_copy,
-            });
-        }
-    }
-
     // Store arguments into allocas
     codegen_stmt.emit_arg_stores(ctx, body);
 
@@ -496,6 +548,16 @@ pub fn generate_function_with_ctx(
 
         for block_idx in 0usize..body.basic_blocks.len() {
             let block_id = mir_def.BasicBlockId.new(block_idx as u32);
+            // Skip blocks that live inside an NTR scope's body: they will be
+            // re-emitted in the scope's body function (running on the
+            // mprompt gstack). The scope's push_block and pop_block remain
+            // in the outer function — push_block to carry pre-PushHandler
+            // statements + the mprompt setup, pop_block to carry PopHandler
+            // + CallReturnClause + CallFinallyClause after blood_prompt_enter
+            // returns (normal or abort path).
+            if ctx.is_ntr_body_block(block_id) && !ctx.is_ntr_push_or_pop_block(block_id) {
+                continue;
+            }
             codegen_term.emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
         }
 

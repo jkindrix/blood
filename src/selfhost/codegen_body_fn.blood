@@ -145,9 +145,13 @@ pub fn emit_body_fn(
 
     let fn_def_id = body.def_id.index;
 
-    // Env struct type (module-level declaration).
-    append_env_type_decl(fn_def_id, scope, &mut ctx.output);
-    ctx.write("\n");
+    // Env struct type is declared at module scope by the outer function's
+    // emission (generate_function_with_ctx, before emit_fn_header) so
+    // PushHandler's alloca/GEP and body_fn's env unpack refer to the same
+    // sized named type. LLVM does not accept forward references to named
+    // types where the GEP base element must be sized at parse time, so the
+    // declaration has to precede every use — including the outer function's
+    // uses, which precede body_fn in the module.
 
     // Function header + entry label.
     ctx.write("define internal ptr ");
@@ -156,28 +160,16 @@ pub fn emit_body_fn(
     ctx.write("(ptr %prompt, ptr %env) {\n");
     ctx.write("entry:\n");
 
-    // If any capture is a region- or persistent-allocated local, body_fn
-    // would need to also access its companion `_<N>_gen` alloca (for stale
-    // reference tracking) which is NOT a MIR local — it is a codegen-side
-    // helper, and the capture-all-inside policy doesn't cover it. Until
-    // sub-task 5 wires PushHandler to the mprompt path, body_fn is dead
-    // code, so for NOW we emit a trivial stub for any scope that captures a
-    // gen-tracked local. Non-gen-tracked scopes still get a full body_fn so
-    // end-to-end verification of the new emission code continues to run.
-    let has_gen_tracked_capture = scope_captures_any_gen_tracked(ctx, scope);
-    if has_gen_tracked_capture {
-        ctx.write("  ret ptr null\n");
-        ctx.write("}\n\n");
-
-        let ir = ctx.output.clone();
-
-        ctx.output = saved_output;
-        ctx.deferred_entry_allocas = saved_deferred;
-        ctx.handler_depth = saved_handler_depth;
-        ctx.exit_body_fn();
-
-        return ir;
-    }
+    // Prior revisions emitted a stub `ret ptr null` for scopes that capture
+    // region- or persistent-allocated locals, because body_fn's environment
+    // does not include companion `_<N>_gen` allocas used by stale-ref
+    // detection. Under the sub-task 6 rewrite, NTR Perform no longer emits
+    // snapshot validation on the body side, so `_<N>_gen` is unused inside
+    // body_fn's own emission. The stub is now dead code; scopes with
+    // gen-tracked captures still need special handling only when body-side
+    // expressions take references to those locals, which is tracked as a
+    // follow-up (the capture-all-inside policy handles the base pointer
+    // correctly; only the generation companion is missing).
 
     // Entry prologue: unpack env only. Under the capture-all-inside policy
     // in mir_ntr_scope.compute_captures, every body-referenced local is a

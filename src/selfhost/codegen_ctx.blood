@@ -387,6 +387,26 @@ pub struct CodegenCtx {
     /// sites. Initialized to -1, set by codegen_body_fn.emit_body_fn before
     /// emitting body blocks, reset to -1 immediately after.
     pub in_ntr_body_fn_scope_idx: i32,
+    /// The basic block currently being emitted. Set at the top of
+    /// codegen_term.emit_basic_block, read by statement emitters that need
+    /// to locate their place in the CFG (PushHandler uses this to pair its
+    /// occurrence with the matching entry in `ntr_scopes` when a single
+    /// function contains multiple `with H handle { ... }` blocks that share
+    /// a handler_id but have distinct captures/body blocks).
+    pub current_bb: mir_def.BasicBlockId,
+    /// DefId of the function currently being emitted. Stored on ctx so
+    /// statement emitters that need to reference function-scoped LLVM
+    /// symbols (PushHandler's mprompt path references `@body_fn_<fn_id>_<pb>`
+    /// and `%env_ty_<fn_id>_<pb>`) can reconstruct those names without
+    /// threading `body: &MirBody` through every emission path. Set by
+    /// generate_function_with_ctx before block emission starts.
+    pub current_fn_def_id: u32,
+    /// Signals that a statement inside the current block already emitted an
+    /// unconditional terminator (typically PushHandler's mprompt branch to
+    /// the pop block). When true, codegen_term.emit_basic_block skips the
+    /// MIR terminator's emission — otherwise two branches would leave the
+    /// block and LLVM would reject the IR. Cleared after each block.
+    pub block_terminated_by_stmt: bool,
     /// Backward liveness at basic block entries. Flat grid:
     /// live_at_entry[bb_idx * perform_liveness_locals + local_idx].
     /// Empty if the function has no Perform terminators.
@@ -401,6 +421,12 @@ pub struct CodegenCtx {
     /// Packed into a single Vec<u64> to minimize struct layout impact.
     /// [0..N): effect DefIds, [N]: abort label string index, etc.
     non_tail_resumptive_effects: hashmap.HashMapU64U32,
+    /// Per-effect flag: 1 if any handler op for this effect contains a
+    /// `resume(...)` expression. Populated during handler info collection
+    /// (main_handler.collect_handler_info) via a HIR walk. Used by
+    /// is_mprompt_eligible_effect to avoid routing resumable handlers
+    /// through the libmprompt abort trampoline.
+    effect_has_resume_hash: hashmap.HashMapU64U32,
     pub frozen_def_id: u32,
     /// Per-op tail-resumptive classification.
     /// Key: (effect_def_id << 32) | op_sym_index. Value: 1 = TR, absent = NTR.
@@ -634,10 +660,14 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
             in_ntr_body_fn_scope_idx: -1i32,
+            current_bb: mir_def.BasicBlockId.dummy(),
+            block_terminated_by_stmt: false,
+            current_fn_def_id: 0,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            effect_has_resume_hash: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
@@ -740,10 +770,14 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
             in_ntr_body_fn_scope_idx: -1i32,
+            current_bb: mir_def.BasicBlockId.dummy(),
+            block_terminated_by_stmt: false,
+            current_fn_def_id: 0,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            effect_has_resume_hash: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
@@ -1154,6 +1188,40 @@ impl CodegenCtx {
         }
     }
 
+    /// Records that at least one handler op for this effect contains a
+    /// `resume(...)` expression. Sets the bit unconditionally on each call
+    /// (idempotent). Consumed by is_mprompt_eligible_effect.
+    pub fn register_effect_has_resume(self: &mut CodegenCtx, effect_def_id: u32) {
+        self.effect_has_resume_hash.insert(effect_def_id as u64, 1u32);
+    }
+
+    /// Returns true if any handler op for this effect contains `resume(...)`.
+    pub fn effect_has_resume(self: &CodegenCtx, effect_def_id: u32) -> bool {
+        match self.effect_has_resume_hash.get(effect_def_id as u64) {
+            Option.Some(_) => true,
+            Option.None => false,
+        }
+    }
+
+    /// True if the effect's handlers are collectively safe for libmprompt
+    /// dispatch: the effect is non-tail-resumptive AND no handler op
+    /// contains `resume(...)`. The latter check rules out resumable-NTR
+    /// handlers (e.g., accumulator-style handlers that run statements
+    /// before calling resume) which would break under the current
+    /// abort-only trampoline — the trampoline drops the continuation
+    /// before invoking the handler op, and the legacy Resume terminator's
+    /// codegen does not call mp_resume. Until sub-task 3d rewrites Resume
+    /// to use mp_resume, those effects stay on the setjmp path.
+    pub fn is_mprompt_eligible_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
+        if !self.is_non_tail_resumptive_effect(effect_def_id) {
+            return false;
+        }
+        if self.effect_has_resume(effect_def_id) {
+            return false;
+        }
+        true
+    }
+
     /// Returns true if the current function has a recorded NTR scope for this
     /// handler DefId. Driven by mir_ntr_scope pre-scan results filtered through
     /// handler_needs_abort. Used by PushHandler emission (sub-task 5) to switch
@@ -1194,6 +1262,40 @@ impl CodegenCtx {
     /// Number of NTR scopes in the current function's pre-scan.
     pub fn ntr_scope_count(self: &CodegenCtx) -> usize {
         self.ntr_scopes.len()
+    }
+
+    /// Returns the index into `ntr_scopes` of the scope whose push_block
+    /// matches the given block ID, or -1 if no such scope exists. Keyed on
+    /// push_block (not handler_id) because a single function may use the
+    /// same handler across multiple `with H handle { ... }` sites, producing
+    /// distinct scopes with distinct captures.
+    ///
+    /// Consumed by PushHandler emission (sub-task 5) to locate the exact
+    /// scope whose env struct type and body function it must emit.
+    pub fn ntr_scope_idx_for_push_block(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> i32 {
+        for i in 0usize..self.ntr_scopes.len() {
+            if self.ntr_scopes[i].push_block.index == bb.index {
+                return i as i32;
+            }
+        }
+        -1i32
+    }
+
+    /// Returns true if the given basic block is the push_block or pop_block
+    /// of any NTR scope in the current function. Used by the outer
+    /// function's block-emission loop: body-interior blocks are emitted in
+    /// the body function and must be skipped in the outer, but push_block
+    /// (for pre-PushHandler statements + PushHandler's mprompt emission) and
+    /// pop_block (for PopHandler + CallReturnClause + CallFinallyClause)
+    /// remain in the outer function.
+    pub fn is_ntr_push_or_pop_block(self: &CodegenCtx, bb: mir_def.BasicBlockId) -> bool {
+        for i in 0usize..self.ntr_scopes.len() {
+            let scope = &self.ntr_scopes[i];
+            if scope.push_block.index == bb.index || scope.pop_block.index == bb.index {
+                return true;
+            }
+        }
+        false
     }
 
     /// Marks that statement/terminator emission is happening inside the
@@ -2059,6 +2161,9 @@ impl CodegenCtx {
         self.deferred_entry_allocas = Vec.new();
         self.handler_state_shadows = Vec.new();
         self.in_ntr_body_fn_scope_idx = -1i32;
+        self.current_bb = mir_def.BasicBlockId.dummy();
+        self.block_terminated_by_stmt = false;
+        self.current_fn_def_id = 0;
     }
 
     // ======== Error Reporting ========
@@ -2770,10 +2875,14 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             ntr_scopes: Vec.new(),
             in_ntr_body_fn_scope_idx: -1i32,
+            current_bb: mir_def.BasicBlockId.dummy(),
+            block_terminated_by_stmt: false,
+            current_fn_def_id: 0,
             perform_liveness: Vec.new(),
             perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
+            effect_has_resume_hash: hashmap.HashMapU64U32.new(),
             frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
@@ -2810,6 +2919,12 @@ impl CodegenCtx {
             let ntr_eid = self.handler_effect_entries[ntri].effect_def_id;
             if self.is_non_tail_resumptive_effect(ntr_eid) {
                 worker.register_non_tail_resumptive_effect(ntr_eid);
+            }
+            // Copy effect-has-resume flag so workers agree with the main
+            // context on mprompt eligibility (gates PushHandler's mprompt
+            // path and emit_perform_ntr).
+            if self.effect_has_resume(ntr_eid) {
+                worker.register_effect_has_resume(ntr_eid);
             }
         }
 

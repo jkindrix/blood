@@ -388,6 +388,241 @@ fn expr_is_tail_resume(expr: &hir_expr.Expr) -> bool {
     }
 }
 
+/// Returns true if the expression tree contains a `resume(...)` expression
+/// anywhere. Used to classify a handler op as "abort-only" (no resume anywhere)
+/// versus "resumable" (at least one resume). This classification gates the
+/// libmprompt dispatch path (sub-task 5/6): only effects whose every handler
+/// has every op as abort-only are eligible for mprompt, because the legacy
+/// Resume terminator's codegen does not call mp_resume. A resumable handler
+/// routed through mprompt's abort trampoline would drop the continuation; the
+/// resumable trampoline would let the body run to completion without actually
+/// resuming. Both paths break resumable semantics, so those handlers stay on
+/// the setjmp path until Resume is rewritten (sub-task 3d).
+fn expr_contains_resume(expr: &hir_expr.Expr) -> bool {
+    match &expr.kind {
+        &hir_expr.ExprKind.Resume(_) => true,
+        &hir_expr.ExprKind.Literal(_) => false,
+        &hir_expr.ExprKind.Local(_) => false,
+        &hir_expr.ExprKind.Path(_) => false,
+        &hir_expr.ExprKind.Default => false,
+        &hir_expr.ExprKind.Error => false,
+        &hir_expr.ExprKind.Continue { label: _ } => false,
+        &hir_expr.ExprKind.Binary { operator: _, ref left, ref right } => {
+            expr_contains_resume(left.as_ref()) || expr_contains_resume(right.as_ref())
+        }
+        &hir_expr.ExprKind.Unary { operator: _, ref operand } => {
+            expr_contains_resume(operand.as_ref())
+        }
+        &hir_expr.ExprKind.Call { ref callee, ref args } => {
+            if expr_contains_resume(callee.as_ref()) { return true; }
+            for i in 0usize..args.len() {
+                if expr_contains_resume(&args[i]) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+            if expr_contains_resume(receiver.as_ref()) { return true; }
+            for i in 0usize..args.len() {
+                if expr_contains_resume(&args[i]) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Field { ref base, field: _ } => {
+            expr_contains_resume(base.as_ref())
+        }
+        &hir_expr.ExprKind.Index { ref base, ref idx } => {
+            expr_contains_resume(base.as_ref()) || expr_contains_resume(idx.as_ref())
+        }
+        &hir_expr.ExprKind.Tuple(ref exprs) => {
+            for i in 0usize..exprs.len() {
+                if expr_contains_resume(&exprs[i]) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Array(ref array_expr) => {
+            match array_expr {
+                &hir_expr.ArrayExpr.List(ref exprs) => {
+                    for i in 0usize..exprs.len() {
+                        if expr_contains_resume(&exprs[i]) { return true; }
+                    }
+                    false
+                }
+                &hir_expr.ArrayExpr.Repeat { ref val, count: _ } => {
+                    expr_contains_resume(val.as_ref())
+                }
+            }
+        }
+        &hir_expr.ExprKind.Struct { path: _, ref fields, ref base } => {
+            for i in 0usize..fields.len() {
+                if expr_contains_resume(&fields[i].val) { return true; }
+            }
+            match base {
+                &Option.Some(ref b) => expr_contains_resume(b.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.AnonRecord { ref fields } => {
+            for i in 0usize..fields.len() {
+                if expr_contains_resume(&fields[i].val) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Range { ref start, ref end_val, inclusive: _ } => {
+            let start_has = match start {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            };
+            if start_has { return true; }
+            match end_val {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
+            expr_contains_resume(expr.as_ref())
+        }
+        &hir_expr.ExprKind.Assign { ref target, ref val } => {
+            expr_contains_resume(target.as_ref()) || expr_contains_resume(val.as_ref())
+        }
+        &hir_expr.ExprKind.AssignOp { operator: _, ref target, ref val } => {
+            expr_contains_resume(target.as_ref()) || expr_contains_resume(val.as_ref())
+        }
+        &hir_expr.ExprKind.Block(ref block) => {
+            block_contains_resume(block)
+        }
+        &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
+            if expr_contains_resume(condition.as_ref()) { return true; }
+            if expr_contains_resume(then_branch.as_ref()) { return true; }
+            match else_branch {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
+            if expr_contains_resume(scrutinee.as_ref()) { return true; }
+            for i in 0usize..arms.len() {
+                let arm = &arms[i];
+                match &arm.guard {
+                    &Option.Some(ref g) => {
+                        if expr_contains_resume(g) { return true; }
+                    }
+                    &Option.None => {}
+                }
+                if expr_contains_resume(&arm.body) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Loop { label: _, ref body } => {
+            expr_contains_resume(body.as_ref())
+        }
+        &hir_expr.ExprKind.Return(ref opt) => {
+            match opt {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.Break { label: _, ref val } => {
+            match val {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => {
+            // A closure's body is a separate function; resume inside it doesn't
+            // resume THIS handler's continuation. Treat as not-containing-resume
+            // for the outer handler's classification.
+            false
+        }
+        &hir_expr.ExprKind.WithHandle { ref handler, ref body } => {
+            expr_contains_resume(handler.as_ref()) || expr_contains_resume(body.as_ref())
+        }
+        &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
+            if expr_contains_resume(body.as_ref()) { return true; }
+            for i in 0usize..handlers.len() {
+                if expr_contains_resume(&handlers[i].body) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
+            for i in 0usize..args.len() {
+                if expr_contains_resume(&args[i]) { return true; }
+            }
+            false
+        }
+        &hir_expr.ExprKind.Try(ref inner) => {
+            expr_contains_resume(inner.as_ref())
+        }
+        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+            for i in 0usize..stmts.len() {
+                if stmt_contains_resume(&stmts[i]) { return true; }
+            }
+            match expr {
+                &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.ExprKind.Unsafe(ref inner) => {
+            expr_contains_resume(inner.as_ref())
+        }
+        &hir_expr.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => {
+            expr_contains_resume(body.as_ref())
+        }
+        &hir_expr.ExprKind.Heap(ref inner) => {
+            expr_contains_resume(inner.as_ref())
+        }
+        &hir_expr.ExprKind.Stack(ref inner) => {
+            expr_contains_resume(inner.as_ref())
+        }
+        &hir_expr.ExprKind.ForIter { label: _, pattern: _, ref iter, ref body } => {
+            expr_contains_resume(iter.as_ref()) || expr_contains_resume(body.as_ref())
+        }
+    }
+}
+
+/// Recurse into a block's statements + trailing expression.
+fn block_contains_resume(block: &hir_expr.Block) -> bool {
+    for i in 0usize..block.stmts.len() {
+        if stmt_contains_resume(&block.stmts[i]) { return true; }
+    }
+    match &block.expr {
+        &Option.Some(ref e) => expr_contains_resume(e.as_ref()),
+        &Option.None => false,
+    }
+}
+
+/// Recurse into a statement's sub-expressions.
+fn stmt_contains_resume(stmt: &hir_expr.Stmt) -> bool {
+    match stmt {
+        &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
+            match init {
+                &Option.Some(ref e) => expr_contains_resume(e),
+                &Option.None => false,
+            }
+        }
+        &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
+            expr_contains_resume(expr)
+        }
+        &hir_expr.Stmt.Item(_) => {
+            // A nested item's body is out of this handler's control flow.
+            false
+        }
+    }
+}
+
+/// Returns true if the body identified by `body_id_index` (a handler op's
+/// HIR body) contains a `resume(...)` expression anywhere in its tree.
+fn handler_op_has_resume(
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
+    body_id_index: u32,
+) -> bool {
+    for bi in 0usize..bodies.len() {
+        if bodies[bi].body_id.index == body_id_index {
+            return expr_contains_resume(&bodies[bi].body.expr);
+        }
+    }
+    false
+}
+
 /// Finds a body by body_id and checks if its tail expression is resume().
 fn handler_op_is_tail_resumptive(
     bodies: &Vec<hir_lower_ctx.BodyEntry>,
@@ -532,6 +767,14 @@ pub fn collect_handler_info(
                         has_ntr_op = true;
                         // NTR always wins — overrides any previous TR from another handler
                         ctx.register_non_tail_resumptive_op(effect_def_id, op_impl.name.symbol.index);
+                    }
+
+                    // Classify per-op: does the body contain `resume(...)`
+                    // anywhere? Tail-resumptive ops trivially contain it;
+                    // non-tail-resumptive ops may or may not. Aggregated to
+                    // the effect level to decide mprompt eligibility.
+                    if handler_op_has_resume(bodies, op_impl.body_id.index) {
+                        ctx.register_effect_has_resume(effect_def_id);
                     }
 
                     ops.push(HandlerOpInfo {

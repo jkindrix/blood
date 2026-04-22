@@ -376,6 +376,37 @@ pub fn emit_statement(
                 cgname_to_string(&state_void_ptr)
             };
 
+            // Determine whether this PushHandler occurrence should use the
+            // libmprompt-based dispatch path. Keyed on the current basic
+            // block (not handler_id) because a single function can contain
+            // multiple `with H handle { ... }` blocks that share a handler
+            // but have distinct capture sets and body functions. The
+            // pre-scan pairs each PushHandler with its scope at push_block.
+            let ntr_scope_idx = ctx.ntr_scope_idx_for_push_block(ctx.current_bb);
+            let use_mprompt = ntr_scope_idx >= 0i32;
+
+            // For the mprompt path, create the prompt BEFORE evidence_push
+            // so its address travels into the evidence entry's prompt_addr
+            // slot (S37 sub-task 2). blood_perform_ntr (sub-task 6 / S38)
+            // reads that slot at perform sites to locate the target gstack.
+            let mut prompt_cgname = common.make_string("");
+            let mut prompt_i64_cgname = common.make_string("0");
+            if use_mprompt {
+                let prompt_tmp = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&prompt_tmp);
+                ctx.write(" = call ptr @blood_prompt_create()\n");
+                prompt_cgname = cgname_to_string(&prompt_tmp);
+
+                let pi_tmp = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&pi_tmp);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write_cgname(&prompt_tmp);
+                ctx.write(" to i64\n");
+                prompt_i64_cgname = cgname_to_string(&pi_tmp);
+            }
+
             // Use push_by_index with per-handler registry index.
             // Each handler has its own registry entry so that different handlers
             // for the same effect dispatch to different operation implementations.
@@ -393,7 +424,9 @@ pub fn emit_statement(
             ctx.write_cgname(&reg_idx_global);
             ctx.write(", ptr ");
             ctx.write_string(&push_state_ptr);
-            ctx.write(", i64 0)\n");
+            ctx.write(", i64 ");
+            ctx.write_string(&prompt_i64_cgname);
+            ctx.write(")\n");
 
             // EFF-OPT-003: Only set inline hint for single-handler scopes (depth 1).
             // For nested handlers, the inner set_inline would overwrite the outer one,
@@ -406,9 +439,220 @@ pub fn emit_statement(
                 ctx.write(")\n");
             }
 
-            // Handler abort support: for non-tail-resumptive effects (Cancel, Error, etc.),
-            // set up setjmp so blood_perform can longjmp back when handler doesn't resume.
-            if ctx.handler_needs_abort(handler_id.index) {
+            // Handler abort support. Two paths:
+            //
+            //   - libmprompt path (has_ntr_scope_for_handler true): PushHandler
+            //     allocates a normal_flag + env struct, creates a prompt, and
+            //     enters it via blood_prompt_enter. The extracted body function
+            //     runs on a fresh gstack; on normal return it sets normal_flag=1,
+            //     on abort it is destroyed via mp_resume_drop without writing the
+            //     flag. After blood_prompt_enter returns, we branch to pop_block
+            //     (normal) or to an abort epilogue (abort) that pops evidence and
+            //     joins CallReturnClause's abort_store path.
+            //
+            //   - Legacy setjmp path (handler_needs_abort true but no NTR scope
+            //     was found): kept for defense-in-depth. Not expected in
+            //     well-formed MIR because the pre-scan populates ntr_scopes for
+            //     every NTR handler. If this branch fires in practice, either
+            //     the pre-scan missed a scope or a handler is NTR but has no
+            //     matching PopHandler — both are compiler bugs to investigate.
+            if use_mprompt {
+                // Deep-clone the scope so we can read its fields while ctx
+                // is mutably borrowed by write/emit helpers below.
+                let scope_clone = ctx.ntr_scopes[ntr_scope_idx as usize].clone_deep();
+                let fn_def_id = ctx.current_fn_def_id;
+                let push_block_idx = scope_clone.push_block.index;
+                let capture_count = scope_clone.captures.len();
+
+                // Reconstruct the env struct type name and body function
+                // name. Kept in sync with codegen_body_fn.env_ty_name /
+                // body_fn_name — the pair (fn_def_id, push_block_idx)
+                // uniquely identifies a scope within the module.
+                let mut env_ty = common.make_string("%env_ty_");
+                env_ty.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+                env_ty.push_str("_");
+                env_ty.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+
+                let mut body_fn_sym = common.make_string("@body_fn_");
+                body_fn_sym.push_str(codegen_types.format_u64(fn_def_id as u64).as_str());
+                body_fn_sym.push_str("_");
+                body_fn_sym.push_str(codegen_types.format_u64(push_block_idx as u64).as_str());
+
+                // 1. normal_flag (i1) — body_fn writes 1 on successful return
+                // via the %normal_flag_ptr alloca it receives through env.
+                // Initialized to 0 so the post-enter branch defaults to abort
+                // when body_fn is destroyed without completing.
+                let normal_flag = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&normal_flag);
+                ctx.write(" = alloca i1, align 1\n");
+                ctx.write_indent();
+                ctx.write("store i1 0, ptr ");
+                ctx.write_cgname(&normal_flag);
+                ctx.write(", align 1\n");
+
+                // 2. env struct: one ptr per capture + trailing ptr for the
+                // normal_flag alloca. Layout matches the emission in
+                // codegen_body_fn.append_env_type_decl.
+                let env = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&env);
+                ctx.write(" = alloca ");
+                ctx.write(env_ty.as_str());
+                ctx.write(", align 8\n");
+
+                // 3. Pack captures. local_cg returns %_N (the outer-frame
+                // alloca) because we are NOT in body_fn mode here — the env
+                // is populated from the outer function.
+                for ci in 0usize..capture_count {
+                    let cap_local = scope_clone.captures[ci];
+                    let cap_alloca = ctx.local_cg(cap_local);
+
+                    let env_slot = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&env_slot);
+                    ctx.write(" = getelementptr ");
+                    ctx.write(env_ty.as_str());
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&env);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64(ci as u64).as_str());
+                    ctx.write("\n");
+
+                    ctx.write_indent();
+                    ctx.write("store ptr ");
+                    ctx.write_cgname(&cap_alloca);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&env_slot);
+                    ctx.write(", align 8\n");
+                }
+
+                // 4. Trailing env slot holds the normal_flag pointer so
+                // body_fn can signal successful return.
+                let flag_slot = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&flag_slot);
+                ctx.write(" = getelementptr ");
+                ctx.write(env_ty.as_str());
+                ctx.write(", ptr ");
+                ctx.write_cgname(&env);
+                ctx.write(", i32 0, i32 ");
+                ctx.write(codegen_types.format_u64(capture_count as u64).as_str());
+                ctx.write("\n");
+
+                ctx.write_indent();
+                ctx.write("store ptr ");
+                ctx.write_cgname(&normal_flag);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&flag_slot);
+                ctx.write(", align 8\n");
+
+                // 5. abort_result — consumed by CallReturnClause's abort
+                // path. Initialized to 0 so a normal return without any
+                // abort writer still produces a well-defined value.
+                let abort_result = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_result);
+                ctx.write(" = alloca i64, align 8\n");
+                ctx.write_indent();
+                ctx.write("store i64 0, ptr ");
+                ctx.write_cgname(&abort_result);
+                ctx.write(", align 8\n");
+
+                // 6. Enter the prompt: runs body_fn on a fresh gstack. The
+                // return value is the abort handler's result (when aborted)
+                // or body_fn's explicit return (null in our synthesized
+                // return block; the real body result flows through _0 via
+                // the env pointer).
+                let mp_result = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&mp_result);
+                ctx.write(" = call ptr @blood_prompt_enter(ptr ");
+                ctx.write_string(&prompt_cgname);
+                ctx.write(", ptr ");
+                ctx.write(body_fn_sym.as_str());
+                ctx.write(", ptr ");
+                ctx.write_cgname(&env);
+                ctx.write(")\n");
+
+                let mp_result_i64 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&mp_result_i64);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write_cgname(&mp_result);
+                ctx.write(" to i64\n");
+
+                ctx.write_indent();
+                ctx.write("store i64 ");
+                ctx.write_cgname(&mp_result_i64);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&abort_result);
+                ctx.write(", align 8\n");
+
+                // 7. Read the normal-return flag and branch. On abort, skip
+                // to an epilogue that pops evidence and joins CallReturnClause
+                // at its abort_store label. On normal, jump to pop_block
+                // whose PopHandler + CallReturnClause run as usual.
+                let flag_val = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&flag_val);
+                ctx.write(" = load i1, ptr ");
+                ctx.write_cgname(&normal_flag);
+                ctx.write(", align 1\n");
+
+                let is_abort = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&is_abort);
+                ctx.write(" = icmp eq i1 ");
+                ctx.write_cgname(&flag_val);
+                ctx.write(", 0\n");
+
+                let abort_epilogue_label = ctx.fresh_label_cg();
+                let pop_block_label = ctx.block_label_cg(scope_clone.pop_block);
+                ctx.emit_cond_br_cg(&is_abort, &abort_epilogue_label, &pop_block_label);
+
+                // Abort epilogue: do what PopHandler would on abort. We
+                // must pop evidence manually because the normal-path
+                // PopHandler is skipped (we jump straight into pop_block's
+                // abort_store label, past the PopHandler statements).
+                ctx.emit_label_cg(&abort_epilogue_label);
+
+                let ev_abort = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ev_abort);
+                ctx.write(" = call ptr @blood_evidence_current()\n");
+
+                let pop_abort = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&pop_abort);
+                ctx.write(" = call i64 @blood_evidence_pop(ptr ");
+                ctx.write_cgname(&ev_abort);
+                ctx.write(")\n");
+
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_clear_inline()\n");
+
+                let abort_store_label = ctx.fresh_label_cg();
+                let merge_label = ctx.fresh_label_cg();
+                ctx.emit_br_cg(&abort_store_label);
+
+                // CallReturnClause will emit the abort_store block inside
+                // pop_block (same structure as the legacy setjmp path).
+                ctx.push_abort_labels(
+                    handler_id.index,
+                    cgname_to_string(&abort_store_label),
+                    cgname_to_string(&merge_label),
+                    cgname_to_string(&abort_result),
+                );
+
+                // PushHandler has emitted a conditional terminator plus the
+                // abort epilogue's br. push_block's MIR terminator (typically
+                // `goto body_entry`) targets a block that no longer lives in
+                // the outer function — suppress it.
+                ctx.block_terminated_by_stmt = true;
+            } else if ctx.handler_needs_abort(handler_id.index) {
+                // Legacy setjmp fallback (should be unreachable when the
+                // pre-scan populates ntr_scopes for all NTR handlers).
                 // Allocate jmp_buf (256 bytes) and abort result on stack
                 let jmpbuf = ctx.fresh_temp_cg();
                 ctx.write_indent();
@@ -518,10 +762,15 @@ pub fn emit_statement(
                 ctx.handler_depth = ctx.handler_depth - 1;
             }
 
-            // Pop abort target if one was pushed for this handler
+            // Pop abort target if one was pushed for this handler via the
+            // setjmp path. Handlers dispatched through libmprompt (NTR scope
+            // in ntr_scopes) never push a jmp_buf target, so popping one
+            // here would underflow the abort stack.
             if ctx.has_abort_labels_for(handler_id.index) {
-                ctx.write_indent();
-                ctx.write("call void @blood_handler_pop_abort_target()\n");
+                if !ctx.has_ntr_scope_for_handler(handler_id.index) {
+                    ctx.write_indent();
+                    ctx.write("call void @blood_handler_pop_abort_target()\n");
+                }
             }
         }
         &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations } => {
