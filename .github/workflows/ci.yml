@@ -131,10 +131,26 @@ jobs:
           sudo swapon /swapfile
 
       - name: Verify bootstrap artifacts
+        working-directory: ${{ github.workspace }}
         run: |
           echo "Seed: $(stat -c'%s bytes' bootstrap/seed)"
           echo "Runtime: $(stat -c'%s bytes' bootstrap/libblood_runtime_blood.a)"
           file bootstrap/seed
+
+      - name: Pre-build diagnostic
+        working-directory: src/selfhost
+        run: |
+          set -x
+          pwd
+          echo "workspace=$GITHUB_WORKSPACE"
+          ls -la .
+          ls -la ../../bootstrap/ | head
+          command -v clang-18 clang-19 clang llc-18 opt-18 FileCheck-18 || true
+          which bash
+          bash --version
+          bash -n build_selfhost.sh && echo "syntax ok"
+          bash -x build_selfhost.sh --help 2>&1 | head -40
+          echo "exit=$?"
 
       - name: Build first_gen from seed
         working-directory: src/selfhost
