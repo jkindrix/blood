@@ -812,45 +812,40 @@ do_test_golden() {
         local actual exit_code=0 stderr_file="$tmpdir/stderr"
         actual=$(timeout 30 "$tmpdir/out" 2>"$stderr_file") || exit_code=$?
 
-        local expected=""
+        local expected="" expect_exit=""
         expected=$(grep '^// EXPECT:' "$src" | sed 's|^// EXPECT: *||' || true)
+        expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 \
+            | sed 's|^// EXPECT_EXIT: *||' || true)
+        local effective_exit="${expect_exit:-0}"
 
-        if [ -n "$expected" ]; then
-            if [ "$actual" = "$expected" ]; then
-                echo "PASS" > "$rf"
-                echo "$src_hash:PASS" > "$cache_dir/$name"
-            else
-                echo "RUN_FAIL" > "$rf"
-                {
-                    echo "(output mismatch)"
+        local exit_ok=0
+        if [ "$effective_exit" = "nonzero" ]; then
+            [ "$exit_code" -ne 0 ] && exit_ok=1
+        elif [ "$exit_code" = "$effective_exit" ]; then
+            exit_ok=1
+        fi
+
+        local stdout_ok=1
+        if [ -n "$expected" ] && [ "$actual" != "$expected" ]; then
+            stdout_ok=0
+        fi
+
+        if [ "$exit_ok" -eq 1 ] && [ "$stdout_ok" -eq 1 ]; then
+            echo "PASS" > "$rf"
+            echo "$src_hash:PASS" > "$cache_dir/$name"
+        else
+            echo "RUN_FAIL" > "$rf"
+            {
+                if [ "$exit_ok" -eq 0 ]; then
+                    echo "(exit $exit_code, expected $effective_exit)"
+                fi
+                if [ "$stdout_ok" -eq 0 ]; then
+                    [ "$exit_ok" -eq 1 ] && echo "(output mismatch)"
                     printf "      expected: %s\n" "$expected"
                     printf "      actual:   %s\n" "$actual"
-                    [ -s "$stderr_file" ] && printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                } > "$of"
-            fi
-        else
-            local expect_exit=""
-            expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 \
-                | sed 's|^// EXPECT_EXIT: *||' || true)
-            [ -z "$expect_exit" ] && expect_exit="0"
-
-            local passed=0
-            if [ "$expect_exit" = "nonzero" ] && [ "$exit_code" -ne 0 ]; then
-                passed=1
-            elif [ "$exit_code" = "$expect_exit" ]; then
-                passed=1
-            fi
-
-            if [ "$passed" -eq 1 ]; then
-                echo "PASS" > "$rf"
-                echo "$src_hash:PASS" > "$cache_dir/$name"
-            else
-                echo "RUN_FAIL" > "$rf"
-                {
-                    echo "(exit $exit_code, expected $expect_exit)"
-                    [ -s "$stderr_file" ] && printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                } > "$of"
-            fi
+                fi
+                [ -s "$stderr_file" ] && printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+            } > "$of"
         fi
 
         rm -rf "$tmpdir"
