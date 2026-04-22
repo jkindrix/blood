@@ -347,23 +347,6 @@ fn abort_entry_addr(depth: i64) -> i64 {
     ABORT_DATA + depth * ABORT_ENTRY_SIZE()
 }
 
-// Called by blood_perform when handler doesn't resume — longjmp back to setjmp.
-// Does NOT decrement ABORT_DEPTH — codegen's pop_abort_target does that.
-#[export_name = "blood_handler_abort"]
-pub fn handler_abort(result: i64) {
-    @unsafe {
-        if ABORT_DEPTH <= 0 {
-            rt_panic.rt_panic("handler_abort: no abort target");
-        }
-        let entry: i64 = abort_entry_addr(ABORT_DEPTH - 1);
-        // Store abort value
-        write_i64(entry + 8, result);
-        // Read jmpbuf address and longjmp
-        let jmpbuf_addr: i64 = read_i64(entry);
-        libc.sys_longjmp(alloc.addr_to_ptr(jmpbuf_addr), 1);
-    }
-}
-
 // ============================================================================
 // Exported functions — evidence API
 // ============================================================================
@@ -489,46 +472,6 @@ pub fn get_was_resumed() -> i32 {
 
 pub fn set_was_resumed_val(val: i32) {
     @unsafe { WAS_RESUMED = val; }
-}
-
-// ============================================================================
-// Exported functions — abort target stack
-// ============================================================================
-
-#[export_name = "blood_handler_push_abort_target"]
-pub fn rt_handler_push_abort_target(target: *mut u8) {
-    @unsafe {
-        ensure_abort_stack();
-        if ABORT_DEPTH >= MAX_ABORT_DEPTH() {
-            rt_panic.rt_panic("handler abort stack overflow");
-        }
-        let entry: i64 = abort_entry_addr(ABORT_DEPTH);
-        write_i64(entry, alloc.ptr_to_addr(target));  // jmpbuf address
-        write_i64(entry + 8, 0);  // abort value (set later by handler_abort)
-        ABORT_DEPTH = ABORT_DEPTH + 1;
-    }
-}
-
-#[export_name = "blood_handler_pop_abort_target"]
-pub fn rt_handler_pop_abort_target() {
-    @unsafe {
-        if ABORT_DEPTH > 0 {
-            ABORT_DEPTH = ABORT_DEPTH - 1;
-        }
-    }
-}
-
-#[export_name = "blood_handler_get_abort_value"]
-pub fn rt_handler_get_abort_value() -> i64 {
-    @unsafe {
-        // handler_abort wrote the value to entry[ABORT_DEPTH - 1] and longjmped.
-        // ABORT_DEPTH was not decremented. Read from the same entry.
-        if ABORT_DEPTH <= 0 {
-            return 0;
-        }
-        let entry: i64 = abort_entry_addr(ABORT_DEPTH - 1);
-        read_i64(entry + 8)
-    }
 }
 
 // ============================================================================
