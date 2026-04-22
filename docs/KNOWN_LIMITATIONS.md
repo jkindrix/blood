@@ -35,15 +35,13 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 **Needed:** runtime type-layout metadata emitted by codegen so that `blood_freeze_fields` can walk pointer-typed fields and call `blood_freeze` recursively. Not currently emitted by codegen.
 
-### GAP-3: Aggregate operand escape analysis — partially fixed (`--no-parallel`)
+### ~~GAP-3: Aggregate operand escape analysis~~ RESOLVED (session 53, 2026-04-22)
 
-Aggregate operands should be marked as escaping so their allocations are promoted to the correct tier (proof assumption in Coq). This is now **enabled when `--no-parallel` is set**, which forces sequential codegen.
+**Resolution:** The `Rvalue.Aggregate` arms in `mark_rvalue_escape_heap` and `mark_rvalue_escape_global` (src/selfhost/mir_escape.blood) no longer walk `Copy`/`Move` operands. Aggregates copy operand values, not storage, so operand locals are not aliased by the resulting struct/tuple — any reference embedded in an aggregate is already marked by the `Ref` / `AddressOf` arms of the same functions, which target the actual pointee. S32 (`aecf12c`) noted this first-principles problem but punted behind a runtime flag; A4 removes the walks entirely and deletes the flag machinery (no net semantic change vs. the prior flag=off default). The earlier phrasing claiming this was a "proof assumption in Coq" conflated two different uses of the word "escape": Coq's `escape_analysis_sound` theorem (proofs/theories/Regions.v:259) is about **region-allocated generations incrementing on `region_destroy`**, not about compiler-side aggregate-operand escape marking. No proof obligation exists for the walks.
 
-**Still broken in parallel mode:** Enabling aggregate escape with 4-worker parallel codegen causes `corrupted size vs. prev_size` glibc heap corruption during self-compilation.
+**What the latent runtime bug is:** Flipping the S32 flag reproduced the `corrupted size vs. prev_size` glibc abort end-to-end on `t06_match_ref_nested_enum`. Backtrace: `blood_free_simple` ← `vec_ensure_cap` ← `def1439_new_block` inside codegen of the first function. With the GlobalEscape walk enabled, self-host compiles emit ~3220 additional `blood_persistent_alloc` sites (3247 total vs. 27 baseline); the resulting pressure on the `alloc.blood` gen-registry hash-table + adjacent heap chunks trips libc's unlink-chunk invariant in a downstream `vec_ensure_cap`'s old-buffer free. Disabling only the GlobalEscape walk drops the count to 27 and the abort no longer reproduces, isolating the Persistent path as the trigger. The bug is now unreachable at the A4 baseline; if some legitimate workload ever legitimately stresses `blood_persistent_alloc` past the corruption threshold, the runtime / gen-registry path (`runtime/blood-runtime/alloc.blood:737+`) will need to be audited.
 
-**Session 22 architectural analysis (2026-04-14):** Confirmed that the general parallel codegen architecture is safe — per-worker CodegenCtx deep-clones, static chunk distribution, string label partitioning, region allocator bypass. The heap corruption is specific to the aggregate escape analysis code path, not general parallel codegen. SOUND-04 residual (~1 type interner write per build) is too thin to cause systemic corruption.
-
-**Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
+**Three-gen byte-identical bootstrap at seed `88067dce` (14,225,752 bytes, -8,352 vs. pre-A4 `f71ef58c`). Runtime archive unchanged at `7b52fe34`. 579/579 goldens under first_gen and second_gen.**
 
 ### ~~GAP-10: Dangling `&str` in compiler's `pop_string`~~ RESOLVED (S23)
 
