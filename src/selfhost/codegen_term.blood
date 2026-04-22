@@ -877,12 +877,11 @@ fn emit_switch_int(
 }
 
 /// Emits the libmprompt Resume path for a handler op body whose effect is
-/// mprompt-eligible (sub-task 3d). Replaces the legacy blood_set_was_resumed +
-/// ret i64 setjmp sequence with a blood_resume(cont_ptr, val_ptr) call, where
-/// %__cont is the mp_resume_t* (cast to i64 by blood_dispatch_resumable in
-/// rt_mprompt_shim.c) and val is widened to a ptr-shaped i64 bit pattern.
-/// Handler state write-back still runs here because the state-pointer ABI
-/// is orthogonal to yield/resume dispatch.
+/// mprompt-eligible (sub-task 3d). Emits a blood_resume(cont_ptr, val_ptr)
+/// call where %__cont is the mp_resume_t* (cast to i64 by
+/// blood_dispatch_resumable in rt_mprompt_shim.c) and val is widened to a
+/// ptr-shaped i64 bit pattern. Handler state write-back still runs here
+/// because the state-pointer ABI is orthogonal to yield/resume dispatch.
 fn emit_resume_mprompt(
     ctx: &mut codegen_ctx.CodegenCtx,
     value: &Option<mir_types.Operand>,

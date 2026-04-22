@@ -2,7 +2,9 @@
 //
 // Evidence vectors track which effect handlers are in scope.
 // The global registry stores handler operation function pointers.
-// The abort stack enables non-tail-resumptive handler abort via longjmp.
+// NTR handler abort now flows through libmprompt (see rt_mprompt_shim.c and
+// blood_perform_ntr in rt_effect.blood); the setjmp/longjmp abort stack
+// that used to live here was removed in sub-task 3e.
 //
 // All state is plain globals (single-threaded). TLS when compiler supports it.
 
@@ -16,8 +18,8 @@ mod alloc;
 // ============================================================================
 
 // EvidenceEntry: { effect_id: i64, registry_index: i64, state_addr: i64, prompt_addr: i64 }
-// prompt_addr is the libmprompt prompt marker for NTR handlers (0 for TR-only or
-// handlers still on the legacy setjmp path). Populated by codegen at PushHandler
+// prompt_addr is the libmprompt prompt marker for NTR handlers (0 for TR-only
+// handlers that do not create a prompt). Populated by codegen at PushHandler
 // sites that create a prompt; read by blood_perform_ntr to route the yield.
 pub fn EV_ENTRY_SIZE() -> i64 { 32 }
 
@@ -30,10 +32,6 @@ fn DEEP_ENTRY_SIZE() -> i64 { 24 }
 // EffectHandlerEntry: { effect_id: i64, ops_ptr_addr: i64, op_count: i64, is_deep: i64 }
 pub fn REG_ENTRY_SIZE() -> i64 { 32 }
 
-// AbortEntry: { jmpbuf_addr: i64, abort_value: i64 }
-fn ABORT_ENTRY_SIZE() -> i64 { 16 }
-fn MAX_ABORT_DEPTH() -> i64 { 64 }
-
 // ============================================================================
 // Global state
 // ============================================================================
@@ -44,9 +42,6 @@ static mut CURRENT_EVIDENCE: i64 = 0;
 // Inline evidence fast-path hint (effect_id, 0 = disabled)
 static mut INLINE_EVIDENCE_ID: i64 = 0;
 
-// Was-resumed flag for non-tail-resumptive abort detection
-static mut WAS_RESUMED: i32 = 0;
-
 // Effect registry: growable array of EffectHandlerEntry
 static mut REG_DATA: i64 = 0;  // address of entry array
 static mut REG_LEN: i64 = 0;
@@ -56,10 +51,6 @@ static mut REG_CAP: i64 = 0;
 static mut DEEP_DATA: i64 = 0;
 static mut DEEP_LEN: i64 = 0;
 static mut DEEP_CAP: i64 = 0;
-
-// Abort target stack (fixed-size)
-static mut ABORT_DATA: i64 = 0;
-static mut ABORT_DEPTH: i64 = 0;
 
 // ============================================================================
 // Low-level memory helpers (i64 addresses, no pointer types)
@@ -328,26 +319,6 @@ pub fn deep_pop() {
 }
 
 // ============================================================================
-// Abort target stack (fixed-size, lazily allocated)
-// ============================================================================
-
-fn ensure_abort_stack() {
-    @unsafe {
-        if ABORT_DATA == 0 {
-            let p: *mut u8 = libc.sys_calloc(MAX_ABORT_DEPTH() as u64, ABORT_ENTRY_SIZE() as u64);
-            ABORT_DATA = alloc.ptr_to_addr(p);
-            if ABORT_DATA == 0 {
-                rt_panic.rt_panic("evidence: failed to init abort stack");
-            }
-        }
-    }
-}
-
-fn abort_entry_addr(depth: i64) -> i64 {
-    ABORT_DATA + depth * ABORT_ENTRY_SIZE()
-}
-
-// ============================================================================
 // Exported functions — evidence API
 // ============================================================================
 
@@ -458,23 +429,6 @@ pub fn rt_evidence_register(ev: *mut u8, effect_id: i64, ops: *mut u8, op_count:
 }
 
 // ============================================================================
-// Exported functions — WAS_RESUMED
-// ============================================================================
-
-#[export_name = "blood_set_was_resumed"]
-pub fn rt_set_was_resumed() {
-    @unsafe { WAS_RESUMED = 1; }
-}
-
-pub fn get_was_resumed() -> i32 {
-    @unsafe { WAS_RESUMED }
-}
-
-pub fn set_was_resumed_val(val: i32) {
-    @unsafe { WAS_RESUMED = val; }
-}
-
-// ============================================================================
 // Access to globals for cross-module use
 // ============================================================================
 
@@ -484,8 +438,4 @@ pub fn get_current_evidence_addr() -> i64 {
 
 pub fn get_inline_evidence_id() -> i64 {
     @unsafe { INLINE_EVIDENCE_ID }
-}
-
-pub fn get_abort_depth() -> i64 {
-    @unsafe { ABORT_DEPTH }
 }

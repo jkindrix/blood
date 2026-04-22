@@ -102,10 +102,6 @@ bridge "C" LibcDL {
     fn dl_iterate_phdr(callback: *const u8, data: *mut u8) -> i32;
 }
 
-bridge "C" LibcJmp {
-    fn longjmp(buf: *mut u8, val: i32);
-}
-
 bridge "C" LibcThread {
     fn pthread_create(thread: *mut u8, attr: *const u8, start: *const u8, arg: *mut u8) -> i32;
     fn pthread_join(thread: u64, retval: *mut u8) -> i32;
@@ -165,9 +161,6 @@ pub fn sys_getrlimit(resource: i32, rlim: *mut u8) -> i32 { LibcRlimit.getrlimit
 
 // --- Dynamic Linking ---
 pub fn sys_dl_iterate_phdr(callback: *const u8, data: *mut u8) -> i32 { LibcDL.dl_iterate_phdr(callback, data) }
-
-// --- setjmp/longjmp (setjmp is declared in codegen.blood with returns_twice attribute — NOT here) ---
-pub fn sys_longjmp(buf: *mut u8, val: i32) { LibcJmp.longjmp(buf, val); }
 
 // --- Threads ---
 pub fn sys_pthread_create(thread: *mut u8, attr: *const u8, start: *const u8, arg: *mut u8) -> i32 { LibcThread.pthread_create(thread, attr, start, arg) }

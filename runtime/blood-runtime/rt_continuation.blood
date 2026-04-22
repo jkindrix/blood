@@ -2,8 +2,11 @@
 //
 // Continuation table for multishot continuations.
 // The selfhost always passes @__blood_identity_continuation as the callback,
-// so the callback always returns its argument. The real control flow happens
-// via the longjmp/abort path in blood_perform.
+// so the callback returns its argument; blood_continuation_resume_with_regions
+// is a pass-through that validates single-shot semantics and returns the
+// resume value directly. Non-tail-resumptive control transfer lives in
+// libmprompt (see rt_mprompt_shim.c and blood_perform_ntr) — this table
+// only sees tail-resumptive dispatch that routes through blood_perform.
 //
 // Depends on: rt_evidence (Layer 1)
 

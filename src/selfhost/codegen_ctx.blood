@@ -322,8 +322,9 @@ pub struct CodegenCtx {
     pub handler_op_state_field_count: u32,
     /// True while emitting a handler op body whose effect is mprompt-eligible.
     /// When set, Resume terminators compile to `blood_resume(%__cont, value)`
-    /// (the libmprompt mp_resume path) instead of the legacy
-    /// `blood_set_was_resumed + ret i64` setjmp path. Set by
+    /// (the libmprompt mp_resume path); otherwise Resume compiles to a simple
+    /// state-writeback + ret i64 sequence (the fallthrough path used by TR
+    /// handler ops and inline handler op closures). Set by
     /// codegen.generate_function_with_ctx at function entry based on
     /// handler_op_body_effect_hash + is_mprompt_eligible_effect; reset
     /// to false at function exit. Always false for non-handler-op
@@ -337,10 +338,10 @@ pub struct CodegenCtx {
     /// Maps handler op body DefId → handled effect DefId.
     /// Populated alongside register_handler_op_body. Consumed by
     /// generate_function_with_ctx to decide whether Resume terminators
-    /// in this body should call blood_resume (mp_resume) or stay on the
-    /// legacy setjmp path. Inline handler op bodies (closures with
-    /// is_handler_op=true) do NOT get an entry here and always take the
-    /// legacy path.
+    /// in this body should call blood_resume (mp_resume) or compile as a
+    /// simple state-writeback + ret i64. Inline handler op bodies (closures
+    /// with is_handler_op=true) do NOT get an entry here and always take
+    /// the ret-i64 fallthrough path.
     handler_op_body_effect_hash: hashmap.HashMapU64U32,
     /// Vec of (body_def_id, effect_def_id) pairs for cloning to workers.
     pub handler_op_body_effect_entries: Vec<HandlerOpBodyEffectEntry>,
