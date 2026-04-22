@@ -107,6 +107,23 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
             // Set deep handler boundary: inline handlers are always deep (can resume).
             // Any outer linear/affine local referenced in a handler op body will be
             // captured and potentially consumed multiple times across resumes.
+            //
+            // B1 (S44) — correctness caveat: the inline handler codegen path does
+            // NOT share the libmprompt/blood_perform_ntr route that named handlers
+            // take. Inline handlers register with no prompt (prompt_addr=0) and
+            // every perform against them takes the blood_perform direct-call path
+            // with a blood_continuation_create_multishot(identity, null) handle.
+            // That identity continuation collapses the delimited-continuation
+            // semantics of `resume` into "the value passed to resume is the value
+            // resume returns". For effect ops with unit () return type this is
+            // observationally equivalent to TR semantics (existing goldens depend
+            // on exactly this accident). For non-unit return ops the handler's
+            // post-resume value silently becomes the operation's return — the
+            // rest of the with-body runs with the wrong value. We reject that
+            // case below rather than miscompile. See .tmp/b1_audit/ for the
+            // empirical tests (test1: expected 110, observed 210; test2 abort:
+            // expected 99, observed 42). The proper fix (extend mprompt to
+            // inline closures) is tracked as B1a in the backlog.
             let prev_boundary = checker.deep_handler_local_boundary;
             checker.deep_handler_local_boundary = Option.Some(checker.locals.len() as u32);
             // Unify each handler's param types with the effect op's declared types,
@@ -124,6 +141,28 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
                             &Some(ref info) => {
                                 let effect_op = &info.operations[oi_usize];
                                 if effect_op.name.index == hdlr.op_name.index {
+                                    // B1 (S44): reject inline handlers for
+                                    // non-unit-return ops. The inline-handler
+                                    // codegen path silently miscompiles resume
+                                    // for these (see the block comment above
+                                    // and .tmp/b1_audit/). Named handlers
+                                    // (`with H handle`) route through
+                                    // libmprompt and support the full delimited-
+                                    // continuation semantics.
+                                    let ret_kind = type_intern.type_interner().get(effect_op.return_ty);
+                                    let ret_is_unit = match ret_kind {
+                                        &type_intern.InternedTypeKind.Tuple(list_id) => {
+                                            type_intern.type_interner().ty_list_len(list_id) == 0
+                                        }
+                                        _ => false,
+                                    };
+                                    if !ret_is_unit {
+                                        checker.error_with_note(
+                                            typeck.TypeErrorKind.InvalidControl,
+                                            hdlr.body.span,
+                                            common.make_string("inline handler (try...with) for effect op with non-unit return type is not yet supported; use a named handler (`with H handle { ... }`) instead. Tracked as B1a."),
+                                        );
+                                    }
                                     // Unify handler param types with effect op param types
                                     for pi in 0usize..hdlr.param_types.len() {
                                         if pi < effect_op.param_tys.len() {

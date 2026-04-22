@@ -325,10 +325,21 @@ pub fn generate_function_with_ctx(
     // 3d: decide whether Resume terminators in this body should compile
     // to the libmprompt blood_resume path. Named handler op bodies for
     // an mprompt-eligible effect route through mp_resume; every other
-    // body falls through to the simple store-back + ret i64 sequence
-    // (which is correct for TR handler ops and inline handler closures).
-    // Inline handler op bodies (closures with is_handler_op=true) are
-    // not registered with an effect and always take that fallthrough.
+    // body falls through to the simple store-back + ret i64 sequence.
+    //
+    // That fallthrough is correct for TR handler ops. It is ALSO what
+    // inline handler op closures (closures with is_handler_op=true) take,
+    // because they are never registered in handler_op_body_effect_hash —
+    // and consequently every perform against them is routed through
+    // blood_perform (direct-call) with a multishot-identity continuation
+    // rather than through blood_perform_ntr + mp_prompt_enter. That
+    // identity-continuation collapse produces the correct observable
+    // result only when the effect op returns unit `()` — i.e., when the
+    // handler's post-resume value is irrelevant because there is nothing
+    // to return. For non-unit ops the inline path miscompiles (B1 audit,
+    // S44; empirical tests in .tmp/b1_audit/). typeck_expr.blood now
+    // rejects inline handlers for non-unit-return ops with a pointer to
+    // this limitation. Tracked as B1a in the backlog.
     ctx.current_handler_op_uses_mprompt_resume = if ctx.is_handler_op {
         match ctx.handler_op_body_effect(body.def_id.index) {
             Option.Some(eid) => ctx.is_mprompt_eligible_effect(eid),
