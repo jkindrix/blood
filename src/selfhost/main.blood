@@ -2197,6 +2197,18 @@ fn codegen_thread_worker(arg: u64) -> u64 {
                 && mir_result.closure_is_handler_op[cli];
             if is_inline_hop {
                 ctx.is_handler_op = true;
+                // B1a-1b piece 5: record this inline body's handled effect so
+                // generate_function_with_ctx can see it via handler_op_body_effect
+                // when it computes current_handler_op_uses_mprompt_resume. Without
+                // this bridge, Resume inside an inline handler op body always
+                // falls through to the TR ret-i64 path even when the effect
+                // has been classified mprompt-eligible (piece 1 classification).
+                if cli < mir_result.closure_inline_effect_id.len() {
+                    let eff_id = mir_result.closure_inline_effect_id[cli];
+                    if eff_id != 0u32 {
+                        ctx.register_handler_op_body_effect(cbody.def_id.index, eff_id);
+                    }
+                }
             }
 
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc);
@@ -3087,6 +3099,16 @@ fn codegen_pass2(
                 && mir_result.closure_is_handler_op[cli];
             if is_inline_hop {
                 ctx.is_handler_op = true;
+                // B1a-1b piece 5: see sequential path for rationale. Register
+                // the inline body's handled effect so Resume inside the body
+                // consults handler_op_body_effect and routes through
+                // emit_resume_mprompt when mprompt-eligible.
+                if cli < mir_result.closure_inline_effect_id.len() {
+                    let eff_id = mir_result.closure_inline_effect_id[cli];
+                    if eff_id != 0u32 {
+                        ctx.register_handler_op_body_effect(cbody.def_id.index, eff_id);
+                    }
+                }
             }
 
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc2);
@@ -5374,7 +5396,18 @@ fn compile_monomorphized_bodies(
                     let mcbody = &mono_mir.closure_mir[mcli];
                     let mc_is_hop = mcli < mono_mir.closure_is_handler_op.len()
                         && mono_mir.closure_is_handler_op[mcli];
-                    if mc_is_hop { ctx.is_handler_op = true; }
+                    if mc_is_hop {
+                        ctx.is_handler_op = true;
+                        // B1a-1b piece 5: register inline handler body → effect
+                        // mapping so Resume inside this body routes through
+                        // emit_resume_mprompt when the effect is mprompt-eligible.
+                        if mcli < mono_mir.closure_inline_effect_id.len() {
+                            let eff_id = mono_mir.closure_inline_effect_id[mcli];
+                            if eff_id != 0u32 {
+                                ctx.register_handler_op_body_effect(mcbody.def_id.index, eff_id);
+                            }
+                        }
+                    }
                     let mc_ir = codegen.generate_function_with_ctx(ctx, mcbody, mcname.as_str(), 0, mod_count);
                     file_append_string(output_path, mc_ir.as_str());
                     if mc_is_hop { ctx.is_handler_op = false; }

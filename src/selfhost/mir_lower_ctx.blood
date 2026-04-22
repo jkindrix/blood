@@ -279,6 +279,14 @@ pub struct MirLowerCtx {
     /// Whether each closure body is an inline handler op (parallel to closure_names).
     /// When true, the body should be compiled with is_handler_op=true.
     pub closure_is_handler_op: Vec<bool>,
+    /// The handled effect's DefId for each inline handler op body (parallel
+    /// to closure_names). 0 when the entry is a regular closure rather than
+    /// an inline handler op — read only when closure_is_handler_op[i]=true,
+    /// so the 0 sentinel is safe. Consumed by codegen's post-lowering pass
+    /// (B1a-1b piece 5) to call register_handler_op_body_effect for each
+    /// inline body, which makes Resume codegen inside that body route
+    /// through emit_resume_mprompt when the effect is mprompt-eligible.
+    pub closure_inline_effect_id: Vec<u32>,
     /// Counter for generating unique closure DefIds.
     pub closure_counter: u32,
     /// Coercion entries from type checking.
@@ -424,6 +432,7 @@ impl MirLowerCtx {
             closure_names: Vec.new(),
             closure_mir: Vec.new(),
             closure_is_handler_op: Vec.new(),
+            closure_inline_effect_id: Vec.new(),
             closure_counter: 0,
             coercion_entries: coercion_entries,
             const_bindings: Vec.new(),
@@ -548,6 +557,7 @@ impl MirLowerCtx {
             closure_names: Vec.new(),
             closure_mir: Vec.new(),
             closure_is_handler_op: Vec.new(),
+            closure_inline_effect_id: Vec.new(),
             closure_counter: 0,
             coercion_entries: coercion_entries,
             const_bindings: Vec.new(),
@@ -569,13 +579,23 @@ impl MirLowerCtx {
         self.closure_names.push(name);
         self.closure_mir.push(body);
         self.closure_is_handler_op.push(false);
+        self.closure_inline_effect_id.push(0u32);
     }
 
-    /// Registers an inline handler op body (compiled like a closure but with handler ABI).
-    pub fn register_inline_handler_body(self: &mut MirLowerCtx, name: String, body: mir_body.MirBody) {
+    /// Registers an inline handler op body (compiled like a closure but with
+    /// handler ABI). `effect_def_id` is the DefId of the effect this op
+    /// handles; recorded alongside the closure so codegen's post-lowering
+    /// pass can bridge to register_handler_op_body_effect (B1a-1b piece 5).
+    pub fn register_inline_handler_body(
+        self: &mut MirLowerCtx,
+        name: String,
+        body: mir_body.MirBody,
+        effect_def_id: u32,
+    ) {
         self.closure_names.push(name);
         self.closure_mir.push(body);
         self.closure_is_handler_op.push(true);
+        self.closure_inline_effect_id.push(effect_def_id);
     }
 
     /// Returns the number of closure bodies registered.
@@ -1112,13 +1132,14 @@ impl MirLowerCtx {
         self: MirLowerCtx,
         parent: &mut MirLowerCtx,
     ) -> mir_body.MirBody {
-        // Bitwise copy the three closure vecs before finish() consumes self.
+        // Bitwise copy the four closure vecs before finish() consumes self.
         // Blood has no destructors, so both self and these locals share the
         // same underlying buffers and the copies remain valid after the
         // builder is finished. (Same pattern as mir_lower.blood:98-104.)
         let nested_names = self.closure_names;
         let nested_mir = self.closure_mir;
         let nested_is_handler_op = self.closure_is_handler_op;
+        let nested_inline_effect_id = self.closure_inline_effect_id;
 
         // Hand off the MIR body first (consumes self.builder).
         let body = self.builder.finish();
@@ -1130,9 +1151,15 @@ impl MirLowerCtx {
             let is_hop = ni < nested_is_handler_op.len()
                 && nested_is_handler_op[ni];
             if is_hop {
+                let eff_id = if ni < nested_inline_effect_id.len() {
+                    nested_inline_effect_id[ni]
+                } else {
+                    0u32
+                };
                 parent.register_inline_handler_body(
                     nested_names[ni],
                     nested_mir[ni],
+                    eff_id,
                 );
             } else {
                 parent.register_closure_body(

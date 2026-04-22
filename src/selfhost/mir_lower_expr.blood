@@ -2687,9 +2687,13 @@ fn lower_inline_handle_expr(
         handler_body.capture_locals = capture_local_indices;
         handler_body.capture_tys = capture_tys;
 
-        // Register as inline handler op body (compiled with is_handler_op=true)
+        // Register as inline handler op body (compiled with is_handler_op=true).
+        // Pass effect_def_id so codegen's post-lowering pass (B1a-1b piece 5)
+        // can call register_handler_op_body_effect for this body — which makes
+        // Resume codegen inside the body route through emit_resume_mprompt when
+        // the effect is mprompt-eligible.
         let inner_name_copy = common.make_string(inner_name.as_str());
-        ctx.register_inline_handler_body(inner_name_copy, handler_body);
+        ctx.register_inline_handler_body(inner_name_copy, handler_body, hdlr.effect_id.index);
 
         // Build resolved param types for the operation
         let mut resolved_param_types: Vec<type_intern.TyId> = Vec.new();

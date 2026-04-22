@@ -66,6 +66,13 @@ pub struct MirLowerResult {
     pub closure_mir: Vec<mir_body.MirBody>,
     /// Whether each closure body is an inline handler op (parallel to closure_names).
     pub closure_is_handler_op: Vec<bool>,
+    /// The handled effect's DefId for each inline handler op body (parallel
+    /// to closure_names). 0 for non-inline entries; read only when the
+    /// matching closure_is_handler_op[i] is true. Consumed by the codegen
+    /// driver to call register_handler_op_body_effect so Resume inside the
+    /// inline op body routes through blood_resume when mprompt-eligible
+    /// (B1a-1b piece 5).
+    pub closure_inline_effect_id: Vec<u32>,
     /// Monomorphization requests from const-generic call interception.
     pub mono_requests: Vec<mir_lower_ctx.MonoRequest>,
     /// Next mono DefId counter (after allocations in this lowering).
@@ -158,6 +165,7 @@ pub fn lower_body(
     let closure_names = ctx.closure_names;
     let closure_mir = ctx.closure_mir;
     let closure_is_handler_op = ctx.closure_is_handler_op;
+    let closure_inline_effect_id = ctx.closure_inline_effect_id;
 
     // Finish and return the MIR body
     let mono_requests = ctx.mono_requests;
@@ -182,6 +190,7 @@ pub fn lower_body(
         closure_names: closure_names,
         closure_mir: closure_mir,
         closure_is_handler_op: closure_is_handler_op,
+        closure_inline_effect_id: closure_inline_effect_id,
         mono_requests: mono_requests,
         next_mono_def_id: next_mono_def_id,
     }
@@ -257,6 +266,7 @@ pub fn lower_body_with_const_info(
     let closure_names = ctx.closure_names;
     let closure_mir = ctx.closure_mir;
     let closure_is_handler_op = ctx.closure_is_handler_op;
+    let closure_inline_effect_id = ctx.closure_inline_effect_id;
     let mono_requests = ctx.mono_requests;
     let next_mono_def_id = ctx.next_mono_def_id;
     let mut mir_body = ctx.finish();
@@ -278,6 +288,7 @@ pub fn lower_body_with_const_info(
         closure_names: closure_names,
         closure_mir: closure_mir,
         closure_is_handler_op: closure_is_handler_op,
+        closure_inline_effect_id: closure_inline_effect_id,
         mono_requests: mono_requests,
         next_mono_def_id: next_mono_def_id,
     }
