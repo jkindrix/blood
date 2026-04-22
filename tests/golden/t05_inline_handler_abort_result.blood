@@ -1,0 +1,20 @@
+// Test: inline handler that aborts (no resume) with a non-unit effect op.
+// The handler body `{ 99 }` never calls resume, so the with-handle expression
+// returns 99 and the rest of the body (the `42` after the perform) is
+// discarded. (The earlier identity-continuation path leaked the body's 42.)
+// EXPECT: 99
+
+effect Fail {
+    op abort() -> i32;
+}
+
+fn main() -> i32 {
+    let r: i32 = try {
+        perform Fail.abort();
+        42
+    } with {
+        Fail.abort() => { 99 }
+    };
+    println_int(r);
+    0
+}

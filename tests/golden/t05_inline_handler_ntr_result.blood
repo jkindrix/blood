@@ -1,0 +1,24 @@
+// Test: inline handler with non-unit effect op return, resumable NTR.
+// The handler computes a post-resume value via `let v = resume(5); v + 100`.
+// With delimited-continuation semantics, resume(5) invokes the body at the
+// perform site with x := 5, so x*2 = 10; the handler returns 10 + 100 = 110.
+// (The earlier identity-continuation path collapsed this to 210.)
+// EXPECT: 110
+
+effect Get {
+    op get() -> i32;
+}
+
+fn main() -> i32 {
+    let r: i32 = try {
+        let x = perform Get.get();
+        x * 2
+    } with {
+        Get.get() => {
+            let v = resume(5);
+            v + 100
+        }
+    };
+    println_int(r);
+    0
+}
