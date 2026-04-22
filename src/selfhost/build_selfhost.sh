@@ -1827,10 +1827,15 @@ case "${1:-status}" in
         cp "$BUILD_DIR/second_gen" "$_seed_path"
         _size_bytes=$(wc -c < "$_seed_path")
 
-        # Copy runtime archive alongside seed (needed for CI bootstrap)
+        # Copy runtime archive alongside seed (needed for CI bootstrap). In
+        # CI, RUNTIME_A is the bootstrap copy directly, so skip the cp.
         if [ -f "$RUNTIME_A" ]; then
-            cp "$RUNTIME_A" "$_rt_path"
-            ok "Runtime updated: $(basename "$_rt_path") ($(wc -c < "$_rt_path") bytes)"
+            if [ "$(readlink -f "$RUNTIME_A")" = "$(readlink -f "$_rt_path")" ]; then
+                ok "Runtime already at $(basename "$_rt_path") ($(wc -c < "$_rt_path") bytes; source is the same file)"
+            else
+                cp "$RUNTIME_A" "$_rt_path"
+                ok "Runtime updated: $(basename "$_rt_path") ($(wc -c < "$_rt_path") bytes)"
+            fi
         else
             warn "Runtime archive not found at $RUNTIME_A — bootstrap/libblood_runtime_blood.a not updated"
         fi
