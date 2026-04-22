@@ -1740,11 +1740,8 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare i64 @blood_continuation_create_multishot(ptr, ptr)\n");
     output.push_str("declare i64 @blood_continuation_resume_with_regions(i64, i64)\n");
     output.push_str("declare void @blood_continuation_add_suspended_region(i64, i64)\n");
-    output.push_str("\n; Handler abort support (setjmp/longjmp for non-resuming handlers)\n");
+    output.push_str("\n; Resume state flag (used by TR handler ops' Resume terminator)\n");
     output.push_str("declare void @blood_set_was_resumed()\n");
-    output.push_str("declare void @blood_handler_push_abort_target(ptr)\n");
-    output.push_str("declare void @blood_handler_pop_abort_target()\n");
-    output.push_str("declare i64 @blood_handler_get_abort_value()\n");
     output.push_str("\n; libmprompt-based NTR handler dispatch (sub-tasks 4-6 vertical slice + 3d)\n");
     output.push_str("declare ptr @blood_prompt_create()\n");
     output.push_str("declare ptr @blood_prompt_enter(ptr, ptr, ptr)\n");
@@ -1753,7 +1750,6 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @blood_panic_div_zero()\n");
     output.push_str("declare void @blood_panic_index_out_of_bounds(i64, i64)\n");
     output.push_str("declare void @blood_panic_index_out_of_bounds_loc(i64, i64, ptr)\n");
-    output.push_str("declare i32 @setjmp(ptr) #0\n");
     output.push_str("\n; Identity continuation for tail-resumptive performs\n");
     output.push_str("define internal i64 @__blood_identity_continuation(i64 %0, ptr %1) {\n");
     output.push_str("entry:\n");
@@ -2014,10 +2010,6 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("\n; Allocation bypass\n");
     output.push_str("declare void @blood_set_alloc_bypass_tracking(i32)\n");
     output.push_str("define internal void @set_alloc_bypass_tracking(i32 %v) {\n  call void @blood_set_alloc_bypass_tracking(i32 %v)\n  ret void\n}\n");
-
-    // Function attributes
-    output.push_str("\n; Function attributes\n");
-    output.push_str("attributes #0 = { returns_twice }\n");
 
     // Default StaleReference handler op: aborts with diagnostic.
     // Signature: (state: ptr, args: ptr, arg_count: i64, continuation: i64) -> i64
