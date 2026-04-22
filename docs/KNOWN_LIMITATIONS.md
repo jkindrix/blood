@@ -1,6 +1,6 @@
 # Blood — Known Limitations
 
-**Last updated:** 2026-04-14
+**Last updated:** 2026-04-22
 **Scope:** honest enumeration of gaps between the spec and the current compiler artifact. This document exists because the older `docs/planning/IMPLEMENTATION_STATUS.md` has drifted from reality since January; a comprehensive working audit lives at `.tmp/DEEP_AUDIT_2026-04-10.md` (not committed — it's a live session document).
 
 The goal of this file is to answer honestly: *if you write a Blood program today, what won't work?*
@@ -278,7 +278,8 @@ took over.
 ## Build-system limitations
 
 - **`build_selfhost.sh` caches are wiped on every `build first_gen`** from seed. Use `build first_gen --relink` when only the runtime changed to skip the ~2-minute rebuild (drops cycle to ~5 seconds).
-- **Self-hosting is not in CI.** CI only runs the Rust bootstrap tests (`cargo test -p bloodc`). Golden tests, self-hosting, and byte-identical verification are local-only. Regressions surface only when someone manually runs `./build_selfhost.sh gate`.
+- **Self-hosting is in CI as of S50.** The `Selfhost Bootstrap + Golden Tests` job in `.github/workflows/ci.yml` runs the full first_gen → goldens → second_gen → goldens → `gate --quick` chain on every push to main and every PR. CI sets `BLOOD_EXTRA_COMPILER_FLAGS=--no-parallel` because the GitHub `ubuntu-latest` 16 GB runner OOMs under 4-worker parallel codegen (~13 GB peak); job ~20–25 min. Local `gate` is still required — CI mirrors rather than replaces it. The CI seed update is ephemeral (never pushed); only the local seed-update at `gate` time is durable.
+- **Golden harness checks both stdout and exit code as of S52.** Previously `// EXPECT:` only diffed stdout, so a test that printed expected output and then segfaulted passed silently (this hid A2 in S45 inside 577/577). The harness now requires `exit_code == 0` by default when `EXPECT` is set; override with `// EXPECT_EXIT: <N>` (numeric) or `// EXPECT_EXIT: nonzero`. When both EXPECT and EXPECT_EXIT are present, both are checked. See `src/selfhost/build_selfhost.sh:_gt_worker`.
 - **LLVM version defaults to 18 but is overridable.** Build scripts and the compiler resolve the `LLC`, `CLANG`, `OPT`, `FILECHECK`, `LLVM_AS`, `LLVM_EXTRACT`, and `LLVM_LINK` environment variables at invocation time, falling back to the `*-18` names when unset. Verified working on LLVM 17 and 18 as of 2026-04-11 (see `src/selfhost/_llvm_tools.sh` + `resolve_llc_tool`/`resolve_clang_tool` in `main.blood`). LLVM 19 support is implemented but not yet verified on a machine with LLVM 19 installed.
 - **Error messages are basic.** E0201 now shows expected/found types. E0102 now suggests similar names. Other error codes still lack detailed context (e.g., trait bounds, exhaustiveness).
 
@@ -306,7 +307,7 @@ The compiler compiles itself using: structs (379), enums (129), functions (1,523
 
 The compiler uses **traits** in its own source: 2 trait definitions (`Clone`, `Display` in `common.blood`), 6 trait impls (`Clone for String`, `Display for Span/Symbol/SpannedSymbol/SpannedString`, `Display for CompilePhase`). It does **not** use: effects (0 effect/handler/perform/resume), linear/affine types (0 uses as a consumer), explicit `region { }` blocks (0 — uses FFI calls instead), content-addressing (`use hash(...)`), dyn Trait, or fibers.
 
-These features beyond the self-hosting subset are validated through golden tests (576 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
+These features beyond the self-hosting subset are validated through golden tests (579 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
 
 ## Effect handler control flow
 
