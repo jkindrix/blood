@@ -15,25 +15,6 @@ mod mir_def;
 mod mir_types;
 mod mir_stmt;
 mod mir_term;
-
-/// When true, aggregate operands are marked as escaping.
-/// Disabled by default because it triggers a latent heap corruption bug
-/// in parallel codegen. Enabled when --no-parallel is set.
-///
-/// @unsafe safety note: set by main() during argument parsing (single-threaded
-/// phase before any worker spawns) and read from the escape analysis pass
-/// (which runs as part of codegen — parallel or sequential, but always
-/// reading a fixed value set once at startup). No concurrent writes, no
-/// torn reads possible for a bool. Memory safety is trivially preserved.
-static mut AGGREGATE_ESCAPE_ENABLED: bool = false;
-
-pub fn set_aggregate_escape_enabled(enabled: bool) {
-    @unsafe { AGGREGATE_ESCAPE_ENABLED = enabled; }
-}
-
-fn aggregate_escape_enabled() -> bool {
-    @unsafe { AGGREGATE_ESCAPE_ENABLED }
-}
 mod mir_body;
 
 // ============================================================
@@ -633,21 +614,15 @@ fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysi
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            if aggregate_escape_enabled() {
-                for oi in 0usize..operands.len() {
-                    let operand = &operands[oi];
-                    match operand {
-                        &mir_types.Operand.Copy(ref place) => {
-                            result.mark_heap_escape(place.local);
-                        }
-                        &mir_types.Operand.Move(ref place) => {
-                            result.mark_heap_escape(place.local);
-                        }
-                        &mir_types.Operand.Constant(_) => {}
-                    }
-                }
-            }
+        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
+            // Aggregate copies operand values into the new struct/tuple/etc.;
+            // the operand locals' storage is not aliased by the aggregate.
+            // Any reference embedded in the aggregate is already created by
+            // a separate Rvalue.Ref or Rvalue.AddressOf whose source local
+            // is marked by the arms above. Operand walks here would mark
+            // primitive sources as escaping, which is wrong by first
+            // principles (S32 aecf12c) and triggered the GAP-3 corruption
+            // in blood_persistent_alloc when routed through GlobalEscape.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}
@@ -723,24 +698,15 @@ fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnaly
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            // Mark aggregate operands as GlobalEscape when enabled.
-            // Only safe in sequential codegen (--no-parallel) — parallel codegen
-            // has a latent heap corruption bug under increased allocation pressure.
-            if aggregate_escape_enabled() {
-                for oi in 0usize..operands.len() {
-                    let operand = &operands[oi];
-                    match operand {
-                        &mir_types.Operand.Copy(ref place) => {
-                            result.mark_global_escape(place.local);
-                        }
-                        &mir_types.Operand.Move(ref place) => {
-                            result.mark_global_escape(place.local);
-                        }
-                        &mir_types.Operand.Constant(_) => {}
-                    }
-                }
-            }
+        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
+            // Same first-principles reasoning as the Aggregate arm in
+            // mark_rvalue_escape_heap above. Marking operand locals as
+            // GlobalEscape routed them to blood_persistent_alloc at
+            // ~3220 spurious sites per self-host compile, which
+            // exercised a latent corruption in the persistent-alloc /
+            // gen-registry path and aborted with glibc
+            // "corrupted size vs. prev_size" (GAP-3, S32 aecf12c).
+            // Aggregates copy values; operand storage is not aliased.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}

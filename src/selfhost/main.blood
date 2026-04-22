@@ -3797,14 +3797,6 @@ fn destroy_compilation_regions(fn_temp_region: u64, codegen_region: u64, hir_reg
 fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let compile_start = blood_clock_millis();
 
-    // Aggregate escape analysis is disabled unconditionally. Marking
-    // Copy/Move aggregate operands as escaping is incorrect for primitive
-    // value-copies (storage isn't aliased by the aggregate), and enabling
-    // it at scale triggers the GAP-3 latent corruption in blood_persistent_alloc
-    // — observed in both parallel and sequential builds (sequential just
-    // needs more pressure). See GAP-3 and mir_escape.blood Rvalue.Aggregate.
-    mir_escape.set_aggregate_escape_enabled(false);
-
     // === Build cache check ===
     let base_dir = source.parent_dir(path);
     let cache_dir = build_cache.ensure_cache_dir(base_dir.as_str());
