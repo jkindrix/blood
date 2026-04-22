@@ -225,8 +225,10 @@ case "${1:-status}" in
         mkdir -p "$LOG_DIR"
         LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
 
-        # Log rotation: keep last 20
-        log_count=$(ls -1 "$LOG_DIR"/build_*.log 2>/dev/null | wc -l)
+        # Log rotation: keep last 20. `ls` errors (exit 2) when the glob
+        # has no matches, which silently kills the script under
+        # set -euo pipefail on a fresh runner; use `find` instead.
+        log_count=$(find "$LOG_DIR" -maxdepth 1 -name 'build_*.log' -type f 2>/dev/null | wc -l)
         if [ "$log_count" -gt 20 ]; then
             ls -1t "$LOG_DIR"/build_*.log | tail -n +21 | xargs rm -f
         fi
