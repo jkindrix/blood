@@ -1,0 +1,59 @@
+// Test: Hash trait from std.traits.hash — manual impl for a user struct.
+//
+// Exercises:
+//   - `use std.traits.hash.{Hash, FNV_OFFSET_BASIS};` import from the newly
+//     activated stdlib/traits/ module
+//   - FNV-1a `impl Hash for i32` / `impl Hash for String` folding into
+//     a caller-supplied `&mut u64` accumulator
+//   - Manual `impl Hash for Point` composing two i32 field hashes
+//
+// Assertions:
+//   - Equal structs hash to the same value (determinism)
+//   - Different structs hash to different values (avalanche, overwhelming
+//     probability for FNV-1a on distinct inputs of this size)
+//   - Hash value is non-zero (FNV-1a with OFFSET_BASIS seed can never end
+//     on 0 unless each fold step XORs exactly to the prior state — not
+//     possible for non-empty inputs; sanity check that the mix ran)
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Hash for Point {
+    fn hash(self: &Self, state: &mut u64) {
+        self.x.hash(state);
+        self.y.hash(state);
+    }
+}
+
+fn main() -> i32 {
+    let p1: Point = Point { x: 1, y: 2 };
+    let p2: Point = Point { x: 1, y: 2 };
+    let p3: Point = Point { x: 3, y: 4 };
+
+    let mut s1: u64 = FNV_OFFSET_BASIS();
+    let mut s2: u64 = FNV_OFFSET_BASIS();
+    let mut s3: u64 = FNV_OFFSET_BASIS();
+
+    p1.hash(&mut s1);
+    p2.hash(&mut s2);
+    p3.hash(&mut s3);
+
+    // Determinism: equal inputs produce equal hashes.
+    if s1 == s2 { println_int(1); } else { println_int(0); }
+
+    // Distinction: different inputs produce different hashes.
+    if s1 != s3 { println_int(1); } else { println_int(0); }
+
+    // Non-trivial fold: the accumulator moved off its seed.
+    if s1 != FNV_OFFSET_BASIS() { println_int(1); } else { println_int(0); }
+
+    0
+}

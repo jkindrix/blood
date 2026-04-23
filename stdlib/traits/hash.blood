@@ -1,0 +1,196 @@
+// Blood Standard Library - Hash Trait
+//
+// The Hash trait computes a deterministic u64 digest of a value by
+// folding bytes into a caller-supplied FNV-1a accumulator.
+//
+// Design:
+//   fn hash(self: &Self, state: &mut u64)
+//
+// The accumulator is a plain &mut u64 rather than a generic Hasher
+// parameter. This avoids associated types and method-level generic
+// Hasher bounds while keeping multi-field folding composable:
+//
+//     impl Hash for Point {
+//         fn hash(self: &Self, state: &mut u64) {
+//             self.x.hash(state);
+//             self.y.hash(state);
+//         }
+//     }
+//
+// The fold algorithm is FNV-1a, matching `runtime/blood-runtime/
+// rt_hashmap.blood` byte-for-byte. Callers initialize the state with
+// FNV_OFFSET_BASIS before the first `.hash()` call.
+
+/// Trait for types whose value can be hashed.
+pub trait Hash {
+    /// Folds this value's bytes into the FNV-1a accumulator `state`.
+    fn hash(self: &Self, state: &mut u64) / pure;
+}
+
+// ============================================================
+// FNV-1a constants + byte-folding helper
+// ============================================================
+
+/// FNV-1a 64-bit offset basis. Initialize a fresh accumulator with this.
+pub fn FNV_OFFSET_BASIS() -> u64 { 14695981039346656037 }
+
+/// FNV-1a 64-bit prime.
+pub fn FNV_PRIME() -> u64 { 1099511628211 }
+
+/// Folds a single byte into the FNV-1a accumulator.
+pub fn fnv_mix_byte(state: &mut u64, byte: u8) / pure {
+    *state = *state ^ (byte as u64);
+    *state = *state * FNV_PRIME();
+}
+
+// ============================================================
+// Hash impls for primitive integer types
+//
+// Each impl mixes the value's little-endian byte representation
+// into the accumulator, matching rt_hashmap's `hash_u64` /
+// `hash_raw` byte-for-byte.
+// ============================================================
+
+impl Hash for u8 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        fnv_mix_byte(state, *self);
+    }
+}
+
+impl Hash for u16 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u16 = *self;
+        fnv_mix_byte(state, (v & 255) as u8);
+        fnv_mix_byte(state, ((v >> 8) & 255) as u8);
+    }
+}
+
+impl Hash for u32 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u32 = *self;
+        let mut i: u32 = 0;
+        while i < 4 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for u64 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u64 = *self;
+        let mut i: u64 = 0;
+        while i < 8 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for usize {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u64 = *self as u64;
+        let mut i: u64 = 0;
+        while i < 8 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for i8 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        fnv_mix_byte(state, *self as u8);
+    }
+}
+
+impl Hash for i16 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u16 = *self as u16;
+        fnv_mix_byte(state, (v & 255) as u8);
+        fnv_mix_byte(state, ((v >> 8) & 255) as u8);
+    }
+}
+
+impl Hash for i32 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u32 = *self as u32;
+        let mut i: u32 = 0;
+        while i < 4 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for i64 {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u64 = *self as u64;
+        let mut i: u64 = 0;
+        while i < 8 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for isize {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u64 = *self as u64;
+        let mut i: u64 = 0;
+        while i < 8 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+// ============================================================
+// Hash impls for bool and char
+// ============================================================
+
+impl Hash for bool {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        fnv_mix_byte(state, if *self { 1u8 } else { 0u8 });
+    }
+}
+
+impl Hash for char {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let v: u32 = *self as u32;
+        let mut i: u32 = 0;
+        while i < 4 {
+            fnv_mix_byte(state, ((v >> (i * 8)) & 255) as u8);
+            i += 1;
+        }
+    }
+}
+
+// ============================================================
+// Hash impls for string types
+//
+// `str` and `String` fold each byte of the underlying buffer,
+// matching rt_hashmap's `hash_string_key` byte-for-byte.
+// ============================================================
+
+impl Hash for str {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let bytes = self.as_bytes();
+        let mut i: usize = 0;
+        while i < bytes.len() {
+            fnv_mix_byte(state, bytes[i]);
+            i += 1;
+        }
+    }
+}
+
+impl Hash for String {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        let bytes = self.as_bytes();
+        let mut i: usize = 0;
+        while i < bytes.len() {
+            fnv_mix_byte(state, bytes[i]);
+            i += 1;
+        }
+    }
+}
