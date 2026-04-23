@@ -281,7 +281,8 @@ pub fn emit_body_fn(
     };
     if effective_result_local >= 0 {
         let body_result_idx = effective_result_local as u32;
-        let cap_index = scope.capture_index(mir_def.MirLocalId.new(body_result_idx));
+        let body_local_id = mir_def.MirLocalId.new(body_result_idx);
+        let cap_index = scope.capture_index(body_local_id);
         if cap_index >= 0 {
             let body_result_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[body_result_idx as usize].ty);
             let ty_str = body_result_ty.as_str();
@@ -289,6 +290,30 @@ pub fn emit_body_fn(
             if is_unit_llvm_ty(ty_str) {
                 ctx.write("  ret ptr null\n");
             } else {
+                // Heap-promoted body_result_locals (Region/Persistent tier)
+                // have their outer-fn alloca shaped as `alloca ptr`, with the
+                // actual value stored at the heap address that alloca holds.
+                // The body writes through one deref (codegen_place emits
+                // `%heap = load ptr, %cap_N_ptr; store <T>, %heap`), so
+                // body_fn_return must match: deref once to reach the heap
+                // slot before loading the tail value. Without this extra
+                // load, narrow_int/i64/aggregate returns read the low bytes
+                // of the heap pointer instead of the stored value (surfaced
+                // by E3 harness on `with handle { ...; <literal> }` mains).
+                let is_heap_promoted = ctx.is_region_allocated(body_local_id)
+                    || ctx.is_persistent_allocated(body_local_id);
+                let src_ptr_name: String = if is_heap_promoted {
+                    ctx.write("  %body_result_src = load ptr, ptr %cap_");
+                    ctx.write(idx_str.as_str());
+                    ctx.write("_ptr, align 8\n");
+                    common.make_string("%body_result_src")
+                } else {
+                    let mut s = common.make_string("%cap_");
+                    s.push_str(idx_str.as_str());
+                    s.push_str("_ptr");
+                    s
+                };
+                let src_ptr_str = src_ptr_name.as_str();
                 let is_ptr = ty_str_equals(ty_str, "ptr");
                 let is_i64 = ty_str_equals(ty_str, "i64");
                 let is_narrow_int = ty_str_equals(ty_str, "i32")
@@ -296,22 +321,22 @@ pub fn emit_body_fn(
                     || ty_str_equals(ty_str, "i8")
                     || ty_str_equals(ty_str, "i1");
                 if is_ptr {
-                    ctx.write("  %body_result_ptr = load ptr, ptr %cap_");
-                    ctx.write(idx_str.as_str());
-                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  %body_result_ptr = load ptr, ptr ");
+                    ctx.write(src_ptr_str);
+                    ctx.write(", align 8\n");
                     ctx.write("  ret ptr %body_result_ptr\n");
                 } else if is_i64 {
-                    ctx.write("  %body_result_i64 = load i64, ptr %cap_");
-                    ctx.write(idx_str.as_str());
-                    ctx.write("_ptr, align 8\n");
+                    ctx.write("  %body_result_i64 = load i64, ptr ");
+                    ctx.write(src_ptr_str);
+                    ctx.write(", align 8\n");
                     ctx.write("  %body_result_ptr = inttoptr i64 %body_result_i64 to ptr\n");
                     ctx.write("  ret ptr %body_result_ptr\n");
                 } else if is_narrow_int {
                     ctx.write("  %body_result_native = load ");
                     ctx.write(ty_str);
-                    ctx.write(", ptr %cap_");
-                    ctx.write(idx_str.as_str());
-                    ctx.write("_ptr, align 8\n");
+                    ctx.write(", ptr ");
+                    ctx.write(src_ptr_str);
+                    ctx.write(", align 8\n");
                     ctx.write("  %body_result_i64 = zext ");
                     ctx.write(ty_str);
                     ctx.write(" %body_result_native to i64\n");
@@ -323,9 +348,9 @@ pub fn emit_body_fn(
                     ctx.write("  store i64 0, ptr %body_result_tmp, align 8\n");
                     ctx.write("  %body_result_native = load ");
                     ctx.write(ty_str);
-                    ctx.write(", ptr %cap_");
-                    ctx.write(idx_str.as_str());
-                    ctx.write("_ptr, align 8\n");
+                    ctx.write(", ptr ");
+                    ctx.write(src_ptr_str);
+                    ctx.write(", align 8\n");
                     ctx.write("  store ");
                     ctx.write(ty_str);
                     ctx.write(" %body_result_native, ptr %body_result_tmp, align 8\n");
