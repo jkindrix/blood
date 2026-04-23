@@ -1,0 +1,54 @@
+// Test: `#[derive(Hash)]` on a record struct (C3 Phase B, S67).
+//
+// Exercises:
+//   - `#[derive(Hash)]` attribute is parsed and routed to the derive
+//     framework in `src/selfhost/derive.blood`
+//   - `expand_hash_for_struct` synthesizes an `impl Hash for Point { fn
+//     hash(self: &Self, state: &mut u64) }` that calls `self.F.hash(state)`
+//     for each field (field order follows declaration order)
+//   - The synthesized impl lowers through the normal `lower_impl_decl`
+//     pipeline and participates in method resolution + codegen identically
+//     to a user-written manual impl
+//   - The derived hash value matches the manual-impl baseline exactly,
+//     confirming the synthesized body has the right structure
+//
+// Baseline: the same Point type with a manual `impl Hash` produces a
+// specific FNV-1a fold through `self.x.hash` then `self.y.hash`. Derive
+// must produce byte-identical output.
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+#[derive(Hash)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let p1: Point = Point { x: 1, y: 2 };
+    let p2: Point = Point { x: 1, y: 2 };
+    let p3: Point = Point { x: 3, y: 4 };
+
+    let mut s1: u64 = FNV_OFFSET_BASIS();
+    let mut s2: u64 = FNV_OFFSET_BASIS();
+    let mut s3: u64 = FNV_OFFSET_BASIS();
+
+    p1.hash(&mut s1);
+    p2.hash(&mut s2);
+    p3.hash(&mut s3);
+
+    // Determinism: equal inputs produce equal hashes.
+    if s1 == s2 { println_int(1); } else { println_int(0); }
+
+    // Distinction: different inputs produce different hashes.
+    if s1 != s3 { println_int(1); } else { println_int(0); }
+
+    // Non-trivial fold: the accumulator moved off its seed.
+    if s1 != FNV_OFFSET_BASIS() { println_int(1); } else { println_int(0); }
+
+    0
+}

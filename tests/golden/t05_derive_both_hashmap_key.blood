@@ -1,0 +1,101 @@
+// Test: HashMap<UserADT, V> with `#[derive(Hash, PartialEq)]` (C3 Phase B,
+// S67).
+//
+// This is the end-to-end integration for Phase B: a struct used as a
+// HashMap key with BOTH Hash and PartialEq auto-derived. Previously (S65
+// codegen + S66 typeck), the user had to write both impls by hand. Phase B
+// synthesizes them from `#[derive(...)]` so the boilerplate is gone.
+//
+// The synthesized impls travel through `lower_impl_decl` alongside
+// user-written impls, so they pass C3 Phase C Step 3's typeck bound check
+// (K: Hash + PartialEq enforcement at HashMap call sites) exactly like
+// manual impls would.
+//
+// Same assertions as `t05_hashmap_struct_key.blood` — behavior must match
+// the manual-impl baseline.
+//
+// EXPECT: insert: 42
+// EXPECT: insert: 99
+// EXPECT: get p1: 42
+// EXPECT: get p2: 99
+// EXPECT: contains p1: true
+// EXPECT: contains p3: false
+// EXPECT: len: 2
+// EXPECT: removed p1
+// EXPECT: len after: 1
+// EXPECT: get p1 after: NONE
+mod std;
+use std.traits.hash.Hash;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(Hash, PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mut map: HashMap<Point, i32> = HashMap.new();
+
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 3, y: 4 };
+    let p3 = Point { x: 5, y: 6 };
+
+    print("insert: ");
+    println_int(42);
+    map.insert(p1, 42);
+
+    print("insert: ");
+    println_int(99);
+    let p2_ins = Point { x: 3, y: 4 };
+    map.insert(p2_ins, 99);
+
+    let q1 = Point { x: 1, y: 2 };
+    match map.get(&q1) {
+        Option.Some(v) => { print("get p1: "); println_int(v); }
+        Option.None => { println("get p1: NONE"); }
+    }
+
+    let q2 = Point { x: 3, y: 4 };
+    match map.get(&q2) {
+        Option.Some(v) => { print("get p2: "); println_int(v); }
+        Option.None => { println("get p2: NONE"); }
+    }
+
+    let q3 = Point { x: 1, y: 2 };
+    if map.contains_key(&q3) {
+        println("contains p1: true");
+    } else {
+        println("contains p1: false");
+    }
+
+    let q4 = Point { x: 5, y: 6 };
+    if map.contains_key(&q4) {
+        println("contains p3: true");
+    } else {
+        println("contains p3: false");
+    }
+
+    print("len: ");
+    println_int(map.len() as i32);
+
+    let q5 = Point { x: 1, y: 2 };
+    match map.remove(&q5) {
+        Option.Some(_) => { println("removed p1"); }
+        Option.None => { println("remove failed"); }
+    }
+
+    print("len after: ");
+    println_int(map.len() as i32);
+
+    let q6 = Point { x: 1, y: 2 };
+    match map.get(&q6) {
+        Option.Some(v) => { print("get p1 after: "); println_int(v); }
+        Option.None => { println("get p1 after: NONE"); }
+    }
+
+    0
+}

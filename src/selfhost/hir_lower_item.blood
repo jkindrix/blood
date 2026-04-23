@@ -23,6 +23,7 @@ mod hir_lower_expr;
 mod hir_lower_body;
 mod resolve;
 mod type_intern;
+mod derive;
 
 fn str_equals(s: &String, other: &str) -> bool {
     let bytes = s.as_bytes();
@@ -372,6 +373,51 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.D
             }
         }
         i += 1;
+    }
+    // Pass 1.5: expand `#[derive(...)]` attributes on struct declarations into
+    // synthesized ast.ImplBlock nodes, then lower them through the normal
+    // impl-decl pipeline. This must run BETWEEN Pass 1 (struct fields now
+    // registered in HIR, fetchable via ctx.get_item) and Pass 2 (so the
+    // synthesized impls participate in the same impl-overlap/missing-method
+    // checks as user-written impls).
+    let mut synth_impls: Vec<ast.ImplBlock> = Vec.new();
+    let mut synth_spans = derive.SyntheticSpans.zero();
+    let mut ii: usize = 0;
+    while ii < decls.len() {
+        match &decls[ii] {
+            &ast.Declaration.Struct(ref s) => {
+                // Re-intern struct name to look up its DefId in the resolver.
+                let name_str = ctx.span_to_string(s.name.span);
+                let name_sym = ctx.intern(name_str.as_str());
+                let lookup = ctx.resolver.lookup(name_sym);
+                if lookup.is_some() {
+                    let result = lookup.unwrap();
+                    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                    let target_def = binding.def_id;
+                    let requests = derive.extract_derive_requests_for_struct(
+                        ctx,
+                        &s.attrs,
+                        target_def,
+                        s.name.span,
+                    );
+                    if requests.len() > 0 {
+                        derive.ensure_synth_spans(ctx, &mut synth_spans);
+                        for ri in 0usize..requests.len() {
+                            let synth = derive.expand_request(ctx, &synth_spans, &requests[ri]);
+                            match synth {
+                                Option.Some(imp) => { synth_impls.push(imp); }
+                                Option.None => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        ii += 1;
+    }
+    for si in 0usize..synth_impls.len() {
+        lower_impl_decl(ctx, &synth_impls[si]);
     }
     // Pass 2: lower impl blocks (method bodies can now reference all enum variants)
     i = 0;

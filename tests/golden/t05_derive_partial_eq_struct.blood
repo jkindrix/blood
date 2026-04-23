@@ -1,0 +1,47 @@
+// Test: `#[derive(PartialEq)]` on a record struct (C3 Phase B, S67).
+//
+// Exercises:
+//   - `#[derive(PartialEq)]` attribute is parsed and routed to the derive
+//     framework
+//   - `expand_partial_eq_for_struct` synthesizes an `impl PartialEq for
+//     Point { fn eq(self: &Self, other: &Self) -> bool }` that ANDs
+//     per-field equality: `true && self.x == other.x && self.y == other.y`
+//   - The synthesized impl participates in method resolution so `p1.eq(&p2)`
+//     works at Blood-method-call granularity
+//
+// Blood has no canonical stdlib PartialEq trait yet (C3 Phase C Step 3
+// established the typeck-level bound check uses a locally-declared trait).
+// This golden declares `trait PartialEq` at the test level; the derived
+// impl attaches to it.
+//
+// EXPECT: eq p1 p2: 1
+// EXPECT: eq p1 p3: 0
+// EXPECT: eq p3 p3: 1
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 2 };
+    let p3 = Point { x: 3, y: 4 };
+
+    print("eq p1 p2: ");
+    if p1.eq(&p2) { println_int(1); } else { println_int(0); }
+
+    print("eq p1 p3: ");
+    if p1.eq(&p3) { println_int(1); } else { println_int(0); }
+
+    print("eq p3 p3: ");
+    if p3.eq(&p3) { println_int(1); } else { println_int(0); }
+
+    0
+}
