@@ -2624,6 +2624,17 @@ fn codegen_pass2(
             }
         }
 
+        // Merge hashmap_wrapper_defs from workers (C3 Phase C Step 2).
+        // Wrappers are emitted with `linkonce_odr` linkage so duplicate
+        // emissions across workers (same K seen in two different functions)
+        // merge cleanly at link time — no per-ctx dedup needed here.
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for hi in 0usize..wctx.hashmap_wrapper_defs.len() {
+                ctx.hashmap_wrapper_defs.push(wctx.hashmap_wrapper_defs[hi].clone());
+            }
+        }
+
         // Merge inline_stubs from workers
         for w in 0usize..num_workers {
             let wctx = &worker_ctxs[w];
@@ -5070,6 +5081,16 @@ fn finalize_codegen_passes(
         ctx.buffer_write(wrapper_ir.as_str());
     }
 
+    // Emit per-K hash/eq wrapper functions for user ADT HashMap keys
+    // (C3 Phase C Step 2). Each wrapper forwards to the user's
+    // `impl Hash for K { fn hash }` / `impl PartialEq for K { fn eq }`
+    // via a linkonce_odr thunk, so the runtime can call it through a
+    // uniform fn(*mut u8, ...) signature.
+    for hwi in 0usize..ctx.hashmap_wrapper_defs.len() {
+        let wrapper_ir = ctx.hashmap_wrapper_defs[hwi].clone();
+        ctx.buffer_write(wrapper_ir.as_str());
+    }
+
     // Finish: write string constants and intrinsic declarations
     codegen_streaming.finish_streaming_module(ctx);
 
@@ -5279,6 +5300,22 @@ fn register_codegen_names(
     for bi in 0usize..typeck_result.builtin_def_names.len() {
         let entry = &typeck_result.builtin_def_names[bi];
         ctx.register_def_name(entry.def_id_index, entry.runtime_name.clone());
+    }
+
+    // Pass 1f: Record the Hash.hash and PartialEq.eq methods for every type
+    // that implements them, so the HashMap<K, V> codegen path can emit per-K
+    // wrapper fns when K is a user-defined ADT (C3 Phase C Step 2).
+    // The lookup key is TyId.index of the impl's self type; values are the
+    // method DefId.index (which `ctx.lookup_def_name` maps to the mangled
+    // LLVM symbol).
+    for imi in 0usize..typeck_result.impl_method_table.len() {
+        let entry = &typeck_result.impl_method_table[imi];
+        let name = entry.method_name_str.as_str();
+        if main_helpers.str_equals_str(name, "hash") {
+            ctx.register_hash_method(entry.self_ty_id, entry.method_def_id);
+        } else if main_helpers.str_equals_str(name, "eq") {
+            ctx.register_eq_method(entry.self_ty_id, entry.method_def_id);
+        }
     }
 }
 

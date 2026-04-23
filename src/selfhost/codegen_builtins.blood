@@ -1610,34 +1610,63 @@ pub fn is_hashmap_iter_next(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@hashmap_iter_next")
 }
 
+/// Dispatch descriptor for a HashMap<K, V> call site.
+///
+/// kk classification:
+///   0 — primitive key (u32/u64/i32/...). Runtime uses generic memcmp hashing.
+///   1 — builtin String key. Runtime uses the hash_string_key fast path.
+///   2 — user-defined ADT key. Codegen emits per-K hash/eq wrapper fns and
+///       routes through @hashmap_*_fn variants with fn-pointer args.
+///
+/// key_ty_id is the resolved TyId of K (after ref unwrapping). It is meaningful
+/// only when kk == 2 — used to look up and emit wrapper functions.
+pub struct HashMapDispatch {
+    pub ks: u64,
+    pub vs: u64,
+    pub kk: u64,
+    pub key_ty_id: type_intern.TyId,
+}
+
 fn extract_hashmap_sizes(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
-) -> Vec<u64> {
+) -> HashMapDispatch {
     let unwrapped = type_intern.unwrap_ref_id(ty_id);
-    let mut result: Vec<u64> = Vec.new();
     match type_intern.get_adt_args(unwrapped) {
         Option.Some(args) => {
             let interner = type_intern.type_interner();
             if interner.ty_list_len(args) >= 2 {
                 let key_id = interner.get_ty_list_element(args, 0);
                 let val_id = interner.get_ty_list_element(args, 1);
-                result.push(codegen_size.type_size_with_ctx_id(ctx, key_id));
-                result.push(codegen_size.type_size_with_ctx_id(ctx, val_id));
-                let kk: u64 = match type_intern.get_adt_def_id(type_intern.unwrap_ref_id(key_id)) {
-                    Option.Some(_) => 1,
-                    Option.None => 0,
-                };
-                result.push(kk);
+                let ks = codegen_size.type_size_with_ctx_id(ctx, key_id);
+                let vs = codegen_size.type_size_with_ctx_id(ctx, val_id);
+                let key_base = type_intern.unwrap_ref_id(key_id);
+                let (kk, kty) = classify_hashmap_key(ctx, key_base);
+                HashMapDispatch { ks: ks, vs: vs, kk: kk, key_ty_id: kty }
             } else {
-                result.push(8); result.push(8); result.push(0);
+                hashmap_default_sizes()
             }
         }
-        Option.None => {
-            result.push(8); result.push(8); result.push(0);
-        }
+        Option.None => hashmap_default_sizes(),
     }
-    result
+}
+
+/// Classifies a HashMap key TyId into (kk, key_ty_id).
+/// key_ty_id is only meaningful for kk == 2 (user ADT).
+fn classify_hashmap_key(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    key_base: type_intern.TyId,
+) -> (u64, type_intern.TyId) {
+    match type_intern.get_adt_def_id(key_base) {
+        Option.Some(def_id) => {
+            if ctx.string_def_id != 0 && def_id.index == ctx.string_def_id {
+                (1u64, type_intern.TyId.new(0))
+            } else {
+                (2u64, key_base)
+            }
+        }
+        Option.None => (0u64, type_intern.TyId.new(0)),
+    }
 }
 
 fn get_hashmap_type_from_arg(
@@ -1692,10 +1721,164 @@ fn hashmap_build_option(
     ctx.write(", i1 false)\n");
 }
 
-fn hashmap_default_sizes() -> Vec<u64> {
-    let mut d: Vec<u64> = Vec.new();
-    d.push(8); d.push(8); d.push(0);
-    d
+fn hashmap_default_sizes() -> HashMapDispatch {
+    HashMapDispatch { ks: 8, vs: 8, kk: 0, key_ty_id: type_intern.TyId.new(0) }
+}
+
+/// Constructs the LLVM constant struct literal for passing a wrapper fn
+/// through Blood's `fn(...)` closure ABI. Blood lowers `fn(A, B) -> R` to
+/// `{ ptr fn_addr, ptr env }`; for pure wrappers we pass `env = null`.
+///
+/// Returns a string like `{ ptr @__blood_hashmap_hash_ty42, ptr null }` that
+/// can be embedded directly as a call-site argument value.
+fn hashmap_fnptr_closure_literal(wrapper_name: &str) -> String {
+    let mut s = common.make_string("{ ptr @");
+    s.push_str(wrapper_name);
+    s.push_str(", ptr null }");
+    s
+}
+
+/// Returns the LLVM symbol name for the per-K hash wrapper fn at this TyId.
+/// Shape: `__blood_hashmap_hash_ty<N>` where N = key_ty_id.index. Uses the
+/// interned type id (not ADT DefId) so the same wrapper is reused across
+/// any generic instantiations that canonicalize to the same TyId.
+fn hashmap_hash_wrapper_name(ty_id_index: u32) -> String {
+    let mut s = common.make_string("__blood_hashmap_hash_ty");
+    s.push_str(codegen_types.format_u64(ty_id_index as u64).as_str());
+    s
+}
+
+/// Returns the LLVM symbol name for the per-K eq wrapper fn. Shape:
+/// `__blood_hashmap_eq_ty<N>` — same conventions as hashmap_hash_wrapper_name.
+fn hashmap_eq_wrapper_name(ty_id_index: u32) -> String {
+    let mut s = common.make_string("__blood_hashmap_eq_ty");
+    s.push_str(codegen_types.format_u64(ty_id_index as u64).as_str());
+    s
+}
+
+/// Result of attempting to emit per-K hash/eq wrappers for a user ADT key.
+/// Ok variants hold the (hash_wrapper_name, eq_wrapper_name) pair; MissingHash/Eq
+/// indicates the user forgot an impl (typeck enforcement is Phase C Step 3).
+pub enum HashMapWrapperResult {
+    Ok(String, String),
+    MissingHash,
+    MissingEq,
+}
+
+/// Ensures the per-K hash/eq wrapper pair is present in `ctx.hashmap_wrapper_defs`
+/// (emitted exactly once per unique K in this codegen context). Returns the
+/// LLVM symbol names on success; returns MissingHash/Eq if the user did not
+/// declare an `impl Hash for K` (resp. `impl PartialEq for K`) — in that case
+/// the call site emits an unreachable as a best-effort runtime trap until
+/// Phase C Step 3 turns this into a typeck error.
+pub fn get_or_emit_hashmap_wrappers(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    key_ty_id: type_intern.TyId,
+) -> HashMapWrapperResult {
+    let ty_idx = key_ty_id.index;
+    let hash_name = hashmap_hash_wrapper_name(ty_idx);
+    let eq_name = hashmap_eq_wrapper_name(ty_idx);
+
+    if ctx.hashmap_wrapper_emitted(ty_idx) {
+        return HashMapWrapperResult.Ok(hash_name, eq_name);
+    }
+
+    // Resolve the user's Hash.hash and PartialEq.eq methods.
+    let hash_def_id = match ctx.lookup_hash_method(ty_idx) {
+        Option.Some(d) => d,
+        Option.None => { return HashMapWrapperResult.MissingHash; }
+    };
+    let eq_def_id = match ctx.lookup_eq_method(ty_idx) {
+        Option.Some(d) => d,
+        Option.None => { return HashMapWrapperResult.MissingEq; }
+    };
+
+    // Map DefIds to their emitted LLVM symbols via the def_name table.
+    // If either symbol is unknown, fall through to the same error path —
+    // this typically means the impl method wasn't registered at Pass 1b
+    // (a compiler bug rather than a user error, but we handle it gracefully).
+    let hash_target = match ctx.lookup_def_name(hash_def_id) {
+        Option.Some(n) => n,
+        Option.None => { return HashMapWrapperResult.MissingHash; }
+    };
+    let eq_target = match ctx.lookup_def_name(eq_def_id) {
+        Option.Some(n) => n,
+        Option.None => { return HashMapWrapperResult.MissingEq; }
+    };
+
+    // Hash wrapper — adapts the runtime's closure-shaped fn-pointer ABI to
+    // the user's Blood method signature.
+    //
+    // Runtime call (rt_hashmap's hash_key_fn):
+    //   call void %fn_ptr(ptr %env, ptr %key_ptr, { ptr, i32 } %state_ref)
+    //
+    // User's method (`impl Hash for T { fn hash(&self, state: &mut u64) }`):
+    //   void @defN_hash({ ptr, i32 } %self_ref, { ptr, i32 } %state_ref)
+    //
+    // The wrapper discards %env (it never captures), lifts the raw %key_ptr
+    // into a Blood generational reference by calling @blood_get_generation
+    // to obtain the current gen for the bucket address, and forwards
+    // %state_ref unchanged.
+    let mut hash_def = String.new();
+    hash_def.push_str("define linkonce_odr void @\"");
+    hash_def.push_str(hash_name.as_str());
+    hash_def.push_str("\"(ptr %env, ptr %key_ptr, { ptr, i32 } %state_ref) {\nentry:\n");
+    hash_def.push_str("  %key_addr = ptrtoint ptr %key_ptr to i64\n");
+    hash_def.push_str("  %key_gen = call i32 @blood_get_generation(i64 %key_addr)\n");
+    hash_def.push_str("  %self_ref_0 = insertvalue { ptr, i32 } zeroinitializer, ptr %key_ptr, 0\n");
+    hash_def.push_str("  %self_ref = insertvalue { ptr, i32 } %self_ref_0, i32 %key_gen, 1\n");
+    hash_def.push_str("  call void @");
+    hash_def.push_str(hash_target.as_str());
+    hash_def.push_str("({ ptr, i32 } %self_ref, { ptr, i32 } %state_ref)\n");
+    hash_def.push_str("  ret void\n");
+    hash_def.push_str("}\n");
+    ctx.hashmap_wrapper_defs.push(hash_def);
+
+    // Eq wrapper — same shape as hash, except both key slots are raw `*mut u8`
+    // at the runtime ABI boundary (rt_hashmap's keys_eq_fn).
+    //
+    // Runtime call:
+    //   call i1 %fn_ptr(ptr %env, ptr %a_ptr, ptr %b_ptr)
+    //
+    // User's method (`impl PartialEq for T { fn eq(&self, other: &Self) -> bool }`):
+    //   i1 @defN_eq({ ptr, i32 } %self_ref, { ptr, i32 } %other_ref)
+    //
+    // Blood's bool lowers to i1 (codegen_size:166) so the return type lines
+    // up with the runtime's declared `-> bool`.
+    let mut eq_def = String.new();
+    eq_def.push_str("define linkonce_odr i1 @\"");
+    eq_def.push_str(eq_name.as_str());
+    eq_def.push_str("\"(ptr %env, ptr %a_ptr, ptr %b_ptr) {\nentry:\n");
+    eq_def.push_str("  %a_addr = ptrtoint ptr %a_ptr to i64\n");
+    eq_def.push_str("  %a_gen = call i32 @blood_get_generation(i64 %a_addr)\n");
+    eq_def.push_str("  %a_ref_0 = insertvalue { ptr, i32 } zeroinitializer, ptr %a_ptr, 0\n");
+    eq_def.push_str("  %a_ref = insertvalue { ptr, i32 } %a_ref_0, i32 %a_gen, 1\n");
+    eq_def.push_str("  %b_addr = ptrtoint ptr %b_ptr to i64\n");
+    eq_def.push_str("  %b_gen = call i32 @blood_get_generation(i64 %b_addr)\n");
+    eq_def.push_str("  %b_ref_0 = insertvalue { ptr, i32 } zeroinitializer, ptr %b_ptr, 0\n");
+    eq_def.push_str("  %b_ref = insertvalue { ptr, i32 } %b_ref_0, i32 %b_gen, 1\n");
+    eq_def.push_str("  %r = call i1 @");
+    eq_def.push_str(eq_target.as_str());
+    eq_def.push_str("({ ptr, i32 } %a_ref, { ptr, i32 } %b_ref)\n");
+    eq_def.push_str("  ret i1 %r\n");
+    eq_def.push_str("}\n");
+    ctx.hashmap_wrapper_defs.push(eq_def);
+
+    ctx.mark_hashmap_wrapper_emitted(ty_idx);
+    HashMapWrapperResult.Ok(hash_name, eq_name)
+}
+
+/// Emits a compile-time diagnostic and an unreachable trap when a user ADT
+/// HashMap key is missing a Hash or PartialEq impl. Kept bounded to the
+/// call-site so each diagnostic mentions the specific missing trait.
+fn emit_missing_trait_error(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    trait_name: &str,
+) {
+    ctx.write("  ; C3 Phase C Step 2: HashMap key missing impl ");
+    ctx.write(trait_name);
+    ctx.write(" — typeck enforcement pending (Phase C Step 3)\n");
+    ctx.emit_unreachable();
 }
 
 pub fn emit_hashmap_new_call(
@@ -1708,9 +1891,9 @@ pub fn emit_hashmap_new_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     ctx.begin_call(Option.None, "void", "@hashmap_new");
     ctx.call_arg_str(true, "i64", ks_str.as_str());
     ctx.call_arg_str(false, "i64", vs_str.as_str());
@@ -1732,11 +1915,11 @@ pub fn emit_hashmap_insert_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks = sizes[0];
-    let vs = sizes[1];
+    let ks = sizes.ks;
+    let vs = sizes.vs;
     let ks_str = codegen_types.format_u64(ks);
     let vs_str = codegen_types.format_u64(vs);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let (key_val, key_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
     let (val_val, val_ty) = codegen_expr.emit_operand_typed(ctx, &args[2]);
 
@@ -1769,15 +1952,41 @@ pub fn emit_hashmap_insert_call(
     ctx.write(" x i8], align 8\n");
 
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_insert");
-    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
-    ctx.call_arg_cg(false, "ptr", &key_alloca);
-    ctx.call_arg_cg(false, "ptr", &val_alloca);
-    ctx.call_arg_str(false, "i64", ks_str.as_str());
-    ctx.call_arg_str(false, "i64", vs_str.as_str());
-    ctx.call_arg_str(false, "i32", kk_str.as_str());
-    ctx.call_arg_cg(false, "ptr", &old_alloca);
-    ctx.end_call();
+    if sizes.kk == 2 {
+        // User ADT key path — route through the fn-pointer variant with
+        // per-K hash/eq wrappers so the runtime can invoke the user-defined
+        // Hash and PartialEq impls without knowing the concrete type.
+        let wrappers = get_or_emit_hashmap_wrappers(ctx, sizes.key_ty_id);
+        match wrappers {
+            HashMapWrapperResult.Ok(hash_name, eq_name) => {
+                let hash_closure = hashmap_fnptr_closure_literal(hash_name.as_str());
+                let eq_closure = hashmap_fnptr_closure_literal(eq_name.as_str());
+                ctx.begin_call(Option.Some(&result), "i32", "@hashmap_insert_fn");
+                ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+                ctx.call_arg_cg(false, "ptr", &key_alloca);
+                ctx.call_arg_cg(false, "ptr", &val_alloca);
+                ctx.call_arg_str(false, "i64", ks_str.as_str());
+                ctx.call_arg_str(false, "i64", vs_str.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", hash_closure.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", eq_closure.as_str());
+                ctx.call_arg_cg(false, "ptr", &old_alloca);
+                ctx.end_call();
+            }
+            HashMapWrapperResult.MissingHash => { emit_missing_trait_error(ctx, "Hash"); return; }
+            HashMapWrapperResult.MissingEq => { emit_missing_trait_error(ctx, "PartialEq"); return; }
+        }
+    } else {
+        // Primitive (kk=0) or builtin String (kk=1) — existing fast path.
+        ctx.begin_call(Option.Some(&result), "i32", "@hashmap_insert");
+        ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+        ctx.call_arg_cg(false, "ptr", &key_alloca);
+        ctx.call_arg_cg(false, "ptr", &val_alloca);
+        ctx.call_arg_str(false, "i64", ks_str.as_str());
+        ctx.call_arg_str(false, "i64", vs_str.as_str());
+        ctx.call_arg_str(false, "i32", kk_str.as_str());
+        ctx.call_arg_cg(false, "ptr", &old_alloca);
+        ctx.end_call();
+    }
 
     hashmap_build_option(ctx, destination, &result, &old_alloca, vs);
 
@@ -1800,10 +2009,10 @@ pub fn emit_hashmap_get_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let vs = sizes[1];
-    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs = sizes.vs;
+    let ks_str = codegen_types.format_u64(sizes.ks);
     let vs_str = codegen_types.format_u64(vs);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
 
     let val_alloca = ctx.fresh_temp_cg();
@@ -1814,14 +2023,35 @@ pub fn emit_hashmap_get_call(
     ctx.write(" x i8], align 8\n");
 
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_get");
-    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
-    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
-    ctx.call_arg_str(false, "i64", ks_str.as_str());
-    ctx.call_arg_str(false, "i64", vs_str.as_str());
-    ctx.call_arg_str(false, "i32", kk_str.as_str());
-    ctx.call_arg_cg(false, "ptr", &val_alloca);
-    ctx.end_call();
+    if sizes.kk == 2 {
+        let wrappers = get_or_emit_hashmap_wrappers(ctx, sizes.key_ty_id);
+        match wrappers {
+            HashMapWrapperResult.Ok(hash_name, eq_name) => {
+                let hash_closure = hashmap_fnptr_closure_literal(hash_name.as_str());
+                let eq_closure = hashmap_fnptr_closure_literal(eq_name.as_str());
+                ctx.begin_call(Option.Some(&result), "i32", "@hashmap_get_fn");
+                ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+                ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+                ctx.call_arg_str(false, "i64", ks_str.as_str());
+                ctx.call_arg_str(false, "i64", vs_str.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", hash_closure.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", eq_closure.as_str());
+                ctx.call_arg_cg(false, "ptr", &val_alloca);
+                ctx.end_call();
+            }
+            HashMapWrapperResult.MissingHash => { emit_missing_trait_error(ctx, "Hash"); return; }
+            HashMapWrapperResult.MissingEq => { emit_missing_trait_error(ctx, "PartialEq"); return; }
+        }
+    } else {
+        ctx.begin_call(Option.Some(&result), "i32", "@hashmap_get");
+        ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+        ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+        ctx.call_arg_str(false, "i64", ks_str.as_str());
+        ctx.call_arg_str(false, "i64", vs_str.as_str());
+        ctx.call_arg_str(false, "i32", kk_str.as_str());
+        ctx.call_arg_cg(false, "ptr", &val_alloca);
+        ctx.end_call();
+    }
 
     hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
     hashmap_emit_cont(ctx, target);
@@ -1839,19 +2069,39 @@ pub fn emit_hashmap_contains_key_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
 
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_contains_key");
-    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
-    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
-    ctx.call_arg_str(false, "i64", ks_str.as_str());
-    ctx.call_arg_str(false, "i64", vs_str.as_str());
-    ctx.call_arg_str(false, "i32", kk_str.as_str());
-    ctx.end_call();
+    if sizes.kk == 2 {
+        let wrappers = get_or_emit_hashmap_wrappers(ctx, sizes.key_ty_id);
+        match wrappers {
+            HashMapWrapperResult.Ok(hash_name, eq_name) => {
+                let hash_closure = hashmap_fnptr_closure_literal(hash_name.as_str());
+                let eq_closure = hashmap_fnptr_closure_literal(eq_name.as_str());
+                ctx.begin_call(Option.Some(&result), "i32", "@hashmap_contains_key_fn");
+                ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+                ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+                ctx.call_arg_str(false, "i64", ks_str.as_str());
+                ctx.call_arg_str(false, "i64", vs_str.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", hash_closure.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", eq_closure.as_str());
+                ctx.end_call();
+            }
+            HashMapWrapperResult.MissingHash => { emit_missing_trait_error(ctx, "Hash"); return; }
+            HashMapWrapperResult.MissingEq => { emit_missing_trait_error(ctx, "PartialEq"); return; }
+        }
+    } else {
+        ctx.begin_call(Option.Some(&result), "i32", "@hashmap_contains_key");
+        ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+        ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+        ctx.call_arg_str(false, "i64", ks_str.as_str());
+        ctx.call_arg_str(false, "i64", vs_str.as_str());
+        ctx.call_arg_str(false, "i32", kk_str.as_str());
+        ctx.end_call();
+    }
 
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     let bool_val = ctx.fresh_temp_cg();
@@ -1916,10 +2166,10 @@ pub fn emit_hashmap_remove_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let vs = sizes[1];
-    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs = sizes.vs;
+    let ks_str = codegen_types.format_u64(sizes.ks);
     let vs_str = codegen_types.format_u64(vs);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
 
     let val_alloca = ctx.fresh_temp_cg();
@@ -1930,14 +2180,35 @@ pub fn emit_hashmap_remove_call(
     ctx.write(" x i8], align 8\n");
 
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_remove");
-    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
-    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
-    ctx.call_arg_str(false, "i64", ks_str.as_str());
-    ctx.call_arg_str(false, "i64", vs_str.as_str());
-    ctx.call_arg_str(false, "i32", kk_str.as_str());
-    ctx.call_arg_cg(false, "ptr", &val_alloca);
-    ctx.end_call();
+    if sizes.kk == 2 {
+        let wrappers = get_or_emit_hashmap_wrappers(ctx, sizes.key_ty_id);
+        match wrappers {
+            HashMapWrapperResult.Ok(hash_name, eq_name) => {
+                let hash_closure = hashmap_fnptr_closure_literal(hash_name.as_str());
+                let eq_closure = hashmap_fnptr_closure_literal(eq_name.as_str());
+                ctx.begin_call(Option.Some(&result), "i32", "@hashmap_remove_fn");
+                ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+                ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+                ctx.call_arg_str(false, "i64", ks_str.as_str());
+                ctx.call_arg_str(false, "i64", vs_str.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", hash_closure.as_str());
+                ctx.call_arg_str(false, "{ ptr, ptr }", eq_closure.as_str());
+                ctx.call_arg_cg(false, "ptr", &val_alloca);
+                ctx.end_call();
+            }
+            HashMapWrapperResult.MissingHash => { emit_missing_trait_error(ctx, "Hash"); return; }
+            HashMapWrapperResult.MissingEq => { emit_missing_trait_error(ctx, "PartialEq"); return; }
+        }
+    } else {
+        ctx.begin_call(Option.Some(&result), "i32", "@hashmap_remove");
+        ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+        ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+        ctx.call_arg_str(false, "i64", ks_str.as_str());
+        ctx.call_arg_str(false, "i64", vs_str.as_str());
+        ctx.call_arg_str(false, "i32", kk_str.as_str());
+        ctx.call_arg_cg(false, "ptr", &val_alloca);
+        ctx.end_call();
+    }
 
     hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
     hashmap_emit_cont(ctx, target);
@@ -1957,9 +2228,9 @@ pub fn emit_hashmap_clone_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     ctx.begin_call(Option.None, "void", "@hashmap_clone");
@@ -1986,9 +2257,9 @@ pub fn emit_hashmap_keys_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     ctx.begin_call(Option.None, "void", "@hashmap_keys_new");
@@ -2015,9 +2286,9 @@ pub fn emit_hashmap_values_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     ctx.begin_call(Option.None, "void", "@hashmap_values_new");
@@ -2043,10 +2314,10 @@ pub fn emit_hashmap_keys_next_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks = sizes[0];
+    let ks = sizes.ks;
     let ks_str = codegen_types.format_u64(ks);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
 
     let key_alloca = ctx.fresh_temp_cg();
     ctx.write_indent();
@@ -2081,10 +2352,10 @@ pub fn emit_hashmap_values_next_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let vs = sizes[1];
-    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs = sizes.vs;
+    let ks_str = codegen_types.format_u64(sizes.ks);
     let vs_str = codegen_types.format_u64(vs);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let kk_str = codegen_types.format_u64(sizes.kk);
 
     let val_alloca = ctx.fresh_temp_cg();
     ctx.write_indent();
@@ -2120,9 +2391,9 @@ pub fn emit_hashmap_iter_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
     let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     ctx.begin_call(Option.None, "void", "@hashmap_iter_new");
@@ -2151,9 +2422,9 @@ pub fn emit_hashmap_iter_next_call(
         Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
         Option.None => hashmap_default_sizes(),
     };
-    let ks_str = codegen_types.format_u64(sizes[0]);
-    let vs_str = codegen_types.format_u64(sizes[1]);
-    let kk_str = codegen_types.format_u64(sizes[2]);
+    let ks_str = codegen_types.format_u64(sizes.ks);
+    let vs_str = codegen_types.format_u64(sizes.vs);
+    let kk_str = codegen_types.format_u64(sizes.kk);
 
     // Resolve K and V LLVM type strings so we can build a `{ K, V }` tuple layout
     // that matches Blood's tuple codegen elsewhere in the compiler.

@@ -2371,6 +2371,15 @@ pub fn intrinsic_declarations(main_returns_unit: bool) -> String {
     output.push_str("declare i32 @hashmap_values_next(ptr, i64, i64, i32, ptr)\n");
     output.push_str("declare void @hashmap_iter_new(ptr, i64, i64, i32, ptr)\n");
     output.push_str("declare i32 @hashmap_iter_next(ptr, i64, i64, i32, ptr, ptr)\n");
+    // C3 Phase C Step 2: _fn variants accept per-K hash/eq fn-pointers in
+    // place of kk, enabling user-defined ADT HashMap keys. Runtime signatures
+    // in runtime/blood-runtime/rt_hashmap.blood (S64 commit aa9f594).
+    // Blood's `fn(...)` type lowers to `{ ptr fn_addr, ptr env }` (closure
+    // shape), so the runtime sees `{ ptr, ptr }` for each fn-pointer arg.
+    output.push_str("declare i32 @hashmap_insert_fn(ptr, ptr, ptr, i64, i64, { ptr, ptr }, { ptr, ptr }, ptr)\n");
+    output.push_str("declare i32 @hashmap_get_fn(ptr, ptr, i64, i64, { ptr, ptr }, { ptr, ptr }, ptr)\n");
+    output.push_str("declare i32 @hashmap_contains_key_fn(ptr, ptr, i64, i64, { ptr, ptr }, { ptr, ptr })\n");
+    output.push_str("declare i32 @hashmap_remove_fn(ptr, ptr, i64, i64, { ptr, ptr }, { ptr, ptr }, ptr)\n");
 
     output.push_str("\n; Option method runtime declarations\n");
     output.push_str("declare i32 @option_is_some(ptr)\n");

@@ -510,6 +510,36 @@ pub struct CodegenCtx {
     pub debug_metadata: Vec<String>,
     /// Source filename for debug info.
     pub debug_source_file: String,
+    /// For each user ADT K used as a HashMap key, maps `K.TyId.index` (as u64)
+    /// to the DefId.index of the user's `impl Hash for K { fn hash }` method.
+    /// Populated from typeck_result.impl_method_table before codegen.
+    /// Used by the HashMap<K, V> codegen path to generate per-K hash wrapper fns
+    /// when K is not a primitive or builtin String.
+    pub hash_method_by_ty_id: hashmap.HashMapU64U32,
+    /// Analogous to hash_method_by_ty_id but for `impl PartialEq for K { fn eq }`.
+    pub eq_method_by_ty_id: hashmap.HashMapU64U32,
+    /// Flat list of (ty_id_index, method_def_id) for every Hash impl registered
+    /// via register_hash_method. Parallel Vec to hash_method_by_ty_id for worker
+    /// context cloning (HashMapU64U32 has no iteration API).
+    pub hash_method_entries: Vec<HashMethodEntry>,
+    /// Same as hash_method_entries but for PartialEq.eq impls.
+    pub eq_method_entries: Vec<HashMethodEntry>,
+    /// Dedup cache for hashmap wrapper emission. Key: K.TyId.index (as u64).
+    /// Value: 1 if wrappers have been generated (cached), absent otherwise.
+    pub hashmap_wrapper_hash: hashmap.HashMapU64U32,
+    /// Deferred hashmap wrapper function LLVM IR definitions.
+    /// Collected during emit_hashmap_*_call when kk == 2, emitted after all
+    /// function bodies (same point as fn_ptr_wrapper_defs).
+    pub hashmap_wrapper_defs: Vec<String>,
+}
+
+/// Pair of (self_ty_id.index, method_def_id.index) for an impl method
+/// (either Hash.hash or PartialEq.eq). Used as entries in the parallel
+/// Vec stored alongside hash_method_by_ty_id / eq_method_by_ty_id to
+/// enable worker context cloning.
+pub struct HashMethodEntry {
+    pub ty_id_index: u32,
+    pub method_def_id: u32,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -786,6 +816,12 @@ impl CodegenCtx {
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
+            hash_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            eq_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            hash_method_entries: Vec.with_capacity(16),
+            eq_method_entries: Vec.with_capacity(16),
+            hashmap_wrapper_hash: hashmap.HashMapU64U32.with_capacity(8),
+            hashmap_wrapper_defs: Vec.with_capacity(8),
         }
     }
 
@@ -907,6 +943,12 @@ impl CodegenCtx {
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
+            hash_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            eq_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            hash_method_entries: Vec.with_capacity(16),
+            eq_method_entries: Vec.with_capacity(16),
+            hashmap_wrapper_hash: hashmap.HashMapU64U32.with_capacity(8),
+            hashmap_wrapper_defs: Vec.with_capacity(8),
         }
     }
 
@@ -1112,6 +1154,54 @@ impl CodegenCtx {
 
         if had_temp_wrap { region_activate(self.fn_temp_region); }
         Option.Some(wrapper_name)
+    }
+
+    /// Records that type with TyId.index `ty_id_index` has an `impl Hash for T`
+    /// whose `hash` method is at DefId.index `method_def_id`. Used by the
+    /// HashMap<K, V> codegen path to locate the user-defined hash fn when
+    /// emitting a per-K wrapper for the _fn runtime variants.
+    pub fn register_hash_method(self: &mut CodegenCtx, ty_id_index: u32, method_def_id: u32) {
+        if self.hash_method_by_ty_id.contains_key(ty_id_index as u64) { return; }
+        self.hash_method_by_ty_id.insert(ty_id_index as u64, method_def_id);
+        self.hash_method_entries.push(HashMethodEntry { ty_id_index: ty_id_index, method_def_id: method_def_id });
+    }
+
+    /// Records the `eq` method for `impl PartialEq for T`. Analogous to
+    /// register_hash_method; together they let the hashmap wrapper emitter
+    /// resolve the correct LLVM symbol for a user ADT key.
+    pub fn register_eq_method(self: &mut CodegenCtx, ty_id_index: u32, method_def_id: u32) {
+        if self.eq_method_by_ty_id.contains_key(ty_id_index as u64) { return; }
+        self.eq_method_by_ty_id.insert(ty_id_index as u64, method_def_id);
+        self.eq_method_entries.push(HashMethodEntry { ty_id_index: ty_id_index, method_def_id: method_def_id });
+    }
+
+    /// Returns the method DefId.index for `impl Hash for T.hash`, or None if
+    /// the type has no registered Hash impl.
+    pub fn lookup_hash_method(self: &CodegenCtx, ty_id_index: u32) -> Option<u32> {
+        self.hash_method_by_ty_id.get(ty_id_index as u64)
+    }
+
+    /// Returns the method DefId.index for `impl PartialEq for T.eq`, or None if
+    /// no PartialEq impl is registered.
+    pub fn lookup_eq_method(self: &CodegenCtx, ty_id_index: u32) -> Option<u32> {
+        self.eq_method_by_ty_id.get(ty_id_index as u64)
+    }
+
+    /// Returns true if a wrapper pair for this key TyId was already emitted
+    /// (and thus is in hashmap_wrapper_defs). Used by the call-site emitter
+    /// to dedup within a single codegen context.
+    pub fn hashmap_wrapper_emitted(self: &CodegenCtx, ty_id_index: u32) -> bool {
+        match self.hashmap_wrapper_hash.get(ty_id_index as u64) {
+            Option.Some(_) => true,
+            Option.None => false,
+        }
+    }
+
+    /// Marks this key TyId as having wrappers emitted. The actual IR strings
+    /// are pushed to `hashmap_wrapper_defs` by the caller; this hash just
+    /// records the fact so repeated call sites don't duplicate work.
+    pub fn mark_hashmap_wrapper_emitted(self: &mut CodegenCtx, ty_id_index: u32) {
+        self.hashmap_wrapper_hash.insert(ty_id_index as u64, 1);
     }
 
     /// Registers a DefId as a static variable.
@@ -3365,6 +3455,12 @@ impl CodegenCtx {
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
+            hash_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            eq_method_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
+            hash_method_entries: Vec.with_capacity(16),
+            eq_method_entries: Vec.with_capacity(16),
+            hashmap_wrapper_hash: hashmap.HashMapU64U32.with_capacity(8),
+            hashmap_wrapper_defs: Vec.with_capacity(8),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
@@ -3411,6 +3507,19 @@ impl CodegenCtx {
         worker.box_def_id = self.box_def_id;
         worker.option_def_id = self.option_def_id;
         worker.result_def_id = self.result_def_id;
+        // Copy hash / eq method lookup tables so workers can resolve user
+        // ADT HashMap key impls during per-function codegen (C3 Phase C
+        // Step 2). The Vec parallels the HashMap so iteration is possible;
+        // register_hash_method / register_eq_method refill the HashMap on
+        // the worker.
+        for hmi in 0usize..self.hash_method_entries.len() {
+            let e = &self.hash_method_entries[hmi];
+            worker.register_hash_method(e.ty_id_index, e.method_def_id);
+        }
+        for emi in 0usize..self.eq_method_entries.len() {
+            let e = &self.eq_method_entries[emi];
+            worker.register_eq_method(e.ty_id_index, e.method_def_id);
+        }
         // Copy per-op tail-resumptive map (read-only, needed for Perform codegen)
         for odi2 in 0usize..self.op_def_index_entries.len() {
             let ode2 = &self.op_def_index_entries[odi2];
