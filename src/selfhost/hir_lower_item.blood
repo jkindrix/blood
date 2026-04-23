@@ -1089,6 +1089,20 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
     let fn_name_str = ctx.span_to_string(f.name.span);
     let fn_name_sym = ctx.intern(fn_name_str.as_str());
     let re_name = common.SpannedSymbol { symbol: fn_name_sym, span: f.name.span };
+
+    // Capture Frozen.new for MIR intrinsic dispatch (A1 Phase 3a / GAP-2).
+    match (&impl_type_def_id, &ctx.builtin_frozen_def) {
+        (&Option.Some(ref t), &Option.Some(ref fz)) => {
+            if t.index == fz.index {
+                let new_sym = ctx.intern("new");
+                if fn_name_sym.index == new_sym.index {
+                    ctx.frozen_new_def_ids.push(def_id.index);
+                }
+            }
+        }
+        _ => {}
+    }
+
     hir_item.AssocFn.new(def_id, re_name, sig, body_id, has_default)
 }
 

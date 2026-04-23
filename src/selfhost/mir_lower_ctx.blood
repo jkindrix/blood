@@ -316,6 +316,10 @@ pub struct MirLowerCtx {
     /// Type-generic call info from the type checker.
     /// Records concrete type bindings for each call to a type-generic function.
     pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// DefIds of `Frozen.new` impl methods. Calls to these are rewritten as
+    /// inline ADT Aggregate by lower_call_expr to bypass the generic body
+    /// (which erases T to i64 for impl-level type params). See GAP-2.
+    pub frozen_new_def_ids: Vec<u32>,
     /// The region local that currently encloses new locals (for deferred allocation).
     pub active_region_local: Option<u32>,
 }
@@ -443,6 +447,7 @@ impl MirLowerCtx {
             next_mono_def_id: 0,
             type_generic_fn_set: Vec.new(),
             type_generic_calls: Vec.new(),
+            frozen_new_def_ids: Vec.new(),
             active_region_local: Option.None,
         }
     }
@@ -568,6 +573,7 @@ impl MirLowerCtx {
             next_mono_def_id: 0,
             type_generic_fn_set: Vec.new(),
             type_generic_calls: Vec.new(),
+            frozen_new_def_ids: Vec.new(),
             active_region_local: Option.None,
         }
     }
@@ -650,6 +656,17 @@ impl MirLowerCtx {
     pub fn is_const_generic_fn(self: &MirLowerCtx, def_id_index: u32) -> bool {
         for i in 0usize..self.const_generic_fn_set.len() {
             if self.const_generic_fn_set[i] == def_id_index {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns true if `def_id_index` is a captured `Frozen.new` impl method.
+    /// Caller in lower_call_expr rewrites the Call to inline ADT Aggregate.
+    pub fn is_frozen_new(self: &MirLowerCtx, def_id_index: u32) -> bool {
+        for i in 0usize..self.frozen_new_def_ids.len() {
+            if self.frozen_new_def_ids[i] == def_id_index {
                 return true;
             }
         }

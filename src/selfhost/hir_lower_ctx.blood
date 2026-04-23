@@ -143,6 +143,10 @@ pub struct LowerResult {
     pub builtin_option_none_def: Option<hir_def.DefId>,
     pub builtin_result_ok_def: Option<hir_def.DefId>,
     pub builtin_result_err_def: Option<hir_def.DefId>,
+    /// DefIds of `Frozen.new` impl methods. MIR lowering rewrites Calls to these
+    /// as inline ADT Aggregate, bypassing the generic body that would erase T to
+    /// i64 (impl-level type params are not monomorphized). See GAP-2.
+    pub frozen_new_def_ids: Vec<u32>,
     /// The string interner from the lowering context.
     /// Contains all symbol-to-string mappings created during lowering.
     /// Codegen uses this to resolve function names from Symbol indices.
@@ -211,6 +215,7 @@ impl LowerResult {
             builtin_option_none_def: builtin_option_none_def,
             builtin_result_ok_def: builtin_result_ok_def,
             builtin_result_err_def: builtin_result_err_def,
+            frozen_new_def_ids: Vec.new(),
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
             builtin_const_defs: Vec.new(),
@@ -243,6 +248,7 @@ impl LowerResult {
             builtin_option_none_def: Option.None,
             builtin_result_ok_def: Option.None,
             builtin_result_err_def: Option.None,
+            frozen_new_def_ids: Vec.new(),
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
             builtin_const_defs: Vec.new(),
@@ -275,6 +281,7 @@ impl LowerResult {
             builtin_option_none_def: Option.None,
             builtin_result_ok_def: Option.None,
             builtin_result_err_def: Option.None,
+            frozen_new_def_ids: Vec.new(),
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
             builtin_const_defs: Vec.new(),
@@ -390,6 +397,9 @@ pub struct LoweringCtx {
     pub builtin_option_none_def: Option<hir_def.DefId>,
     pub builtin_result_ok_def: Option<hir_def.DefId>,
     pub builtin_result_err_def: Option<hir_def.DefId>,
+    /// DefIds of `Frozen.new` impl methods captured during lower_assoc_fn for
+    /// MIR intrinsic dispatch. See LowerResult.frozen_new_def_ids for rationale.
+    pub frozen_new_def_ids: Vec<u32>,
     /// Paths currently being loaded (for circular import detection during recursive loading).
     /// Separates circular-import detection from loaded_modules ordering.
     pub loading_paths: Vec<String>,
@@ -539,6 +549,7 @@ impl LoweringCtx {
             builtin_option_none_def: Option.None,
             builtin_result_ok_def: Option.None,
             builtin_result_err_def: Option.None,
+            frozen_new_def_ids: Vec.new(),
             loading_paths: Vec.new(),
             builtin_fn_defs: Vec.new(),
             builtin_const_defs: Vec.new(),
@@ -588,6 +599,7 @@ impl LoweringCtx {
             builtin_option_none_def: Option.None,
             builtin_result_ok_def: Option.None,
             builtin_result_err_def: Option.None,
+            frozen_new_def_ids: Vec.new(),
             loading_paths: Vec.new(),
             builtin_fn_defs: Vec.new(),
             builtin_const_defs: Vec.new(),

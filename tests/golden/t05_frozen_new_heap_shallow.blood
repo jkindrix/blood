@@ -1,29 +1,20 @@
-// Regression guard (A1 Phase 3 task #1, pending): `Frozen.new(heap_t)` does
-// NOT deep-freeze the inner heap buffers — it loses them entirely.
+// A1 Phase 3a (GAP-2): `Frozen.new(heap_t)` deep-freezes the inner heap
+// buffers via the MIR intrinsic dispatch path.
 //
-// Blood's impl-level type parameter `T` in `impl<T> Frozen<T>.new` is erased
-// to `i64` at the generic body's codegen site (the caller's TyId doesn't
-// propagate through the uniform-representation calling convention). For
-// T ≤ 8 bytes (primitives, POD structs fitting in i64) this works; for
-// T > 8 bytes (String, Wrapper{s:String}, etc.) it:
-//   1. truncates the Wrapper at the call site — only the first 8 bytes
-//      (the String's `data` pointer) are passed to Frozen.new. The String's
-//      `len` and `cap` fields are zeroed in the returned Frozen<Wrapper>.
-//   2. persists only 8 bytes into Tier 3.
-//   3. calls `blood_freeze_fields` with a zero-entry layout descriptor
-//      (the body's T is Infer, no field info known) — so the inner String
-//      data buffer is never registered or frozen.
+// Background: Blood erases impl-level type parameters at codegen, so the
+// generic body of `impl<T> Frozen<T>.new(value: T)` would see T → i64 and
+// truncate any T > 8 bytes (String, Wrapper{s:String}, etc.) at the Call
+// boundary, then call `blood_freeze_fields` with a zero-entry layout
+// descriptor (the body's T is Infer, no field info known).
 //
-// The Phase 2 golden `t05_frozen_deep_string.blood` avoids this by using
-// inline `Frozen { value: w }` construction, which is the current workaround.
+// Fix (S60): HIR lowering captures Frozen.new's DefId during lower_assoc_fn;
+// MIR lowering's `lower_call_expr` rewrites Calls to that DefId as inline
+// `Rvalue.Aggregate(Adt(frozen_def_id, 0, [T]))`, bypassing the generic body.
+// Codegen's ADT aggregate path (already used by the inline `Frozen { value: w }`
+// shape — Phase 2's `t05_frozen_deep_string.blood`) then handles persist +
+// freeze + freeze_fields with the concrete T from the call site.
 //
-// This test EXPECTS the broken behavior (is_frozen == 0) to codify the
-// regression guard. When Phase 3 ships a type-preserving mono for
-// Frozen.new (MIR intrinsic or broader generic-impl mono infrastructure),
-// this test will fail with output "1" and must be rewritten to assert the
-// fixed behavior.
-//
-// EXPECT: 0
+// EXPECT: 1
 
 bridge "C" Rt {
     fn blood_is_frozen(ptr: *mut u8) -> bool;
@@ -47,9 +38,9 @@ fn main() -> i32 {
     let mut s0: String = String.new();
     s0.push_str("hello");
     let w: Wrapper = Wrapper { s: s0 };
-    // Route through Frozen.new (generic) — observe the data-loss + shallow
-    // freeze bug. Compare to t05_frozen_deep_string.blood which uses
-    // inline `Frozen { value: w }` and correctly deep-freezes.
+    // Route through Frozen.new (generic). The MIR intrinsic dispatch
+    // rewrites this Call to inline ADT Aggregate, matching the deep-freeze
+    // semantics of inline `Frozen { value: w }` (t05_frozen_deep_string.blood).
     let f: Frozen<Wrapper> = Frozen.new(w);
     @unsafe {
         let s_ref: &String = &f.value.s;

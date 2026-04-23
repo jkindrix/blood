@@ -949,6 +949,45 @@ fn lower_call_expr(
                 }
                 Option.None => {}
             }
+            // A1 Phase 3a (GAP-2): Frozen.new MIR intrinsic. The generic body
+            // erases impl-level T to i64 and truncates heap T at the Call
+            // boundary. Bypass it by emitting an inline ADT Aggregate with the
+            // resolved Frozen<T> def_id and concrete type args — codegen's ADT
+            // aggregate path then handles persist+freeze+freeze_fields via the
+            // same Phase 2 path used by inline `Frozen { value: w }`.
+            if ctx.is_frozen_new(path.def_id.index) && args.len() == 1 {
+                let arg = &args[0];
+                let arg_temp = ctx.new_temp(arg.ty, span);
+                lower_expr(ctx, arg, mir_lower_ctx.destination_local(arg_temp));
+                let mut operands: Vec<mir_types.Operand> = Vec.new();
+                operands.push(mir_lower_util.operand_from_place_id(
+                    mir_types.Place.local(arg_temp),
+                    arg.ty,
+                ));
+                let frozen_def_id = extract_adt_def_id(ctx, ty, span);
+                let resolved_ty = ctx.resolve_type(ty);
+                let frozen_type_args = extract_type_args(&resolved_ty);
+                let dest_place = match dest.as_place() {
+                    Option.Some(p) => p,
+                    Option.None => {
+                        let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
+                        mir_types.Place.local(temp)
+                    }
+                };
+                ctx.emit_assign(
+                    dest_place,
+                    mir_types.Rvalue.Aggregate {
+                        kind: mir_types.AggregateKind.Adt {
+                            def_id: frozen_def_id,
+                            variant_idx: 0,
+                            type_args: frozen_type_args,
+                        },
+                        operands: operands,
+                    },
+                    span,
+                );
+                return;
+            }
         }
         _ => {}
     }
@@ -2507,6 +2546,13 @@ fn lower_closure_expr(
         closure_fields,
         closure_coercions,
     );
+
+    // Propagate Frozen.new intrinsic dispatch table to the closure (A1 Phase 3a).
+    let mut closure_frozen_new: Vec<u32> = Vec.new();
+    for fi in 0usize..ctx.frozen_new_def_ids.len() {
+        closure_frozen_new.push(ctx.frozen_new_def_ids[fi]);
+    }
+    closure_ctx.frozen_new_def_ids = closure_frozen_new;
 
     // Add env_ptr as first parameter (ptr type, required by calling convention)
     let env_ty = type_intern.ptr_ty();

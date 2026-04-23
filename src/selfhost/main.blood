@@ -2156,6 +2156,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.method_resolutions,
             &typeck.field_resolutions,
             &typeck.coercion_entries,
+            driver.clone_u32_vec(&lower.frozen_new_def_ids),
         );
 
         if mir_result.errors.len() > 0 {
@@ -2354,6 +2355,7 @@ fn codegen_pass2(
                     &typeck_result.method_resolutions,
                     &typeck_result.field_resolutions,
                     &typeck_result.coercion_entries,
+                    driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
                 );
                 region_deactivate();
                 // Extract signature from MIR body locals
@@ -2786,6 +2788,7 @@ fn codegen_pass2(
                 next_mono_def_id,
                 driver.clone_u32_vec(type_generic_fn_set),
                 driver.clone_type_generic_calls(type_generic_calls),
+                driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
             )
         } else {
             mir_lower.lower_body(
@@ -2797,6 +2800,7 @@ fn codegen_pass2(
                 &typeck_result.method_resolutions,
                 &typeck_result.field_resolutions,
                 &typeck_result.coercion_entries,
+                driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
             )
         };
 
@@ -5391,6 +5395,7 @@ fn compile_monomorphized_bodies(
                         pass2_result.next_mono_def_id,
                         Vec.new(), // No type_generic_fn_set
                         Vec.new(), // No type_generic_calls
+                        driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
                     )
                 } else {
                     // Const-generic monomorphization
@@ -5415,6 +5420,7 @@ fn compile_monomorphized_bodies(
                         pass2_result.next_mono_def_id,
                         Vec.new(), // No type_generic_fn_set
                         Vec.new(), // No type_generic_calls
+                        driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
                     )
                 };
 

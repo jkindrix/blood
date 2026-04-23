@@ -99,6 +99,7 @@ pub fn lower_body(
     method_resolutions: &Vec<common.MethodResEntry>,
     field_resolutions: &Vec<common.FieldResEntry>,
     coercion_entries: &Vec<common.CoercionEntry>,
+    frozen_new_def_ids: Vec<u32>,
 ) -> MirLowerResult {
     // Perf diagnostics: accumulate per-sub-phase time into file-level statics.
     let t_setup_start = blood_clock_millis();
@@ -137,6 +138,9 @@ pub fn lower_body(
     // This reuses the method/field hash maps across all calls in a build
     // — building them once in the constructor instead of ~2551 times.
     let mut ctx = mir_lower_ctx.MirLowerCtx.new_cached_top_level(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+
+    // Set Frozen.new intrinsic dispatch table (A1 Phase 3a / GAP-2).
+    ctx.frozen_new_def_ids = frozen_new_def_ids;
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -218,6 +222,7 @@ pub fn lower_body_with_const_info(
     next_mono_def_id: u32,
     type_generic_fn_set: Vec<u32>,
     type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    frozen_new_def_ids: Vec<u32>,
 ) -> MirLowerResult {
     // Perf diagnostics: share the static-mut counters with lower_body.
     let t_setup_start = blood_clock_millis();
@@ -247,6 +252,9 @@ pub fn lower_body_with_const_info(
     // Set type-generic fields
     ctx.type_generic_fn_set = type_generic_fn_set;
     ctx.type_generic_calls = type_generic_calls;
+
+    // Set Frozen.new intrinsic dispatch table (A1 Phase 3a / GAP-2).
+    ctx.frozen_new_def_ids = frozen_new_def_ids;
 
     lower_params_from_body(&mut ctx, body, span);
 

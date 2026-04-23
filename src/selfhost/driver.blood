@@ -333,6 +333,7 @@ impl Compiler {
                     next_mono_def_id,
                     clone_u32_vec(&type_generic_fn_set),
                     clone_type_generic_calls(&typeck_result.type_generic_calls),
+                    clone_u32_vec(&lower_result.frozen_new_def_ids),
                 )
             } else {
                 mir_lower.lower_body(
@@ -344,6 +345,7 @@ impl Compiler {
                     &typeck_result.method_resolutions,
                     &typeck_result.field_resolutions,
                     &typeck_result.coercion_entries,
+                    clone_u32_vec(&lower_result.frozen_new_def_ids),
                 )
             };
 
@@ -456,6 +458,7 @@ impl Compiler {
                             0,          // No mono alloc needed
                             Vec.new(), // No type_generic_fn_set
                             Vec.new(), // No type_generic_calls
+                            clone_u32_vec(&lower_result.frozen_new_def_ids),
                         );
 
                         // Collect errors
@@ -601,6 +604,7 @@ impl Compiler {
                 &typeck_result.method_resolutions,
                 &typeck_result.field_resolutions,
                 &typeck_result.coercion_entries,
+                clone_u32_vec(&lower_result.frozen_new_def_ids),
             );
 
             // Definite initialization + linearity check
