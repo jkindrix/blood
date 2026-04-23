@@ -2300,12 +2300,33 @@ fn emit_aggregate(
                 ctx.write(" = call i1 @blood_freeze(ptr ");
                 ctx.write_cgname(&persisted);
                 ctx.write(")\n");
-                // GAP-2 deep-freeze (A1 Phase 1): pass the inner-T layout descriptor to
-                // the runtime. Phase 1 descriptors are zero-entry placeholders so
-                // blood_freeze_fields is a verified no-op; Phase 2 will walk heap-
-                // owning fields (String, Vec, Box) and freeze them recursively.
+                // GAP-2 deep-freeze (A1 Phase 2): pass a layout descriptor
+                // matching the persisted Frozen<T> shape. Two cases:
+                //   (a) T is stored INLINE (primitive / small struct fitting in
+                //       Frozen's field): the persisted memory has T's layout at
+                //       offset 0 — walk T's own heap-owning fields.
+                //   (b) T is stored INDIRECTLY as a heap pointer (large struct or
+                //       any heap type): Frozen<T>'s LLVM shape is { ptr } while
+                //       sizeof(T) is larger — emit a kind=3 wrapper descriptor
+                //       that dereferences the pointer and recurses into T's own
+                //       layout.
                 let inner_ty_idx: u32 = if type_args.len() > 0 { type_args[0].index } else { 0u32 };
-                let layout_label = ctx.add_layout_descriptor(inner_ty_idx);
+                let layout_label: String = if type_args.len() > 0 {
+                    let t_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, type_args[0]);
+                    let t_size = codegen_size.llvm_type_size(t_llvm.as_str());
+                    if frozen_size < t_size {
+                        // Indirect: create the indirect wrapper whose single
+                        // entry points at the inner T's own layout. The
+                        // populate_all_layouts pass at emit time will fill in
+                        // T's entries.
+                        let inner_label = ctx.add_layout_descriptor(inner_ty_idx);
+                        ctx.add_indirect_layout_wrapper(inner_ty_idx, inner_label)
+                    } else {
+                        ctx.add_layout_descriptor(inner_ty_idx)
+                    }
+                } else {
+                    ctx.add_layout_descriptor(inner_ty_idx)
+                };
                 let fields_ok = ctx.fresh_temp_cg();
                 ctx.write_indent();
                 ctx.write_cgname(&fields_ok);

@@ -465,6 +465,15 @@ pub struct CodegenCtx {
     /// through the libmprompt abort trampoline.
     effect_has_resume_hash: hashmap.HashMapU64U32,
     pub frozen_def_id: u32,
+    /// DefId of builtin String (0 if unknown). Used by the Frozen<T> layout
+    /// walker to classify fields as kind=1 (String data-buffer freeze).
+    pub string_def_id: u32,
+    /// DefId of builtin Vec (0 if unknown). Used by the Frozen<T> layout
+    /// walker to classify fields as kind=2 (Vec data-buffer + per-element walk).
+    pub vec_def_id: u32,
+    /// DefId of builtin Box (0 if unknown). Used by the Frozen<T> layout
+    /// walker to classify fields as kind=3 (Box pointee freeze + recurse).
+    pub box_def_id: u32,
     /// Per-op tail-resumptive classification.
     /// Key: (effect_def_id << 32) | op_sym_index. Value: 1 = TR, absent = NTR.
     pub tail_resumptive_ops: hashmap.HashMapU64U32,
@@ -574,16 +583,38 @@ pub struct StringConstant {
     length: usize,
 }
 
+/// A single field entry in a Frozen<T> layout descriptor (GAP-2 Phase 2).
+/// Describes one heap-owning field of an aggregate: its offset in the parent
+/// struct, the kind of heap owner (String/Vec/Box/inline-struct), an optional
+/// label for the inner type's descriptor, and the element stride for Vec walks.
+pub struct LayoutEntry {
+    /// Byte offset within the parent aggregate.
+    pub offset: u32,
+    /// Kind discriminant: 1=String, 2=Vec, 3=Box, 4=inline struct.
+    pub kind: u32,
+    /// Layout descriptor label for the inner type (Vec element / Box pointee /
+    /// inline struct). Empty string if no inner descriptor (leaf or primitive).
+    pub inner_label: String,
+    /// Element stride in bytes for Vec walks (sizeof(T) for Vec<T>). 0 for others.
+    pub element_size: u64,
+}
+
 /// Entry in the Frozen<T> layout descriptor table (GAP-2 deep-freeze traversal).
 /// One entry per distinct inner type T encountered at a Frozen<T> aggregate site.
-/// Phase 1 emits zero-entry placeholders; Phase 2 populates field offsets.
+/// Phase 1 emitted zero-entry placeholders; Phase 2 populates real field entries
+/// for String / Vec / Box / inline nested struct fields of the inner type.
 pub struct LayoutDescriptor {
     /// The global label for this descriptor (e.g., `@blood_layout.0`).
     pub label: String,
     /// The inner TyId.index this descriptor describes (for dedup).
     pub ty_id_idx: u32,
-    /// Number of field entries (Phase 1: always 0).
+    /// Number of field entries (== entries.len(), kept for emit convenience).
     pub num_entries: u32,
+    /// The concrete field entries describing heap-owning fields.
+    pub entries: Vec<LayoutEntry>,
+    /// True once populate_layout_entries has walked this type's fields.
+    /// Guards against infinite recursion through cyclic ADTs (e.g., Box<Self>).
+    pub populated: bool,
 }
 
 /// Mapping from a MIR local to its LLVM name.
@@ -732,6 +763,9 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             effect_has_resume_hash: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
+            string_def_id: 0,
+            vec_def_id: 0,
+            box_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -848,6 +882,9 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             effect_has_resume_hash: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
+            string_def_id: 0,
+            vec_def_id: 0,
+            box_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -2773,6 +2810,8 @@ impl CodegenCtx {
                     label: label.clone(),
                     ty_id_idx: ty_id_idx,
                     num_entries: 0,
+                    entries: Vec.new(),
+                    populated: false,
                 });
                 self.layout_by_ty_id.insert(ty_id_idx as u64, new_idx);
 
@@ -2782,23 +2821,109 @@ impl CodegenCtx {
         }
     }
 
+    /// Returns the label for an "indirect wrapper" layout descriptor: a
+    /// descriptor with exactly one kind=3 entry at offset 0 pointing to the
+    /// inner type's own layout. Used for Frozen<T> aggregates where T is
+    /// stored by pointer (heap types / anything the compiler didn't inline).
+    /// The walker reads the pointer at offset 0, freezes the pointee, and
+    /// recurses with the inner layout.
+    /// Dedup key is (t_ty_id_idx | 0x80000000) so wrappers don't collide
+    /// with direct T descriptors. Caller is responsible for ensuring the
+    /// inner T's descriptor exists and will be populated — pass its label
+    /// via `inner_label`.
+    pub fn add_indirect_layout_wrapper(
+        self: &mut CodegenCtx,
+        t_ty_id_idx: u32,
+        inner_label: String,
+    ) -> String {
+        // Set the high bit of the u64 key so indirect wrappers dedup in their
+        // own namespace, never colliding with direct T descriptors (whose
+        // keys are 32-bit ty_id_idx values zero-extended into u64).
+        let wrap_key: u64 = (t_ty_id_idx as u64) | 0x8000000000000000u64;
+        match self.layout_by_ty_id.get(wrap_key) {
+            Option.Some(idx) => {
+                return self.layout_table[idx as usize].label.clone();
+            }
+            Option.None => {}
+        }
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        let n = self.layout_counter;
+        self.layout_counter = self.layout_counter + 1;
+        let mut label = common.make_string("@blood_layout.");
+        let num_str = codegen_types.format_u64(n as u64);
+        label.push_str(num_str.as_str());
+        let new_idx = self.layout_table.len() as u32;
+        let mut wrap_entries: Vec<LayoutEntry> = Vec.new();
+        wrap_entries.push(LayoutEntry {
+            offset: 0,
+            kind: 3,
+            inner_label: inner_label,
+            element_size: 0,
+        });
+        self.layout_table.push(LayoutDescriptor {
+            label: label.clone(),
+            ty_id_idx: t_ty_id_idx,
+            num_entries: 1,
+            entries: wrap_entries,
+            populated: true,
+        });
+        self.layout_by_ty_id.insert(wrap_key, new_idx);
+        if had_temp { region_activate(self.fn_temp_region); }
+        label
+    }
+
     /// Emits all layout descriptors as module-level globals. Called once per
     /// module after per-function codegen finishes (batch and streaming paths).
-    /// Phase 1: every descriptor has num_entries=0 and serializes as a bare
-    /// i32-count header followed by a zero-length field array. Phase 2+ will
-    /// expand the array with { offset, kind, inner_descriptor } triples.
+    /// Each descriptor serializes as
+    ///   { i32 num_entries, [N x { i32 offset, i32 kind, ptr inner_layout, i64 elem_size }] }
+    /// with a zero-length array when num_entries==0 (A1 Phase 1 placeholder
+    /// shape, still valid when A1 Phase 2 populates entries for types with
+    /// no heap-owning fields). LLVM reserves 4 bytes of tail-padding after
+    /// the i32 count so the 8-byte-aligned entry array starts at offset 8.
     pub fn emit_layout_descriptors(self: &mut CodegenCtx) {
         for i in 0usize..self.layout_table.len() {
-            let entry = &self.layout_table[i];
-            let n_str = codegen_types.format_u64(entry.num_entries as u64);
-            self.write_string(&entry.label);
+            // Snapshot the count; we re-index fields below via self.layout_table[i].
+            let n = self.layout_table[i].num_entries;
+            let n_str = codegen_types.format_u64(n as u64);
+            let label_clone = self.layout_table[i].label.clone();
+            self.write_string(&label_clone);
             self.write(" = private unnamed_addr constant { i32, [");
             self.write_string(&n_str);
-            self.write(" x { i32, i32, ptr }] } { i32 ");
+            self.write(" x { i32, i32, ptr, i64 }] } { i32 ");
             self.write_string(&n_str);
             self.write(", [");
             self.write_string(&n_str);
-            self.write(" x { i32, i32, ptr }] zeroinitializer }\n");
+            self.write(" x { i32, i32, ptr, i64 }] ");
+            if n == 0 {
+                self.write("zeroinitializer }\n");
+            } else {
+                self.write("[");
+                for e in 0u32..n {
+                    if e > 0 { self.write(", "); }
+                    let off = self.layout_table[i].entries[e as usize].offset;
+                    let kind = self.layout_table[i].entries[e as usize].kind;
+                    let esz = self.layout_table[i].entries[e as usize].element_size;
+                    let inner_label = self.layout_table[i].entries[e as usize].inner_label.clone();
+                    let off_str = codegen_types.format_u64(off as u64);
+                    let kind_str = codegen_types.format_u64(kind as u64);
+                    let esz_str = codegen_types.format_u64(esz);
+                    self.write("{ i32, i32, ptr, i64 } { i32 ");
+                    self.write_string(&off_str);
+                    self.write(", i32 ");
+                    self.write_string(&kind_str);
+                    self.write(", ptr ");
+                    if inner_label.len() == 0 {
+                        self.write("null");
+                    } else {
+                        self.write_string(&inner_label);
+                    }
+                    self.write(", i64 ");
+                    self.write_string(&esz_str);
+                    self.write(" }");
+                }
+                self.write("] }\n");
+            }
         }
         if self.layout_table.len() > 0 {
             self.newline();
@@ -3140,6 +3265,9 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
             effect_has_resume_hash: hashmap.HashMapU64U32.new(),
             frozen_def_id: 0,
+            string_def_id: 0,
+            vec_def_id: 0,
+            box_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -3192,6 +3320,9 @@ impl CodegenCtx {
         }
 
         worker.frozen_def_id = self.frozen_def_id;
+        worker.string_def_id = self.string_def_id;
+        worker.vec_def_id = self.vec_def_id;
+        worker.box_def_id = self.box_def_id;
         // Copy per-op tail-resumptive map (read-only, needed for Perform codegen)
         for odi2 in 0usize..self.op_def_index_entries.len() {
             let ode2 = &self.op_def_index_entries[odi2];

@@ -2593,10 +2593,22 @@ fn codegen_pass2(
             let wctx = &worker_ctxs[w];
             for li in 0usize..wctx.layout_table.len() {
                 let entry = &wctx.layout_table[li];
+                let mut cloned_entries: Vec<codegen_ctx.LayoutEntry> = Vec.new();
+                for ei in 0usize..entry.entries.len() {
+                    let src = &entry.entries[ei];
+                    cloned_entries.push(codegen_ctx.LayoutEntry {
+                        offset: src.offset,
+                        kind: src.kind,
+                        inner_label: src.inner_label.clone(),
+                        element_size: src.element_size,
+                    });
+                }
                 ctx.layout_table.push(codegen_ctx.LayoutDescriptor {
                     label: entry.label.clone(),
                     ty_id_idx: entry.ty_id_idx,
                     num_entries: entry.num_entries,
+                    entries: cloned_entries,
+                    populated: entry.populated,
                 });
             }
         }
@@ -3675,7 +3687,26 @@ fn begin_codegen_module_with_adts(
         &lower_result.builtin_option_def,
         &lower_result.builtin_result_def,
     );
-    // Set Frozen DefId for persist/freeze codegen (when stdlib Frozen is used)
+    // Expose builtin String / Vec / Box DefIds to the Frozen<T> layout walker
+    // (A1 Phase 2, GAP-2) — classify_field_to_entry compares field types against
+    // these to emit kind=1/2/3 entries.
+    match &lower_result.builtin_string_def {
+        &Option.Some(ref d) => { ctx.string_def_id = d.index; }
+        &Option.None => {}
+    }
+    match &lower_result.builtin_vec_def {
+        &Option.Some(ref d) => { ctx.vec_def_id = d.index; }
+        &Option.None => {}
+    }
+    match &lower_result.builtin_box_def {
+        &Option.Some(ref d) => { ctx.box_def_id = d.index; }
+        &Option.None => {}
+    }
+    // Set Frozen DefId for persist/freeze codegen. register_builtin_types
+    // calls register_or_use_existing_builtin for "Frozen" so builtin_frozen_def
+    // resolves to the user's struct DefId when one exists (the user shadows
+    // the builtin), and to the builtin DefId otherwise. This lets A1 Phase 2's
+    // deep-freeze codegen fire for user-declared `struct Frozen<T>` values.
     match &lower_result.builtin_frozen_def {
         &Option.Some(ref fid) => { ctx.frozen_def_id = fid.index; }
         &Option.None => {}

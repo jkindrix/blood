@@ -1,0 +1,55 @@
+// Test: Frozen<T> deep-freeze reaches inner String data buffer (GAP-2 A1 Phase 2).
+//
+// Wraps a struct containing a String in Frozen<T>. Codegen emits a layout
+// descriptor with one entry { offset: 0, kind: 1, inner_layout: null, elem_size: 0 }
+// describing the String field at offset 0. The runtime walker
+// (rt_blood_freeze_fields) reads the String's data pointer at that offset and
+// calls blood_freeze on the data buffer (after lazy-registering it, since
+// String buffers come from blood_alloc_simple without gen tracking). We then
+// verify via blood_is_frozen FFI that the buffer was frozen. Since String
+// struct's data-pointer is shared between the original allocation and the
+// persistent copy Frozen holds, freezing through Frozen marks the original
+// buffer too.
+// EXPECT: 1
+
+bridge "C" Rt {
+    fn blood_is_frozen(ptr: *mut u8) -> bool;
+}
+
+trait Freeze {}
+impl Freeze for String {}
+
+struct Wrapper { s: String }
+impl Freeze for Wrapper {}
+
+struct Frozen<T> { value: T }
+
+impl<T: Freeze> Frozen<T> {
+    fn new(value: T) -> Frozen<T> {
+        Frozen { value: value }
+    }
+}
+
+fn main() -> i32 {
+    let mut s0: String = String.new();
+    s0.push_str("hello");
+    let w: Wrapper = Wrapper { s: s0 };
+    // Construct Frozen directly (bypass Frozen.new) so the Frozen<T> aggregate
+    // codegen site sees T=Wrapper concretely instead of the erased T. This is
+    // the observable A1 Phase 2 path; Phase 3 can route Frozen<T>.new through
+    // type-preserving monomorphization.
+    let f: Frozen<Wrapper> = Frozen { value: w };
+    // The persisted Wrapper copy inside f.value is what the runtime walker
+    // freezes. Inspect its String data buffer via @unsafe pointer arithmetic:
+    // Wrapper's layout is the same as String's (`{ ptr, i64, i64 }`), so the
+    // data pointer lives at offset 0 of &f.value.s.
+    @unsafe {
+        let s_ref: &String = &f.value.s;
+        let s_addr: usize = (s_ref as *const String) as usize;
+        let data_addr: i64 = ptr_read_i64(s_addr as u64);
+        let data_ptr: *mut u8 = (data_addr as usize) as *mut u8;
+        let is_frozen: bool = Rt.blood_is_frozen(data_ptr);
+        if is_frozen { println_int(1); } else { println_int(0); }
+    }
+    0
+}

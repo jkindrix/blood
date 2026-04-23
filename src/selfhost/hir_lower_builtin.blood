@@ -51,7 +51,13 @@ pub fn register_builtin_types(ctx: &mut hir_lower_ctx.LoweringCtx) {
 
     // Result — enum with Ok/Err variants
     ctx.builtin_result_def = Option.Some(register_one_builtin(ctx, "Result", hir_def.DefKind.Enum, dummy_span));
-    ctx.builtin_frozen_def = Option.Some(register_one_builtin(ctx, "Frozen", hir_def.DefKind.Struct, dummy_span));
+
+    // Frozen — prefer a user-defined `struct Frozen<T>` when present so the
+    // persist/freeze codegen path (codegen_expr.blood Adt/is_frozen branch)
+    // resolves to the user's DefId instead of an orphan builtin. Existing
+    // goldens all declare their own Frozen and benefit; A1 Phase 2 wires
+    // deep-freeze traversal through this path. (GAP-2)
+    ctx.builtin_frozen_def = Option.Some(register_or_use_existing_builtin(ctx, "Frozen", hir_def.DefKind.Struct, dummy_span));
 
     // StaleReference — built-in effect for generational reference stale detection (Pillar 1).
     // Registered with reserved DefId 4100 (matching the hardcoded effect ID in codegen.blood).
@@ -82,6 +88,39 @@ fn register_one_builtin(
     span: common.Span,
 ) -> hir_def.DefId {
     let sym = ctx.intern(name);
+    let def_id = ctx.alloc_def_id();
+    let success = ctx.resolver.define_global(sym, def_id);
+    if success {
+        ctx.resolver.register_def_info(def_id, kind, sym, span, Option.None);
+    }
+    def_id
+}
+
+/// Like register_one_builtin, but returns the user's DefId when the name was
+/// already defined (user shadows the builtin). Used for types where codegen
+/// needs to recognize either the builtin or the user's equivalent by DefId —
+/// see Frozen<T>'s persist/freeze path.
+fn register_or_use_existing_builtin(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    name: &str,
+    kind: hir_def.DefKind,
+    span: common.Span,
+) -> hir_def.DefId {
+    let sym = ctx.intern(name);
+    // If user already defined this name globally, return their DefId.
+    match ctx.resolver.lookup(sym) {
+        Option.Some(ref lookup_result) => {
+            if lookup_result.is_global {
+                let binding = ctx.resolver.scope_binding(
+                    lookup_result.scope_index,
+                    lookup_result.binding_index,
+                );
+                return binding.def_id;
+            }
+        }
+        Option.None => {}
+    }
+    // Otherwise register a fresh builtin DefId.
     let def_id = ctx.alloc_def_id();
     let success = ctx.resolver.define_global(sym, def_id);
     if success {

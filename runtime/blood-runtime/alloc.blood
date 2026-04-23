@@ -809,32 +809,107 @@ pub fn rt_blood_is_frozen(ptr: *mut u8) -> bool {
 /// Recursively freezes inner heap pointer fields of a frozen allocation (GAP-2).
 ///
 /// `layout` points to a compile-time-emitted descriptor of the form:
-///     { i32 num_entries, [N x { i32 offset, i32 kind, ptr inner_layout }] }
+///     { i32 num_entries, [N x { i32 offset, i32 kind, ptr inner_layout, i64 element_size }] }
 ///
-/// A1 Phase 1 (this commit): codegen emits placeholder descriptors with
-/// num_entries=0 at every Frozen<T> aggregate site, and this function
-/// validates the descriptor header and returns true. No field traversal
-/// happens yet — that is Phase 2, which will dereference each entry
-/// (String data buffer, Vec data buffer, Box pointee, inline nested struct)
-/// and recurse into `rt_blood_freeze`. The cycle guard in `rt_blood_freeze`
-/// (check-before-mark) makes deep recursion safe on shared / cyclic structures.
+/// Each entry describes one heap-owning field in the parent aggregate at the
+/// given byte offset:
+///     kind 1: String field — freeze the data buffer pointed to by field+0.
+///     kind 2: Vec<T> field — freeze the data buffer, then walk `len`
+///             elements of stride `element_size`, each via recursive call
+///             with `inner_layout` (NULL if T has no heap-owning subparts).
+///     kind 3: Box<T> field — freeze the pointee, then walk the pointee's
+///             fields via recursive call with `inner_layout`.
+///     kind 4: inline nested struct — walk the nested struct's fields at
+///             field+0 via recursive call with `inner_layout`.
 ///
-/// Returns true when the descriptor is well-formed, false if layout is null.
+/// Cycle safety: kind 3 (the only recursion path that crosses allocation
+/// boundaries) checks `rt_blood_is_frozen` BEFORE descending; if the pointee
+/// was already frozen by a prior walk, we skip it. This breaks cyclic
+/// Box<Self>-graph recursion. kind 4 stays within the current allocation
+/// (already frozen) and so can't introduce a new cycle.
+///
+/// Returns true when the descriptor is well-formed (including the legitimate
+/// num_entries==0 no-op case), false if `layout` is NULL.
 #[export_name = "blood_freeze_fields"]
 pub fn rt_blood_freeze_fields(ptr: *mut u8, layout: *const u8) -> bool {
     @unsafe {
-        if (layout as usize) == 0 { return false; }
-        // Read num_entries (i32) at layout+0. Phase 1: descriptors are always
-        // zero-entry, so no field walk is emitted. Phase 2 adds the loop.
-        let count_ptr: *const u32 = layout as *const u32;
-        let num_entries: u32 = *count_ptr;
-        if num_entries == 0 {
-            return true;
+        let layout_addr: i64 = layout as usize as i64;
+        if layout_addr == 0 { return false; }
+        // Read num_entries (i32) at layout+0.
+        let num_entries_i32: i32 = ptr_read_i32(layout_addr as u64);
+        if num_entries_i32 <= 0 { return true; }
+        let num_entries: i64 = num_entries_i32 as i64;
+
+        // Entries array starts at layout+8: the outer struct is
+        //   { i32 count, [M x { i32, i32, ptr, i64 }] }
+        // and the inner 24-byte entry struct (containing ptr and i64) is
+        // 8-byte aligned, so LLVM inserts 4 bytes of tail-padding after the
+        // i32 count to align the array start.
+        let parent_addr: i64 = ptr_to_addr(ptr);
+        let entries_base: i64 = layout_addr + 8;
+        let mut i: i64 = 0;
+        while i < num_entries {
+            let entry_base: i64 = entries_base + i * 24;
+            let offset_i32: i32 = ptr_read_i32(entry_base as u64);
+            let kind: i32 = ptr_read_i32((entry_base + 4) as u64);
+            let inner_layout_i64: i64 = ptr_read_i64((entry_base + 8) as u64);
+            let element_size: i64 = ptr_read_i64((entry_base + 16) as u64);
+
+            let field_addr: i64 = parent_addr + (offset_i32 as i64);
+
+            if kind == 1 {
+                // String field — { ptr data, i64 len, i64 cap } at field_addr.
+                // String data buffers are allocated via blood_alloc_simple which
+                // doesn't gen-track. Lazy-register before freezing so blood_freeze
+                // can mark the hash-table entry.
+                let data_addr: i64 = ptr_read_i64(field_addr as u64);
+                if data_addr != 0 {
+                    rt_blood_lazy_register_gen(data_addr);
+                    rt_blood_freeze(addr_to_ptr(data_addr));
+                }
+            } else if kind == 2 {
+                // Vec<T> field — { ptr data, i64 len, i64 cap } at field_addr.
+                // Vec data buffers are allocated via blood_alloc_simple (via
+                // vec_ensure_cap) so they need lazy registration too.
+                let data_addr: i64 = ptr_read_i64(field_addr as u64);
+                let len: i64 = ptr_read_i64((field_addr + 8) as u64);
+                if data_addr != 0 {
+                    rt_blood_lazy_register_gen(data_addr);
+                    rt_blood_freeze(addr_to_ptr(data_addr));
+                    if inner_layout_i64 != 0 && len > 0 && element_size > 0 {
+                        let inner_layout_ptr: *const u8 = (inner_layout_i64 as usize) as *const u8;
+                        let mut j: i64 = 0;
+                        while j < len {
+                            let elem_addr: i64 = data_addr + j * element_size;
+                            rt_blood_freeze_fields(addr_to_ptr(elem_addr), inner_layout_ptr);
+                            j = j + 1;
+                        }
+                    }
+                }
+            } else if kind == 3 {
+                // Box<T> field — single `ptr` at field_addr.
+                let inner_addr: i64 = ptr_read_i64(field_addr as u64);
+                if inner_addr != 0 {
+                    let inner_ptr = addr_to_ptr(inner_addr);
+                    // Cycle guard: skip if another walk already froze this.
+                    if !rt_blood_is_frozen(inner_ptr) {
+                        rt_blood_freeze(inner_ptr);
+                        if inner_layout_i64 != 0 {
+                            let inner_layout_ptr: *const u8 = (inner_layout_i64 as usize) as *const u8;
+                            rt_blood_freeze_fields(inner_ptr, inner_layout_ptr);
+                        }
+                    }
+                }
+            } else if kind == 4 {
+                // Inline nested struct — walk its fields in place.
+                if inner_layout_i64 != 0 {
+                    let inner_layout_ptr: *const u8 = (inner_layout_i64 as usize) as *const u8;
+                    rt_blood_freeze_fields(addr_to_ptr(field_addr), inner_layout_ptr);
+                }
+            }
+            // Unknown kinds: skip (forward compatibility).
+            i = i + 1;
         }
-        // Phase 2 will walk entries here; for Phase 1, any non-zero count is
-        // unexpected — treat as successful no-op rather than panicking so that
-        // a future codegen change that emits real entries before the runtime
-        // handler catches up degrades gracefully.
         true
     }
 }

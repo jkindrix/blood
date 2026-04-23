@@ -271,7 +271,10 @@ pub fn generate_module_with_items(
 
     // Append string constants from the context
     ctx.emit_string_constants();
-    // Append Frozen<T> layout descriptors (GAP-2 deep-freeze metadata)
+    // Populate Frozen<T> layout descriptors before emit (GAP-2 A1 Phase 2
+    // deep-freeze metadata: walks inner-type fields into { offset, kind,
+    // inner_layout, elem_size } entries). Idempotent.
+    populate_all_layouts(ctx);
     ctx.emit_layout_descriptors();
     output.push_str(ctx.output.as_str());
 
@@ -995,6 +998,315 @@ fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool)
         variants: variants,
         llvm_type: common.make_string("{ i32, [1 x i64] }"),
         max_payload_size: 8,
+    }
+}
+
+// ============================================================
+// Frozen<T> Layout Population (GAP-2 A1 Phase 2)
+// ============================================================
+
+/// Populates field entries for the layout descriptor keyed on `ty_id_idx`.
+/// Safe to call multiple times — idempotent via `populated` flag. Also safe
+/// to call on types with no registered descriptor (no-op). Recursive cycles
+/// (Box<Self>, mutual recursion) terminate because the descriptor's
+/// `populated` flag is set before walking fields, and `add_layout_descriptor`
+/// returns the existing label for already-registered types.
+pub fn populate_layout_entries(ctx: &mut codegen_ctx.CodegenCtx, ty_id_idx: u32) {
+    let desc_idx = match ctx.layout_by_ty_id.get(ty_id_idx as u64) {
+        Option.Some(i) => i,
+        Option.None => { return; }
+    };
+    if ctx.layout_table[desc_idx as usize].populated {
+        return;
+    }
+    // Mark populated BEFORE walking to break cycles.
+    ctx.layout_table[desc_idx as usize].populated = true;
+
+    let entries = compute_layout_entries(ctx, ty_id_idx);
+    ctx.layout_table[desc_idx as usize].num_entries = entries.len() as u32;
+    ctx.layout_table[desc_idx as usize].entries = entries;
+}
+
+/// Walks an inner type's heap-owning fields and produces a Vec<LayoutEntry>
+/// describing them. Returns an empty vec when the type has no heap-owning
+/// subparts (all primitives, plain struct with primitive fields only, etc.).
+fn compute_layout_entries(ctx: &mut codegen_ctx.CodegenCtx, ty_id_idx: u32) -> Vec<codegen_ctx.LayoutEntry> {
+    let mut entries: Vec<codegen_ctx.LayoutEntry> = Vec.new();
+    let ty_id = type_intern.TyId.new(ty_id_idx);
+    let kind = type_intern.type_interner().get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            // Top-level T may itself be a heap-owning builtin (String / Vec<U> /
+            // Box<U>) — in that case, emit a single entry at offset 0 so the
+            // walker freezes the buffer/pointee of the persisted T.
+            if ctx.string_def_id != 0 && def_id.index == ctx.string_def_id {
+                entries.push(codegen_ctx.LayoutEntry {
+                    offset: 0,
+                    kind: 1,
+                    inner_label: String.new(),
+                    element_size: 0,
+                });
+                return entries;
+            }
+            if ctx.vec_def_id != 0 && def_id.index == ctx.vec_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                let (elem_label, elem_size) = if arg_len > 0 {
+                    let elem_id = interner.get_ty_list_element(args, 0);
+                    let elem_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, elem_id);
+                    let sz = codegen_size.llvm_type_size(elem_llvm.as_str());
+                    let lbl = maybe_layout_label_for_heap_owning(ctx, elem_id.index);
+                    (lbl, sz)
+                } else {
+                    (String.new(), 0u64)
+                };
+                entries.push(codegen_ctx.LayoutEntry {
+                    offset: 0,
+                    kind: 2,
+                    inner_label: elem_label,
+                    element_size: elem_size,
+                });
+                return entries;
+            }
+            if ctx.box_def_id != 0 && def_id.index == ctx.box_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                let inner_label = if arg_len > 0 {
+                    let inner_id = interner.get_ty_list_element(args, 0);
+                    maybe_layout_label_for_heap_owning(ctx, inner_id.index)
+                } else {
+                    String.new()
+                };
+                entries.push(codegen_ctx.LayoutEntry {
+                    offset: 0,
+                    kind: 3,
+                    inner_label: inner_label,
+                    element_size: 0,
+                });
+                return entries;
+            }
+            // User-defined struct: walk its fields via the ADT registry.
+            walk_struct_fields_into(ctx, def_id.index, &mut entries, 0u32);
+        }
+        _ => {
+            // Primitives / refs / tuples / enums / functions / etc.: no heap
+            // traversal. Phase 2 does not handle tuples or enum variants;
+            // Phase 3 may add those.
+        }
+    }
+    entries
+}
+
+/// Walks a struct's StructLayout.fields, emitting a LayoutEntry per heap-
+/// owning field at its byte offset in the parent. Offsets are computed using
+/// each field's LLVM type size/alignment (matching compute_struct_size in
+/// codegen_size.blood so that layout entries align with codegen's field GEPs).
+fn walk_struct_fields_into(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    def_id: u32,
+    out_entries: &mut Vec<codegen_ctx.LayoutEntry>,
+    base_offset: u32,
+) {
+    // Snapshot field metadata into parallel Vecs so the immutable borrow of
+    // the StructLayout is released before we call &mut methods on ctx below.
+    let mut llvm_types: Vec<String> = Vec.new();
+    let mut hir_idxs: Vec<u32> = Vec.new();
+    let mut has_hirs: Vec<bool> = Vec.new();
+    match ctx.lookup_struct(def_id) {
+        Option.Some(layout) => {
+            for f in 0usize..layout.fields.len() {
+                let field = &layout.fields[f];
+                let has_hir = match &field.hir_type {
+                    &Option.Some(_) => true,
+                    &Option.None => false,
+                };
+                let hir_idx = match &field.hir_type {
+                    &Option.Some(ref fid) => fid.index,
+                    &Option.None => 0u32,
+                };
+                llvm_types.push(field.llvm_type.clone());
+                hir_idxs.push(hir_idx);
+                has_hirs.push(has_hir);
+            }
+        }
+        Option.None => { return; }
+    }
+    let mut offset: u64 = base_offset as u64;
+    for i in 0usize..llvm_types.len() {
+        let field_size = codegen_size.llvm_type_size(llvm_types[i].as_str());
+        let field_align = codegen_size.llvm_type_alignment(llvm_types[i].as_str());
+        let padding = (field_align - (offset % field_align)) % field_align;
+        offset = offset + padding;
+        if has_hirs[i] {
+            match classify_field_to_entry(ctx, hir_idxs[i], offset as u32) {
+                Option.Some(entry) => { out_entries.push(entry); }
+                Option.None => {}
+            }
+        }
+        offset = offset + field_size;
+    }
+}
+
+/// Classifies a single field's HIR type into an optional LayoutEntry at the
+/// given offset. Returns Option.None when the field has no heap-owning parts
+/// (primitives, references, function pointers, etc.).
+fn classify_field_to_entry(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    field_ty_id_idx: u32,
+    offset: u32,
+) -> Option<codegen_ctx.LayoutEntry> {
+    let ty_id = type_intern.TyId.new(field_ty_id_idx);
+    let kind = type_intern.type_interner().get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            if ctx.string_def_id != 0 && def_id.index == ctx.string_def_id {
+                return Option.Some(codegen_ctx.LayoutEntry {
+                    offset: offset,
+                    kind: 1,
+                    inner_label: String.new(),
+                    element_size: 0,
+                });
+            }
+            if ctx.vec_def_id != 0 && def_id.index == ctx.vec_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                let (elem_label, elem_size) = if arg_len > 0 {
+                    let elem_id = interner.get_ty_list_element(args, 0);
+                    let elem_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, elem_id);
+                    let sz = codegen_size.llvm_type_size(elem_llvm.as_str());
+                    let lbl = maybe_layout_label_for_heap_owning(ctx, elem_id.index);
+                    (lbl, sz)
+                } else {
+                    (String.new(), 0u64)
+                };
+                return Option.Some(codegen_ctx.LayoutEntry {
+                    offset: offset,
+                    kind: 2,
+                    inner_label: elem_label,
+                    element_size: elem_size,
+                });
+            }
+            if ctx.box_def_id != 0 && def_id.index == ctx.box_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                let inner_label = if arg_len > 0 {
+                    let inner_id = interner.get_ty_list_element(args, 0);
+                    maybe_layout_label_for_heap_owning(ctx, inner_id.index)
+                } else {
+                    String.new()
+                };
+                return Option.Some(codegen_ctx.LayoutEntry {
+                    offset: offset,
+                    kind: 3,
+                    inner_label: inner_label,
+                    element_size: 0,
+                });
+            }
+            // User-defined struct: emit kind=4 only if it has heap-owning subparts;
+            // otherwise skip so the descriptor stays zero-entry for primitive ADTs.
+            match ctx.lookup_struct(def_id.index) {
+                Option.Some(_) => {
+                    if ty_has_heap_owning_parts(ctx, field_ty_id_idx) {
+                        let inner_label = ctx.add_layout_descriptor(field_ty_id_idx);
+                        populate_layout_entries(ctx, field_ty_id_idx);
+                        return Option.Some(codegen_ctx.LayoutEntry {
+                            offset: offset,
+                            kind: 4,
+                            inner_label: inner_label,
+                            element_size: 0,
+                        });
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        _ => {}
+    }
+    Option.None
+}
+
+/// Returns the layout descriptor label for `ty_id_idx` if that type has any
+/// heap-owning subparts; returns an empty string otherwise. This avoids
+/// emitting needless zero-entry descriptors for primitive element types
+/// (e.g., Vec<i32>'s inner_layout).
+fn maybe_layout_label_for_heap_owning(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty_id_idx: u32,
+) -> String {
+    if !ty_has_heap_owning_parts(ctx, ty_id_idx) {
+        return String.new();
+    }
+    let lbl = ctx.add_layout_descriptor(ty_id_idx);
+    populate_layout_entries(ctx, ty_id_idx);
+    lbl
+}
+
+/// Conservative test: does this type's memory representation contain any
+/// heap-owning pointer (String data buffer, Vec data buffer, Box pointee,
+/// or a nested aggregate that transitively owns heap)? Used to decide
+/// whether to emit a layout descriptor for an inner type. Skips inference
+/// variables / type parameters / references / raw pointers (no owned heap).
+///
+/// Recursion is bounded by type-tree depth under `MAX_DEPTH`; cyclic ADTs
+/// go through Box / Ref which this function treats as non-heap for the
+/// purpose of the recursive has-heap check (the Box path below returns true
+/// immediately without descending), so there is no infinite-recursion risk.
+fn ty_has_heap_owning_parts(ctx: &codegen_ctx.CodegenCtx, ty_id_idx: u32) -> bool {
+    ty_has_heap_owning_parts_depth(ctx, ty_id_idx, 0u32)
+}
+
+fn ty_has_heap_owning_parts_depth(
+    ctx: &codegen_ctx.CodegenCtx,
+    ty_id_idx: u32,
+    depth: u32,
+) -> bool {
+    if depth > 8 {
+        // Arbitrary bound. Phase 3 may lift via explicit in-progress set.
+        return true;
+    }
+    let ty_id = type_intern.TyId.new(ty_id_idx);
+    let kind = type_intern.type_interner().get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            if ctx.string_def_id != 0 && def_id.index == ctx.string_def_id { return true; }
+            if ctx.vec_def_id != 0 && def_id.index == ctx.vec_def_id { return true; }
+            if ctx.box_def_id != 0 && def_id.index == ctx.box_def_id { return true; }
+            let _ = args;
+            match ctx.lookup_struct(def_id.index) {
+                Option.Some(layout) => {
+                    for f in 0usize..layout.fields.len() {
+                        match &layout.fields[f].hir_type {
+                            &Option.Some(ref fid) => {
+                                if ty_has_heap_owning_parts_depth(ctx, fid.index, depth + 1) {
+                                    return true;
+                                }
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    false
+                }
+                Option.None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Populates every layout descriptor currently in `ctx.layout_table`. Safe to
+/// call multiple times — idempotent via each descriptor's `populated` flag.
+/// Must be called before `ctx.emit_layout_descriptors()` so that the serialized
+/// globals carry real field entries. The loop re-reads the table length each
+/// iteration so newly-added inner-type descriptors (discovered while walking
+/// user structs) are picked up in the same pass.
+pub fn populate_all_layouts(ctx: &mut codegen_ctx.CodegenCtx) {
+    let mut cursor: usize = 0;
+    loop {
+        let len = ctx.layout_table.len();
+        if cursor >= len { break; }
+        let ty_id_idx = ctx.layout_table[cursor].ty_id_idx;
+        populate_layout_entries(ctx, ty_id_idx);
+        cursor = cursor + 1;
     }
 }
 
