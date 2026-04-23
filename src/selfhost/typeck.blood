@@ -868,12 +868,17 @@ impl TypeChecker {
     /// Registers a function signature with impl-level generics merged in.
     /// For methods in `impl<T> Foo<T>`, the impl's type params are prepended
     /// to the method's own type params so that instantiate_fn_sig creates
-    /// fresh inference variables for each call site.
+    /// fresh inference variables for each call site. Impl-level where
+    /// predicates (e.g., `impl<T: Freeze> Frozen<T>`'s `T: Freeze` bound)
+    /// are merged ahead of the method's own where predicates so that
+    /// check_where_clause_bounds enforces BOTH bound sets at call time
+    /// (A1 Phase 3d / GAP-2).
     pub fn register_fn_sig_with_impl_generics(
         self: &mut Self,
         def_id: hir_def.DefId,
         sig: &hir_item.FnSig,
         impl_params: &Vec<hir_ty.GenericParam>,
+        impl_where_predicates: &Vec<hir_ty.WherePredicate>,
     ) {
         let mut param_tys: Vec<type_intern.TyId> = Vec.new();
         for i in 0usize..sig.params.len() {
@@ -904,7 +909,13 @@ impl TypeChecker {
             effect_def_ids.push(sig.effects.effects[ei].def_id.index);
         }
 
-        let where_predicates = hir_ty.copy_where_predicates(&sig.generics.where_predicates);
+        // Merge impl-level where predicates ahead of the method's own so
+        // `T: Freeze` on the impl is checked alongside any method-level
+        // bounds at each call site.
+        let mut where_predicates = hir_ty.copy_where_predicates(impl_where_predicates);
+        for wi in 0usize..sig.generics.where_predicates.len() {
+            where_predicates.push(hir_ty.copy_where_predicate(&sig.generics.where_predicates[wi]));
+        }
         let assoc_projections = hir_ty.copy_assoc_projections(&sig.generics.assoc_projections);
 
         let info = typeck_info.FnSigInfo.with_where_clauses(
@@ -1792,12 +1803,37 @@ impl TypeChecker {
 
     /// Checks if a type implements a trait.
     /// Returns true if an implementation exists.
+    ///
+    /// Resolution order:
+    ///   1. Manual user impls (e.g., `impl Freeze for MyType {}`) — user intent wins.
+    ///   2. Auto-derived Freeze for types with no matching manual impl — primitives,
+    ///      shared refs, closures, and structurally-Freeze ADTs.
+    /// This ordering means users can opt a non-structurally-Freeze type INTO Freeze
+    /// via explicit impl, but cannot opt out of structural Freeze (consistent with
+    /// the marker-trait semantics: auto-derive is a safety floor, not a ceiling).
     pub fn type_implements_trait(self: &Self, ty: type_intern.TyId, trait_ref: &hir_ty.TraitRef) -> bool {
-        // Check builtin auto-derived traits first (Freeze, Copy, Send, Sync, etc.)
+        // Manual impls first (user's `impl Freeze for T {}` wins).
+        let target_trait_idx = trait_ref.def_id.index;
+        match self.trait_impl_hash.get(target_trait_idx as u64) {
+            Option.Some(_) => {
+                for i in 0usize..self.impls.len() {
+                    let impl_info = &self.impls[i];
+                    if impl_info.trait_def_id_index == target_trait_idx {
+                        if types_match_for_impl_id(impl_info.self_ty, ty) {
+                            if self.impl_bounds_satisfied(impl_info, ty) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            Option.None => {}
+        }
+
+        // Auto-derive Freeze as a fallback when no manual impl matches.
         match &self.freeze_trait_def_id {
             &Option.Some(ref freeze_id) => {
-                if trait_ref.def_id.index == freeze_id.index {
-                    // Resolve inference variables before checking
+                if target_trait_idx == freeze_id.index {
                     let resolved = self.resolve(ty);
                     return type_is_freeze(resolved, &self.structs);
                 }
@@ -1805,23 +1841,6 @@ impl TypeChecker {
             &Option.None => {}
         }
 
-        // Quick O(1) check: if no impl exists for this trait, return false immediately
-        match self.trait_impl_hash.get(trait_ref.def_id.index as u64) {
-            Option.Some(_) => {}
-            Option.None => { return false; }
-        }
-        // Search self.impls using trait_def_id_index (populated by register_impl)
-        let target_trait_idx = trait_ref.def_id.index;
-        for i in 0usize..self.impls.len() {
-            let impl_info = &self.impls[i];
-            if impl_info.trait_def_id_index == target_trait_idx {
-                if types_match_for_impl_id(impl_info.self_ty, ty) {
-                    if self.impl_bounds_satisfied(impl_info, ty) {
-                        return true;
-                    }
-                }
-            }
-        }
         false
     }
 

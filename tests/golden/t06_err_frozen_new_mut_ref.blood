@@ -1,0 +1,25 @@
+// COMPILE_FAIL: `impl<T: Freeze> Frozen<T>.new()` rejects non-Freeze T
+// EXPECT: type does not implement trait
+//
+// Phase 3d (GAP-2): impl-level trait bounds are now enforced at path-call
+// sites like `Frozen.new(val)`. Before Phase 3d, `register_fn_sig_with_impl_generics`
+// copied only method-level where predicates into FnSigInfo, so impl-level
+// bounds on `impl<T: Freeze> Frozen<T>` were dropped silently at Call sites.
+// After Phase 3d, the merge happens and `type_implements_trait` rejects
+// `&mut i32` against `Freeze` (shared-ref-only marker).
+
+trait Freeze {}
+
+struct Frozen<T> { value: T }
+
+impl<T: Freeze> Frozen<T> {
+    fn new(value: T) -> Frozen<T> { Frozen { value: value } }
+}
+
+fn main() -> i32 {
+    let mut x: i32 = 42;
+    let r: &mut i32 = &mut x;
+    // &mut i32 is not Freeze → Frozen.new should be rejected.
+    let f: Frozen<&mut i32> = Frozen.new(r);
+    0
+}
