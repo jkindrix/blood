@@ -1,0 +1,50 @@
+// Test: HashMap<K, V>.iter() over (K, V) pairs via for-in
+// EXPECT: count: 3
+// EXPECT: key_sum: 60
+// EXPECT: val_sum: 600
+// EXPECT: manual count: 3
+// EXPECT: manual combined: 660
+
+fn main() -> i32 {
+    let mut m: HashMap<i32, i32> = HashMap.new();
+    m.insert(10, 100);
+    m.insert(20, 200);
+    m.insert(30, 300);
+
+    // for-in with tuple destructuring
+    let mut count: i32 = 0;
+    let mut key_sum: i32 = 0;
+    let mut val_sum: i32 = 0;
+    for (k, v) in m.iter() {
+        count += 1;
+        key_sum += k;
+        val_sum += v;
+    }
+    print("count: ");
+    println_int(count);
+    print("key_sum: ");
+    println_int(key_sum);
+    print("val_sum: ");
+    println_int(val_sum);
+
+    // Manual next() drive — verifies the iterator protocol directly.
+    let mut it = m.iter();
+    let mut mcount: i32 = 0;
+    let mut combined: i32 = 0;
+    loop {
+        match it.next() {
+            Option.Some(pair) => {
+                let (k2, v2) = pair;
+                mcount += 1;
+                combined += k2 + v2;
+            }
+            Option.None => { break; }
+        }
+    }
+    print("manual count: ");
+    println_int(mcount);
+    print("manual combined: ");
+    println_int(combined);
+
+    0
+}

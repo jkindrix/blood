@@ -1601,6 +1601,12 @@ pub fn is_hashmap_keys_next(func_val: &String) -> bool {
 pub fn is_hashmap_values_next(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@hashmap_values_next")
 }
+pub fn is_hashmap_iter(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_iter")
+}
+pub fn is_hashmap_iter_next(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_iter_next")
+}
 
 fn extract_hashmap_sizes(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -2096,4 +2102,134 @@ pub fn emit_hashmap_values_next_call(
 
     hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
     hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_iter_new(map, key_size, val_size, key_kind, out).
+/// Creates a HashMapIter<K,V> iterator: { ptr map, i64 0 }.
+pub fn emit_hashmap_iter_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    ctx.begin_call(Option.None, "void", "@hashmap_iter_new");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_iter_next(iter, ks, vs, kk, key_out, val_out) and builds
+/// Option<(K, V)>. The tuple payload is assembled in a single `{ K, V }` alloca whose
+/// field pointers are obtained via GEP — LLVM's layout rules compute the correct
+/// alignment and padding for arbitrary (K, V) element types.
+pub fn emit_hashmap_iter_next_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let iter_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+
+    // Resolve K and V LLVM type strings so we can build a `{ K, V }` tuple layout
+    // that matches Blood's tuple codegen elsewhere in the compiler.
+    let (k_llvm, v_llvm) = extract_hashmap_kv_llvm(ctx, &args[0]);
+    let mut tuple_llvm = common.make_string("{ ");
+    tuple_llvm.push_str(k_llvm.as_str());
+    tuple_llvm.push_str(", ");
+    tuple_llvm.push_str(v_llvm.as_str());
+    tuple_llvm.push_str(" }");
+    let tuple_size = codegen_size.llvm_type_size(tuple_llvm.as_str());
+
+    // Allocate the tuple payload. `align 8` matches the existing Option payload
+    // convention used by hashmap_build_option.
+    let tuple_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&tuple_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&tuple_llvm);
+    ctx.write(", align 8\n");
+
+    // GEP into tuple field 0 (K) and field 1 (V) — LLVM applies the element type's
+    // natural alignment automatically, so the runtime just writes ks/vs bytes.
+    let key_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&key_ptr);
+    ctx.write(" = getelementptr ");
+    ctx.write_string(&tuple_llvm);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&tuple_alloca);
+    ctx.write(", i32 0, i32 0\n");
+
+    let val_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_ptr);
+    ctx.write(" = getelementptr ");
+    ctx.write_string(&tuple_llvm);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&tuple_alloca);
+    ctx.write(", i32 0, i32 1\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_iter_next");
+    ctx.call_arg_str(true, "ptr", iter_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &key_ptr);
+    ctx.call_arg_cg(false, "ptr", &val_ptr);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &tuple_alloca, tuple_size);
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Resolves the LLVM type strings for K and V from a HashMap<K, V> (or reference to one)
+/// operand. Falls back to `i64` for both on failure, which matches the default sizes.
+fn extract_hashmap_kv_llvm(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    arg: &mir_types.Operand,
+) -> (String, String) {
+    match get_hashmap_type_from_arg(ctx, arg) {
+        Option.Some(ty_id) => {
+            let unwrapped = type_intern.unwrap_ref_id(ty_id);
+            match type_intern.get_adt_args(unwrapped) {
+                Option.Some(args) => {
+                    let interner = type_intern.type_interner();
+                    if interner.ty_list_len(args) >= 2 {
+                        let key_id = interner.get_ty_list_element(args, 0);
+                        let val_id = interner.get_ty_list_element(args, 1);
+                        let k = codegen_size.type_to_llvm_with_ctx_id(ctx, key_id);
+                        let v = codegen_size.type_to_llvm_with_ctx_id(ctx, val_id);
+                        return (k, v);
+                    }
+                    (common.make_string("i64"), common.make_string("i64"))
+                }
+                Option.None => (common.make_string("i64"), common.make_string("i64")),
+            }
+        }
+        Option.None => (common.make_string("i64"), common.make_string("i64")),
+    }
 }

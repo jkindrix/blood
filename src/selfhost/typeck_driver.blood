@@ -3863,12 +3863,20 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
     let values_ret_ty = make_adt(values_def, values_args);
     add_method(checker, &mut methods, "values", "hashmap_values", Vec.new(), values_ret_ty, false, interner);
 
+    // iter(&self) -> HashMapIter<K, V>
+    let iter_def = checker.alloc_def_id();
+    let mut iter_args: Vec<type_intern.TyId> = Vec.new();
+    iter_args.push(make_param(0));
+    iter_args.push(make_param(1));
+    let iter_ret_ty = make_adt(iter_def, iter_args);
+    add_method(checker, &mut methods, "iter", "hashmap_iter", Vec.new(), iter_ret_ty, false, interner);
+
     // Register the HashMap impl
     let impl_def = checker.alloc_def_id();
     let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
     checker.register_impl(impl_info);
 
-    // Register type names for HashMapKeys and HashMapValues so codegen can
+    // Register type names for HashMapKeys, HashMapValues, and HashMapIter so codegen can
     // resolve their LLVM types via lookup_def_name → adt_llvm_type.
     checker.builtin_def_names.push(
         typeck.BuiltinDefName.new(keys_def.index, common.make_string("HashMapKeys")),
@@ -3876,12 +3884,18 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
     checker.builtin_def_names.push(
         typeck.BuiltinDefName.new(values_def.index, common.make_string("HashMapValues")),
     );
+    checker.builtin_def_names.push(
+        typeck.BuiltinDefName.new(iter_def.index, common.make_string("HashMapIter")),
+    );
 
     // Register HashMapKeys<K, V> impl with next(&mut self) -> Option<K>
     register_hashmap_iter_impl(checker, keys_def, 0, "hashmap_keys_next", interner);
 
     // Register HashMapValues<K, V> impl with next(&mut self) -> Option<V>
     register_hashmap_iter_impl(checker, values_def, 1, "hashmap_values_next", interner);
+
+    // Register HashMapIter<K, V> impl with next(&mut self) -> Option<(K, V)>
+    register_hashmap_iter_pair_impl(checker, iter_def, interner);
 }
 
 /// Registers an iterator impl for a HashMap iterator type (HashMapKeys or HashMapValues).
@@ -3910,6 +3924,44 @@ fn register_hashmap_iter_impl(
         }
         Option.None => {
             add_method(checker, &mut methods, "next", runtime_name, Vec.new(), elem_ty, true, interner);
+        }
+    }
+
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
+    checker.register_impl(impl_info);
+}
+
+/// Registers the HashMapIter<K, V> impl: next(&mut self) -> Option<(K, V)>.
+fn register_hashmap_iter_pair_impl(
+    checker: &mut typeck.TypeChecker,
+    iter_def: hir_def.DefId,
+    interner: &interner.StringInterner,
+) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
+    self_args.push(make_param(0));
+    self_args.push(make_param(1));
+    let self_ty = make_adt(iter_def, self_args);
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
+
+    // Build tuple type (K, V).
+    let mut tuple_elems: Vec<type_intern.TyId> = Vec.new();
+    tuple_elems.push(make_param(0));
+    tuple_elems.push(make_param(1));
+    let type_int = type_intern.type_interner();
+    let tuple_list = type_int.intern_ty_list(&tuple_elems);
+    let tuple_ty = type_int.mk_tuple(tuple_list);
+
+    // next(&mut self) -> Option<(K, V)>
+    let option_def = checker.builtin_option_def;
+    match option_def {
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
+            opt_args.push(tuple_ty);
+            add_method(checker, &mut methods, "next", "hashmap_iter_next", Vec.new(), make_adt(opt_def, opt_args), true, interner);
+        }
+        Option.None => {
+            add_method(checker, &mut methods, "next", "hashmap_iter_next", Vec.new(), tuple_ty, true, interner);
         }
     }
 

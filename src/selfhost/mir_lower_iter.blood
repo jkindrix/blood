@@ -58,9 +58,12 @@ pub fn is_custom_iter(resolved_iter_id: type_intern.TyId, iter_kind: &type_inter
     }
 }
 
-/// Substitutes a Param type with the concrete type arg from the iterator type.
+/// Substitutes Param types with concrete type args from the iterator type.
 /// For generic iterators (e.g. HashMapKeys<K,V>), the iter_next table stores
 /// Param(0) as the element type. This resolves it to the concrete type (e.g. i32).
+///
+/// Recurses into Tuple element types so that iterators returning Option<(K, V)>
+/// (e.g. HashMapIter) get each tuple field substituted independently.
 fn subst_param_from_iter_type(
     interner: &mut type_intern.TypeInterner,
     param_ty: type_intern.TyId,
@@ -84,6 +87,25 @@ fn subst_param_from_iter_type(
             let arg_len = interner.ty_list_len(iter_args);
             if idx < arg_len {
                 interner.get_ty_list_element(iter_args, idx)
+            } else {
+                param_ty
+            }
+        }
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len = interner.ty_list_len(list_id);
+            let mut new_elems: Vec<type_intern.TyId> = Vec.with_capacity(len);
+            let mut any_change = false;
+            for i in 0usize..len {
+                let elem = interner.get_ty_list_element(list_id, i);
+                let new_elem = subst_param_from_iter_type(interner, elem, iter_ty_id, iter_kind);
+                if new_elem.index != elem.index {
+                    any_change = true;
+                }
+                new_elems.push(new_elem);
+            }
+            if any_change {
+                let new_list = interner.intern_ty_list(&new_elems);
+                interner.mk_tuple(new_list)
             } else {
                 param_ty
             }

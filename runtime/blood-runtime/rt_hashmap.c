@@ -273,6 +273,32 @@ int32_t hashmap_values_next(void* it, int64_t ks, int64_t vs, int32_t kk, void* 
     return 0;
 }
 
+void hashmap_iter_new(void* map, int64_t ks, int64_t vs, int32_t kk, void* out) {
+    *iter_map_ptr(out) = map;
+    *iter_idx_ptr(out) = 0;
+}
+
+int32_t hashmap_iter_next(void* it, int64_t ks, int64_t vs, int32_t kk,
+                          void* key_out, void* val_out) {
+    void* map = *iter_map_ptr(it);
+    int64_t* idx = iter_idx_ptr(it);
+    int64_t cap = *map_cap_ptr(map);
+    if (cap == 0) return 0;
+    void* data = (void*)*map_data_ptr(map);
+    int64_t st = stride(ks, vs);
+
+    while (*idx < cap) {
+        uint8_t* b = bucket_at(data, *idx, st);
+        (*idx)++;
+        if (b[0] == OCCUPIED) {
+            memcpy(key_out, b + 1, ks);
+            memcpy(val_out, b + 1 + ks, vs);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void hashmap_clone(void* src, int64_t ks, int64_t vs, int32_t kk, void* out) {
     int64_t cap = *map_cap_ptr(src);
     int64_t len = *map_len_ptr(src);
