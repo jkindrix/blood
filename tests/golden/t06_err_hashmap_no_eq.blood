@@ -1,0 +1,37 @@
+// COMPILE_FAIL: `HashMap<Point, i32>` insert with missing `impl PartialEq for Point`
+// EXPECT: type does not implement trait
+// EXPECT: PartialEq
+//
+// C3 Phase C Step 3 (S66): typeck now rejects a HashMap<K, V> insert call when K
+// is a user ADT that does not implement `PartialEq`. Hash is implemented here so
+// the test isolates the PartialEq-missing diagnostic. E0206 fires at the call
+// site with a fix-hint for the required method signature.
+mod std;
+use std.traits.hash.Hash;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Hash for Point {
+    fn hash(self: &Self, state: &mut u64) {
+        self.x.hash(state);
+        self.y.hash(state);
+    }
+}
+
+// Blood does not (yet) ship a canonical PartialEq trait — each consumer
+// declares it locally. The enforcement in `enforce_hashmap_key_bounds`
+// fires only when the trait is detected by name; declaring the trait
+// makes the missing-impl path observable here.
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+fn main() -> i32 {
+    let mut map: HashMap<Point, i32> = HashMap.new();
+    let p = Point { x: 1, y: 2 };
+    map.insert(p, 42);
+    0
+}

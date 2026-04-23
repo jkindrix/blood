@@ -1816,6 +1816,11 @@ fn infer_method_call(
             // Record the resolved method DefId for MIR lowering
             checker.record_method_resolution(method.span.start, method_info.def_id.index);
 
+            // C3 Phase C Step 3: enforce `K: Hash + PartialEq` on HashMap key
+            // for insert/get/contains_key/remove. Fires only when K resolves
+            // to a concrete user-defined ADT (matching the codegen kk=2 path).
+            enforce_hashmap_key_bounds(checker, method.symbol.index, resolved_receiver, span);
+
             // Return the return type after substitution
             unify.substitute_type_params_id(method_info.return_ty, &subst)
         }
@@ -1843,6 +1848,157 @@ fn infer_method_call(
 
             type_intern.CommonTypes.error()
         }
+    }
+}
+
+/// Enforces `K: Hash + PartialEq` for HashMap methods insert/get/contains_key/
+/// remove (C3 Phase C Step 3). Fires only when the receiver's outer type is the
+/// builtin HashMap and the first type argument resolves to a concrete
+/// user-defined ADT — matching the codegen kk=2 path. Primitive keys (kk=0) and
+/// builtin String keys (kk=1) bypass the check because the runtime dispatches
+/// those without trait wrappers.
+///
+/// Generic contexts (K = Param/Infer) are intentionally skipped here; when the
+/// function is monomorphized to a concrete K, the specialized body will be
+/// re-checked and the bound will apply at that point.
+///
+/// If either Hash or PartialEq trait DefId is not yet detected (e.g., a test
+/// file with no `use std.traits.hash.Hash`), the corresponding half of the
+/// check is silently skipped — the codegen fallback in `emit_missing_trait_error`
+/// still catches it as a defensive layer.
+fn enforce_hashmap_key_bounds(
+    checker: &mut typeck.TypeChecker,
+    method_sym_idx: u32,
+    receiver_ty: type_intern.TyId,
+    span: common.Span,
+) {
+    // 1. Method name must be insert/get/contains_key/remove.
+    let mut is_bound_method = false;
+    match &checker.hashmap_insert_sym {
+        &Option.Some(ref sym) => {
+            if sym.index == method_sym_idx {
+                is_bound_method = true;
+            }
+        }
+        &Option.None => {}
+    }
+    if !is_bound_method {
+        match &checker.hashmap_get_sym {
+            &Option.Some(ref sym) => {
+                if sym.index == method_sym_idx {
+                    is_bound_method = true;
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    if !is_bound_method {
+        match &checker.hashmap_contains_key_sym {
+            &Option.Some(ref sym) => {
+                if sym.index == method_sym_idx {
+                    is_bound_method = true;
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    if !is_bound_method {
+        match &checker.hashmap_remove_sym {
+            &Option.Some(ref sym) => {
+                if sym.index == method_sym_idx {
+                    is_bound_method = true;
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    if !is_bound_method {
+        return;
+    }
+
+    // 2. Receiver outer ADT must be the builtin HashMap.
+    let hashmap_def_idx = match &checker.builtin_hashmap_def {
+        &Option.Some(ref def) => def.index,
+        &Option.None => { return; }
+    };
+    let receiver_def_idx = match type_intern.get_adt_def_id(receiver_ty) {
+        Option.Some(def) => def.index,
+        Option.None => { return; }
+    };
+    if receiver_def_idx != hashmap_def_idx {
+        return;
+    }
+
+    // 3. Extract K from HashMap<K, V>.
+    let args = match type_intern.get_adt_args(receiver_ty) {
+        Option.Some(args) => args,
+        Option.None => { return; }
+    };
+    let type_int = type_intern.type_interner();
+    if type_int.ty_list_len(args) < 1 {
+        return;
+    }
+    let key_ty_raw = type_int.get_ty_list_element(args, 0);
+    let key_ty = checker.resolve(key_ty_raw);
+
+    // 4. K must resolve to a concrete user ADT. Skip primitives (kk=0 runtime
+    //    path), builtin String (kk=1), and still-generic K (Infer/Param —
+    //    deferred to monomorphization).
+    let key_def_idx = match type_intern.get_adt_def_id(key_ty) {
+        Option.Some(def) => def.index,
+        Option.None => { return; }
+    };
+    match &checker.builtin_string_def {
+        &Option.Some(ref string_def) => {
+            if key_def_idx == string_def.index {
+                return;
+            }
+        }
+        &Option.None => {}
+    }
+
+    // 5. Require `impl Hash for K`.
+    match &checker.hash_trait_def_id {
+        &Option.Some(ref hash_def) => {
+            let hash_tref = hir_ty.TraitRef.new(
+                hir_def.DefId.new(hash_def.index),
+                Vec.new(),
+                span,
+            );
+            if !checker.type_implements_trait(key_ty, &hash_tref) {
+                let note = common.make_string(
+                    "HashMap key type does not implement `Hash`; add `impl Hash for <K> { fn hash(self: &Self, state: &mut u64) { ... } }`"
+                );
+                checker.error_with_note(
+                    typeck_types.TypeErrorKind.TraitNotImplemented,
+                    span,
+                    note,
+                );
+            }
+        }
+        &Option.None => {}
+    }
+
+    // 6. Require `impl PartialEq for K`.
+    match &checker.partial_eq_trait_def_id {
+        &Option.Some(ref eq_def) => {
+            let eq_tref = hir_ty.TraitRef.new(
+                hir_def.DefId.new(eq_def.index),
+                Vec.new(),
+                span,
+            );
+            if !checker.type_implements_trait(key_ty, &eq_tref) {
+                let note = common.make_string(
+                    "HashMap key type does not implement `PartialEq`; add `impl PartialEq for <K> { fn eq(self: &Self, other: &Self) -> bool { ... } }`"
+                );
+                checker.error_with_note(
+                    typeck_types.TypeErrorKind.TraitNotImplemented,
+                    span,
+                    note,
+                );
+            }
+        }
+        &Option.None => {}
     }
 }
 

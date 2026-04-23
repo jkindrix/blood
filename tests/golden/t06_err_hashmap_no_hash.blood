@@ -1,0 +1,39 @@
+// COMPILE_FAIL: `HashMap<Point, i32>` insert with missing `impl Hash for Point`
+// EXPECT: type does not implement trait
+// EXPECT: Hash
+//
+// C3 Phase C Step 3 (S66): typeck now rejects a HashMap<K, V> insert call when K
+// is a user ADT that does not implement the `Hash` trait. Before Step 3, the
+// program would compile and the missing impl surfaced only as an `unreachable`
+// emitted by codegen (emit_missing_trait_error in codegen_builtins.blood). Now
+// it surfaces as E0206 at the call site with a fix-hint for the required method
+// signature.
+//
+// This golden exercises the `insert` branch; `get`, `contains_key`, `remove`
+// share the same enforcement path in `enforce_hashmap_key_bounds`.
+//
+// PartialEq is implemented here so the test isolates the Hash-missing diagnostic.
+mod std;
+use std.traits.hash.Hash;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+impl PartialEq for Point {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+
+fn main() -> i32 {
+    let mut map: HashMap<Point, i32> = HashMap.new();
+    let p = Point { x: 1, y: 2 };
+    map.insert(p, 42);
+    0
+}

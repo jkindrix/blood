@@ -718,6 +718,7 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     // Phase 1a1: Detect builtin traits by name
     detect_deref_trait(&mut checker, &result.items, &result.interner);
     detect_freeze_trait(&mut checker, &result.items, &result.interner);
+    detect_hash_eq_traits(&mut checker, &result.items, &result.interner);
 
     // Phase 1a2: Register synthetic impl blocks for dyn Trait types
     // so that lookup_method can resolve methods on dyn Trait receivers.
@@ -1204,6 +1205,43 @@ fn detect_freeze_trait(
                     Option.Some(name) => {
                         if string_eq(name, "Freeze") {
                             checker.freeze_trait_def_id = Option.Some(entry.def_id);
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Detects the Hash and PartialEq traits by name.
+///
+/// These are required for HashMap<K, V> user-ADT keys and are enforced by
+/// infer_method_call at insert/get/contains_key/remove call sites
+/// (C3 Phase C Step 3). Missing either trait surfaces as E0206 at check time
+/// rather than an `unreachable` at codegen.
+///
+/// The Hash trait lives in stdlib (`std.traits.hash.Hash`); PartialEq is
+/// typically user-declared per-module today (no stdlib definition yet), so
+/// both are detected by name-match after all items have been lowered.
+/// Multiple trait declarations with the same name keep the last-seen DefId —
+/// acceptable because the check only needs ONE satisfying TraitImpl.
+fn detect_hash_eq_traits(
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    interner: &interner.StringInterner,
+) {
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Trait(_) => {
+                match interner.resolve(entry.item.name.symbol) {
+                    Option.Some(name) => {
+                        if string_eq(name, "Hash") {
+                            checker.hash_trait_def_id = Option.Some(entry.def_id);
+                        } else if string_eq(name, "PartialEq") {
+                            checker.partial_eq_trait_def_id = Option.Some(entry.def_id);
                         }
                     }
                     Option.None => {}
@@ -3783,6 +3821,15 @@ fn register_box_methods(checker: &mut typeck.TypeChecker, box_def: hir_def.DefId
 
 /// Registers HashMap<K, V> methods: insert, get, contains_key, len, is_empty, remove, clone.
 fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_def.DefId, interner: &interner.StringInterner) {
+    // Cache method-name Symbols for the four methods that require
+    // `K: Hash + PartialEq` bounds on user-ADT keys (C3 Phase C Step 3).
+    // infer_method_call uses these to identify bound-requiring calls at check
+    // time without having to re-resolve strings through the interner.
+    checker.hashmap_insert_sym = interner.find("insert");
+    checker.hashmap_get_sym = interner.find("get");
+    checker.hashmap_contains_key_sym = interner.find("contains_key");
+    checker.hashmap_remove_sym = interner.find("remove");
+
     let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     self_args.push(make_param(1));

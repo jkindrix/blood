@@ -404,6 +404,19 @@ pub struct TypeChecker {
     pub deref_trait_def_id: Option<hir_def.DefId>,
     /// DefId of the builtin Freeze marker trait, if registered.
     pub freeze_trait_def_id: Option<hir_def.DefId>,
+    /// DefId of the stdlib Hash trait, detected by name in detect_hash_eq_traits.
+    /// Used by infer_method_call to enforce `K: Hash` on HashMap keys (C3 Phase C Step 3).
+    pub hash_trait_def_id: Option<hir_def.DefId>,
+    /// DefId of the PartialEq trait (user-declared or stdlib), detected by name.
+    /// Used by infer_method_call to enforce `K: PartialEq` on HashMap keys.
+    pub partial_eq_trait_def_id: Option<hir_def.DefId>,
+    /// Cached Symbols for HashMap bound-requiring method names.
+    /// Populated in register_hashmap_methods. Used at call sites to identify
+    /// the insert/get/contains_key/remove methods without string comparison.
+    pub hashmap_insert_sym: Option<common.Symbol>,
+    pub hashmap_get_sym: Option<common.Symbol>,
+    pub hashmap_contains_key_sym: Option<common.Symbol>,
+    pub hashmap_remove_sym: Option<common.Symbol>,
     /// Deferred trait bound checks (type IDs).
     /// When a where clause bound is checked before type inference has
     /// resolved the type (e.g., unsuffixed integer literals), the check
@@ -510,6 +523,12 @@ impl TypeChecker {
             pending_field_accesses: Vec.new(),
             deref_trait_def_id: Option.None,
             freeze_trait_def_id: Option.None,
+            hash_trait_def_id: Option.None,
+            partial_eq_trait_def_id: Option.None,
+            hashmap_insert_sym: Option.None,
+            hashmap_get_sym: Option.None,
+            hashmap_contains_key_sym: Option.None,
+            hashmap_remove_sym: Option.None,
             pending_bound_check_tys: Vec.new(),
             pending_bound_check_trait_ids: Vec.new(),
             pending_bound_check_spans: Vec.new(),
@@ -589,6 +608,12 @@ impl TypeChecker {
             pending_field_accesses: Vec.new(),
             deref_trait_def_id: Option.None,
             freeze_trait_def_id: Option.None,
+            hash_trait_def_id: Option.None,
+            partial_eq_trait_def_id: Option.None,
+            hashmap_insert_sym: Option.None,
+            hashmap_get_sym: Option.None,
+            hashmap_contains_key_sym: Option.None,
+            hashmap_remove_sym: Option.None,
             pending_bound_check_tys: Vec.new(),
             pending_bound_check_trait_ids: Vec.new(),
             pending_bound_check_spans: Vec.new(),
