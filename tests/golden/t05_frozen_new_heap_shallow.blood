@@ -1,0 +1,63 @@
+// Regression guard (A1 Phase 3 task #1, pending): `Frozen.new(heap_t)` does
+// NOT deep-freeze the inner heap buffers — it loses them entirely.
+//
+// Blood's impl-level type parameter `T` in `impl<T> Frozen<T>.new` is erased
+// to `i64` at the generic body's codegen site (the caller's TyId doesn't
+// propagate through the uniform-representation calling convention). For
+// T ≤ 8 bytes (primitives, POD structs fitting in i64) this works; for
+// T > 8 bytes (String, Wrapper{s:String}, etc.) it:
+//   1. truncates the Wrapper at the call site — only the first 8 bytes
+//      (the String's `data` pointer) are passed to Frozen.new. The String's
+//      `len` and `cap` fields are zeroed in the returned Frozen<Wrapper>.
+//   2. persists only 8 bytes into Tier 3.
+//   3. calls `blood_freeze_fields` with a zero-entry layout descriptor
+//      (the body's T is Infer, no field info known) — so the inner String
+//      data buffer is never registered or frozen.
+//
+// The Phase 2 golden `t05_frozen_deep_string.blood` avoids this by using
+// inline `Frozen { value: w }` construction, which is the current workaround.
+//
+// This test EXPECTS the broken behavior (is_frozen == 0) to codify the
+// regression guard. When Phase 3 ships a type-preserving mono for
+// Frozen.new (MIR intrinsic or broader generic-impl mono infrastructure),
+// this test will fail with output "1" and must be rewritten to assert the
+// fixed behavior.
+//
+// EXPECT: 0
+
+bridge "C" Rt {
+    fn blood_is_frozen(ptr: *mut u8) -> bool;
+}
+
+trait Freeze {}
+impl Freeze for String {}
+
+struct Wrapper { s: String }
+impl Freeze for Wrapper {}
+
+struct Frozen<T> { value: T }
+
+impl<T: Freeze> Frozen<T> {
+    fn new(value: T) -> Frozen<T> {
+        Frozen { value: value }
+    }
+}
+
+fn main() -> i32 {
+    let mut s0: String = String.new();
+    s0.push_str("hello");
+    let w: Wrapper = Wrapper { s: s0 };
+    // Route through Frozen.new (generic) — observe the data-loss + shallow
+    // freeze bug. Compare to t05_frozen_deep_string.blood which uses
+    // inline `Frozen { value: w }` and correctly deep-freezes.
+    let f: Frozen<Wrapper> = Frozen.new(w);
+    @unsafe {
+        let s_ref: &String = &f.value.s;
+        let s_addr: usize = (s_ref as *const String) as usize;
+        let data_addr: i64 = ptr_read_i64(s_addr as u64);
+        let data_ptr: *mut u8 = (data_addr as usize) as *mut u8;
+        let is_frozen: bool = Rt.blood_is_frozen(data_ptr);
+        if is_frozen { println_int(1); } else { println_int(0); }
+    }
+    0
+}
