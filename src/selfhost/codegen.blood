@@ -1085,13 +1085,29 @@ fn compute_layout_entries(ctx: &mut codegen_ctx.CodegenCtx, ty_id_idx: u32) -> V
                 });
                 return entries;
             }
+            // Builtin Option<T> / Result<T, E> (A1 Phase 3b, GAP-2): emit a
+            // single kind=5 entry at offset 0 pointing to a variant table if
+            // any variant's payload has heap-owning subparts.
+            if (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id) {
+                let vt_label = build_builtin_enum_variant_table(ctx, ty_id_idx, def_id.index, args);
+                if vt_label.len() > 0 {
+                    entries.push(codegen_ctx.LayoutEntry {
+                        offset: 0,
+                        kind: 5,
+                        inner_label: vt_label,
+                        element_size: 0,
+                    });
+                }
+                return entries;
+            }
             // User-defined struct: walk its fields via the ADT registry.
             walk_struct_fields_into(ctx, def_id.index, &mut entries, 0u32);
         }
         _ => {
-            // Primitives / refs / tuples / enums / functions / etc.: no heap
-            // traversal. Phase 2 does not handle tuples or enum variants;
-            // Phase 3 may add those.
+            // Primitives / refs / tuples / functions / user-defined enums:
+            // no heap traversal. User-defined enum variants are Phase 3
+            // follow-up work (S62+).
         }
     }
     entries
@@ -1202,6 +1218,22 @@ fn classify_field_to_entry(
                     element_size: 0,
                 });
             }
+            // Builtin Option<T> / Result<T, E> field (A1 Phase 3b, GAP-2):
+            // emit kind=5 at `offset` pointing to the enum's variant table
+            // when any variant carries heap-owning payload.
+            if (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id) {
+                let vt_label = build_builtin_enum_variant_table(ctx, field_ty_id_idx, def_id.index, args);
+                if vt_label.len() > 0 {
+                    return Option.Some(codegen_ctx.LayoutEntry {
+                        offset: offset,
+                        kind: 5,
+                        inner_label: vt_label,
+                        element_size: 0,
+                    });
+                }
+                return Option.None;
+            }
             // User-defined struct: emit kind=4 only if it has heap-owning subparts;
             // otherwise skip so the descriptor stays zero-entry for primitive ADTs.
             match ctx.lookup_struct(def_id.index) {
@@ -1223,6 +1255,120 @@ fn classify_field_to_entry(
         _ => {}
     }
     Option.None
+}
+
+/// Builds (or reuses a deduped) variant table for builtin Option<T> or
+/// Result<T, E> (A1 Phase 3b, GAP-2). Returns the global label of the variant
+/// table descriptor, or "" if no variant has heap-owning payload (caller
+/// skips emitting a kind=5 entry in that case — freeze_fields has nothing
+/// to dispatch to).
+///
+/// `enum_ty_id_idx` is the monomorphized enum TyId (e.g., Option<String>'s
+/// TyId). `enum_def_id_idx` is the enum's DefId (Option or Result). `args` is
+/// the TyList carrying the concrete type arguments.
+///
+/// Variant entries use the LayoutEntry shape with `offset` repurposed as the
+/// variant discriminant tag; `kind` is set to 0 (the runtime walker ignores
+/// it under kind=5 dispatch); `inner_label` is the sublayout label for the
+/// variant's heap-owning payload (or "" emitted as NULL for unit / non-heap
+/// variants).
+///
+/// Payload offset is hardcoded to 8 (i32 disc + 4 bytes pad) because any
+/// heap-owning payload carries ≥ 8-byte alignment via its pointer(s),
+/// forcing the enum's `[N x i64]` payload slot to 8-aligned, which in turn
+/// forces payload_offset to 8.
+fn build_builtin_enum_variant_table(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    enum_ty_id_idx: u32,
+    enum_def_id_idx: u32,
+    args: type_intern.TyListId,
+) -> String {
+    let mut variant_entries: Vec<codegen_ctx.LayoutEntry> = Vec.new();
+    let mut any_heap: bool = false;
+    let payload_offset: u32 = 8;
+
+    if ctx.option_def_id != 0 && enum_def_id_idx == ctx.option_def_id {
+        // Variant 0: None (unit) — always NULL sublayout.
+        variant_entries.push(codegen_ctx.LayoutEntry {
+            offset: 0,
+            kind: 0,
+            inner_label: String.new(),
+            element_size: 0,
+        });
+        // Variant 1: Some(T) — classify payload.
+        let interner = type_intern.type_interner();
+        let arg_len = interner.ty_list_len(args);
+        let sub_label = if arg_len >= 1 {
+            let t_id = interner.get_ty_list_element(args, 0);
+            build_variant_payload_sublayout(ctx, t_id.index, payload_offset)
+        } else {
+            String.new()
+        };
+        if sub_label.len() > 0 { any_heap = true; }
+        variant_entries.push(codegen_ctx.LayoutEntry {
+            offset: 1,
+            kind: 0,
+            inner_label: sub_label,
+            element_size: 0,
+        });
+    } else if ctx.result_def_id != 0 && enum_def_id_idx == ctx.result_def_id {
+        // Variant 0: Ok(T) — classify T payload.
+        let interner = type_intern.type_interner();
+        let arg_len = interner.ty_list_len(args);
+        let t_label = if arg_len >= 1 {
+            let t_id = interner.get_ty_list_element(args, 0);
+            build_variant_payload_sublayout(ctx, t_id.index, payload_offset)
+        } else {
+            String.new()
+        };
+        if t_label.len() > 0 { any_heap = true; }
+        variant_entries.push(codegen_ctx.LayoutEntry {
+            offset: 0,
+            kind: 0,
+            inner_label: t_label,
+            element_size: 0,
+        });
+        // Variant 1: Err(E) — classify E payload.
+        let e_label = if arg_len >= 2 {
+            let e_id = interner.get_ty_list_element(args, 1);
+            build_variant_payload_sublayout(ctx, e_id.index, payload_offset)
+        } else {
+            String.new()
+        };
+        if e_label.len() > 0 { any_heap = true; }
+        variant_entries.push(codegen_ctx.LayoutEntry {
+            offset: 1,
+            kind: 0,
+            inner_label: e_label,
+            element_size: 0,
+        });
+    }
+
+    if !any_heap {
+        return String.new();
+    }
+    ctx.add_variant_table(enum_ty_id_idx, variant_entries)
+}
+
+/// Builds a sublayout for a single enum variant's payload (A1 Phase 3b).
+/// Returns the sublayout label, or "" if the payload has no heap-owning
+/// subparts. Reuses classify_field_to_entry to handle String / Vec / Box /
+/// inline struct / nested Option / nested Result uniformly at the given
+/// `payload_offset` within the enum.
+fn build_variant_payload_sublayout(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    payload_ty_id_idx: u32,
+    payload_offset: u32,
+) -> String {
+    let mut entries: Vec<codegen_ctx.LayoutEntry> = Vec.new();
+    match classify_field_to_entry(ctx, payload_ty_id_idx, payload_offset) {
+        Option.Some(e) => { entries.push(e); }
+        Option.None => {}
+    }
+    if entries.len() == 0 {
+        return String.new();
+    }
+    ctx.add_anonymous_sublayout(entries)
 }
 
 /// Returns the layout descriptor label for `ty_id_idx` if that type has any
@@ -1271,6 +1417,36 @@ fn ty_has_heap_owning_parts_depth(
             if ctx.string_def_id != 0 && def_id.index == ctx.string_def_id { return true; }
             if ctx.vec_def_id != 0 && def_id.index == ctx.vec_def_id { return true; }
             if ctx.box_def_id != 0 && def_id.index == ctx.box_def_id { return true; }
+            // Builtin Option<T> / Result<T, E> (A1 Phase 3b): heap-owning iff
+            // any type arg transitively has heap-owning parts.
+            if ctx.option_def_id != 0 && def_id.index == ctx.option_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                if arg_len >= 1 {
+                    let t_id = interner.get_ty_list_element(args, 0);
+                    if ty_has_heap_owning_parts_depth(ctx, t_id.index, depth + 1) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if ctx.result_def_id != 0 && def_id.index == ctx.result_def_id {
+                let interner = type_intern.type_interner();
+                let arg_len = interner.ty_list_len(args);
+                if arg_len >= 1 {
+                    let t_id = interner.get_ty_list_element(args, 0);
+                    if ty_has_heap_owning_parts_depth(ctx, t_id.index, depth + 1) {
+                        return true;
+                    }
+                }
+                if arg_len >= 2 {
+                    let e_id = interner.get_ty_list_element(args, 1);
+                    if ty_has_heap_owning_parts_depth(ctx, e_id.index, depth + 1) {
+                        return true;
+                    }
+                }
+                return false;
+            }
             let _ = args;
             match ctx.lookup_struct(def_id.index) {
                 Option.Some(layout) => {

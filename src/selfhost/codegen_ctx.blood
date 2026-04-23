@@ -474,6 +474,13 @@ pub struct CodegenCtx {
     /// DefId of builtin Box (0 if unknown). Used by the Frozen<T> layout
     /// walker to classify fields as kind=3 (Box pointee freeze + recurse).
     pub box_def_id: u32,
+    /// DefId of builtin Option (0 if unknown). Used by the Frozen<T> layout
+    /// walker to emit kind=5 entries with per-variant sublayouts for
+    /// Option<T> when T carries heap-owning fields.
+    pub option_def_id: u32,
+    /// DefId of builtin Result (0 if unknown). Same as option_def_id but
+    /// for Result<T, E> — walker dispatches to Ok's or Err's sublayout.
+    pub result_def_id: u32,
     /// Per-op tail-resumptive classification.
     /// Key: (effect_def_id << 32) | op_sym_index. Value: 1 = TR, absent = NTR.
     pub tail_resumptive_ops: hashmap.HashMapU64U32,
@@ -766,6 +773,8 @@ impl CodegenCtx {
             string_def_id: 0,
             vec_def_id: 0,
             box_def_id: 0,
+            option_def_id: 0,
+            result_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -885,6 +894,8 @@ impl CodegenCtx {
             string_def_id: 0,
             vec_def_id: 0,
             box_def_id: 0,
+            option_def_id: 0,
+            result_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -2873,6 +2884,79 @@ impl CodegenCtx {
         label
     }
 
+    /// Returns the label for an enum variant-dispatch table (A1 Phase 3b,
+    /// GAP-2). The resulting descriptor reuses the standard `{ i32 count,
+    /// [N x { i32, i32, ptr, i64 }] }` layout, but the walker interprets
+    /// entries under kind=5 dispatch as:
+    ///   { offset = variant_tag, kind = ignored, inner_label = sublayout,
+    ///     element_size = ignored }
+    /// Caller passes `entries` with one per variant; a variant with no
+    /// heap-owning payload should have `inner_label = ""` (emitted as NULL).
+    /// Dedup key is `(enum_ty_id_idx | 0x4000000000000000)` so variant
+    /// tables live in their own namespace, separate from regular layout
+    /// descriptors and indirect wrappers (bit 63).
+    pub fn add_variant_table(
+        self: &mut CodegenCtx,
+        enum_ty_id_idx: u32,
+        entries: Vec<LayoutEntry>,
+    ) -> String {
+        let vt_key: u64 = (enum_ty_id_idx as u64) | 0x4000000000000000u64;
+        match self.layout_by_ty_id.get(vt_key) {
+            Option.Some(idx) => {
+                return self.layout_table[idx as usize].label.clone();
+            }
+            Option.None => {}
+        }
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        let n = self.layout_counter;
+        self.layout_counter = self.layout_counter + 1;
+        let mut label = common.make_string("@blood_layout.");
+        let num_str = codegen_types.format_u64(n as u64);
+        label.push_str(num_str.as_str());
+        let new_idx = self.layout_table.len() as u32;
+        let nentries = entries.len() as u32;
+        self.layout_table.push(LayoutDescriptor {
+            label: label.clone(),
+            ty_id_idx: enum_ty_id_idx,
+            num_entries: nentries,
+            entries: entries,
+            populated: true,
+        });
+        self.layout_by_ty_id.insert(vt_key, new_idx);
+        if had_temp { region_activate(self.fn_temp_region); }
+        label
+    }
+
+    /// Builds a fresh, un-deduped LayoutDescriptor with the given entries and
+    /// returns its label. Used for variant sublayouts (A1 Phase 3b, GAP-2):
+    /// the owning enum's variant table is the dedup anchor, so individual
+    /// variant payload descriptors don't need their own keyed entry in
+    /// layout_by_ty_id. Stored in the codegen_region alongside regular
+    /// descriptors (same region dance as add_layout_descriptor).
+    pub fn add_anonymous_sublayout(
+        self: &mut CodegenCtx,
+        entries: Vec<LayoutEntry>,
+    ) -> String {
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        let n = self.layout_counter;
+        self.layout_counter = self.layout_counter + 1;
+        let mut label = common.make_string("@blood_layout.");
+        let num_str = codegen_types.format_u64(n as u64);
+        label.push_str(num_str.as_str());
+        let nentries = entries.len() as u32;
+        self.layout_table.push(LayoutDescriptor {
+            label: label.clone(),
+            ty_id_idx: 0,
+            num_entries: nentries,
+            entries: entries,
+            populated: true,
+        });
+        if had_temp { region_activate(self.fn_temp_region); }
+        label
+    }
+
     /// Emits all layout descriptors as module-level globals. Called once per
     /// module after per-function codegen finishes (batch and streaming paths).
     /// Each descriptor serializes as
@@ -3268,6 +3352,8 @@ impl CodegenCtx {
             string_def_id: 0,
             vec_def_id: 0,
             box_def_id: 0,
+            option_def_id: 0,
+            result_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -3323,6 +3409,8 @@ impl CodegenCtx {
         worker.string_def_id = self.string_def_id;
         worker.vec_def_id = self.vec_def_id;
         worker.box_def_id = self.box_def_id;
+        worker.option_def_id = self.option_def_id;
+        worker.result_def_id = self.result_def_id;
         // Copy per-op tail-resumptive map (read-only, needed for Perform codegen)
         for odi2 in 0usize..self.op_def_index_entries.len() {
             let ode2 = &self.op_def_index_entries[odi2];

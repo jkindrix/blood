@@ -1,0 +1,29 @@
+// A1 Phase 3b (GAP-2): Frozen<Result<String, i32>> — Ok variant with heap
+// String is deep-frozen; Err variant (i32) has no heap and produces a NULL
+// sublayout (walker no-ops if disc matches Err).
+//
+// EXPECT: 1
+
+bridge "C" Rt {
+    fn blood_is_frozen(ptr: *mut u8) -> bool;
+}
+
+struct Frozen<T> { value: T }
+
+fn main() -> i32 {
+    let mut s0: String = String.new();
+    s0.push_str("world");
+    let r: Result<String, i32> = Ok(s0);
+    let f: Frozen<Result<String, i32>> = Frozen { value: r };
+    @unsafe {
+        // Ok variant: disc=0; String payload starts at enum+8. Read the
+        // String's data pointer at +8 and confirm it's frozen.
+        let r_ref: &Result<String, i32> = &f.value;
+        let r_addr: usize = (r_ref as *const Result<String, i32>) as usize;
+        let data_addr: i64 = ptr_read_i64((r_addr as u64) + 8u64);
+        let data_ptr: *mut u8 = (data_addr as usize) as *mut u8;
+        let is_frozen: bool = Rt.blood_is_frozen(data_ptr);
+        if is_frozen { println_int(1); } else { println_int(0); }
+    }
+    0
+}

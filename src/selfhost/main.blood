@@ -3706,6 +3706,17 @@ fn begin_codegen_module_with_adts(
         &Option.Some(ref d) => { ctx.box_def_id = d.index; }
         &Option.None => {}
     }
+    // Option / Result DefIds for A1 Phase 3b enum variant kind=5 dispatch.
+    // Used by compute_layout_entries and classify_field_to_entry to emit a
+    // variant table when an enum field (or Frozen<Enum>) is encountered.
+    match &lower_result.builtin_option_def {
+        &Option.Some(ref d) => { ctx.option_def_id = d.index; }
+        &Option.None => {}
+    }
+    match &lower_result.builtin_result_def {
+        &Option.Some(ref d) => { ctx.result_def_id = d.index; }
+        &Option.None => {}
+    }
     // Set Frozen DefId for persist/freeze codegen. register_builtin_types
     // calls register_or_use_existing_builtin for "Frozen" so builtin_frozen_def
     // resolves to the user's struct DefId when one exists (the user shadows

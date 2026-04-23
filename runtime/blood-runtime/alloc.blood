@@ -821,12 +821,19 @@ pub fn rt_blood_is_frozen(ptr: *mut u8) -> bool {
 ///             fields via recursive call with `inner_layout`.
 ///     kind 4: inline nested struct — walk the nested struct's fields at
 ///             field+0 via recursive call with `inner_layout`.
+///     kind 5: inline enum — read the i32 discriminant at field+0, look up
+///             the matching variant in the `inner_layout` variant table,
+///             and walk that variant's sublayout (offsets relative to the
+///             enum's start). Variant table shape reuses the descriptor
+///             format with `offset` holding the variant tag; a NULL
+///             `inner_layout` in a variant entry means the variant has no
+///             heap-owning payload (e.g., Option.None, Result.Err(i32)).
 ///
 /// Cycle safety: kind 3 (the only recursion path that crosses allocation
 /// boundaries) checks `rt_blood_is_frozen` BEFORE descending; if the pointee
 /// was already frozen by a prior walk, we skip it. This breaks cyclic
-/// Box<Self>-graph recursion. kind 4 stays within the current allocation
-/// (already frozen) and so can't introduce a new cycle.
+/// Box<Self>-graph recursion. kind 4 and kind 5 stay within the current
+/// allocation (already frozen) and so can't introduce a new cycle.
 ///
 /// Returns true when the descriptor is well-formed (including the legitimate
 /// num_entries==0 no-op case), false if `layout` is NULL.
@@ -905,6 +912,34 @@ pub fn rt_blood_freeze_fields(ptr: *mut u8, layout: *const u8) -> bool {
                 if inner_layout_i64 != 0 {
                     let inner_layout_ptr: *const u8 = (inner_layout_i64 as usize) as *const u8;
                     rt_blood_freeze_fields(addr_to_ptr(field_addr), inner_layout_ptr);
+                }
+            } else if kind == 5 {
+                // Inline enum — read i32 discriminant, dispatch via variant table.
+                // The variant table itself reuses the descriptor format:
+                // `offset` holds the variant tag, `inner_layout` holds the
+                // sublayout pointer for that variant (NULL for unit / non-heap
+                // variants like Option.None).
+                if inner_layout_i64 != 0 {
+                    let vtable_addr: i64 = inner_layout_i64;
+                    let num_variants_i32: i32 = ptr_read_i32(vtable_addr as u64);
+                    let num_variants: i64 = num_variants_i32 as i64;
+                    let disc: i32 = ptr_read_i32(field_addr as u64);
+                    let vt_entries_base: i64 = vtable_addr + 8;
+                    let mut v: i64 = 0;
+                    while v < num_variants {
+                        let ve_base: i64 = vt_entries_base + v * 24;
+                        let tag: i32 = ptr_read_i32(ve_base as u64);
+                        if tag == disc {
+                            let sublayout_i64: i64 = ptr_read_i64((ve_base + 8) as u64);
+                            if sublayout_i64 != 0 {
+                                let sublayout_ptr: *const u8 = (sublayout_i64 as usize) as *const u8;
+                                rt_blood_freeze_fields(addr_to_ptr(field_addr), sublayout_ptr);
+                            }
+                            v = num_variants;
+                        } else {
+                            v = v + 1;
+                        }
+                    }
                 }
             }
             // Unknown kinds: skip (forward compatibility).

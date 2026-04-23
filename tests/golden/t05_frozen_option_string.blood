@@ -1,0 +1,46 @@
+// A1 Phase 3b (GAP-2): Frozen<Option<String>> deep-freezes the Some variant's
+// inner String data buffer via kind=5 enum dispatch.
+//
+// Codegen emits (for Frozen<Option<String>>'s inner-T layout):
+//   @blood_layout.N = { i32 1, [1 x entry] }
+//     entry 0 = { offset: 0, kind: 5, inner: @variant_table, elem: 0 }
+//   @variant_table = { i32 2, [2 x entry] }
+//     entry 0 (None) = { tag: 0, kind: 0, inner: null, elem: 0 }
+//     entry 1 (Some) = { tag: 1, kind: 0, inner: @some_sub, elem: 0 }
+//   @some_sub = { i32 1, [1 x entry] }
+//     entry 0 = { offset: 8, kind: 1, inner: null, elem: 0 }  // String at enum+8
+//
+// At runtime, rt_blood_freeze_fields reads the Option's i32 discriminant,
+// matches against the variant table's tag entries, and walks the matching
+// variant's sublayout. Some(s) → disc=1 → walk `some_sub` → kind=1 at offset
+// 8 freezes the String's data buffer.
+//
+// EXPECT: 1
+
+bridge "C" Rt {
+    fn blood_is_frozen(ptr: *mut u8) -> bool;
+}
+
+struct Frozen<T> { value: T }
+
+fn main() -> i32 {
+    let mut s0: String = String.new();
+    s0.push_str("hello");
+    let opt: Option<String> = Some(s0);
+    // Construct Frozen inline so the aggregate codegen site sees T=Option<String>
+    // concretely; the persist+freeze+freeze_fields path fires with Option<String>'s
+    // layout descriptor (kind=5 at offset 0 pointing to the variant table).
+    let f: Frozen<Option<String>> = Frozen { value: opt };
+    @unsafe {
+        // Read the String's data pointer at enum_addr+8 (payload offset) and
+        // confirm blood_is_frozen returns true — demonstrating the Some
+        // variant's sublayout's kind=1 entry at offset 8 reached the buffer.
+        let opt_ref: &Option<String> = &f.value;
+        let opt_addr: usize = (opt_ref as *const Option<String>) as usize;
+        let data_addr: i64 = ptr_read_i64((opt_addr as u64) + 8u64);
+        let data_ptr: *mut u8 = (data_addr as usize) as *mut u8;
+        let is_frozen: bool = Rt.blood_is_frozen(data_ptr);
+        if is_frozen { println_int(1); } else { println_int(0); }
+    }
+    0
+}
