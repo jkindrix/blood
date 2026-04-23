@@ -871,13 +871,15 @@ pub fn emit_string_as_bytes_call(
     let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
-    // The runtime lazily registers the data buffer in the gen hash table.
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_bytes");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
-    // Get gen from the RETURNED data pointer (not the struct's gen).
+    // Lazily register the data buffer in the gen hash table; free of the
+    // underlying buffer (via blood_free_simple → unregister_allocation) bumps
+    // the gen, so old &[u8] references see a mismatch on deref. Mirrors
+    // emit_string_as_str_call (S51, A3 Step 4b).
     let data_ptr = ctx.fresh_temp_cg();
     ctx.write("  ");
     ctx.write_cgname(&data_ptr);
@@ -891,7 +893,7 @@ pub fn emit_string_as_bytes_call(
     ctx.write_cgname(&data_ptr);
     ctx.write(" to i64\n");
     let data_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&data_gen), "i32", "@blood_get_generation");
+    ctx.begin_call(Option.Some(&data_gen), "i32", "@blood_lazy_register_gen");
     ctx.call_arg_cg(true, "i64", &data_addr);
     ctx.end_call();
     let data_gen_opt = Option.Some(data_gen);
