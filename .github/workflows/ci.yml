@@ -1,10 +1,20 @@
 name: CI
 
+# Auto-runs disabled 2026-04-23 to control GitHub Actions cost on this private
+# repo. The local `./build_selfhost.sh gate` produces a byte-identical three-gen
+# bootstrap and is authoritative; CI's remaining value is verifying the
+# ubuntu-latest 16 GB RAM profile (see BLOOD_EXTRA_COMPILER_FLAGS=--no-parallel
+# in the selfhost job), cross-platform test matrix when it works, and the
+# property tests. None of those have been catching anything the local gate
+# missed recently. Re-enable by restoring the `push:` / `pull_request:`
+# triggers below, or run a one-shot via:
+#   gh workflow run ci.yml --ref main
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
