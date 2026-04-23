@@ -251,6 +251,18 @@ pub struct CodegenCtx {
     persistent_locals_hash: hashmap.HashMapU64U32,
     /// Hash index for string_table: string content hash -> index in string_table vec
     string_table_hash: hashmap.HashMapU64U32,
+    /// Layout descriptor table for Frozen<T> deep-freeze traversal (GAP-2, A1 Phase 1).
+    /// One entry per distinct inner type T encountered at a Frozen<T> aggregate site.
+    /// Phase 1 emits zero-entry placeholders so `blood_freeze_fields` has a real
+    /// descriptor pointer to inspect; Phase 2+ populates real field offsets.
+    pub layout_table: Vec<LayoutDescriptor>,
+    /// Counter for generating unique layout descriptor labels.
+    pub layout_counter: u32,
+    /// Hash index for layout_table: inner TyId.index -> index in layout_table vec.
+    /// Within a single context, ensures each distinct inner type gets exactly one
+    /// descriptor global. Across workers, duplicate descriptors are permitted
+    /// (labels are disambiguated by the 100000 offset pattern used for strings).
+    layout_by_ty_id: hashmap.HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
     static_defs_hash: hashmap.HashMapU64U32,
     /// LLVM types for static variables: def_id -> index in static_types vec
@@ -562,6 +574,18 @@ pub struct StringConstant {
     length: usize,
 }
 
+/// Entry in the Frozen<T> layout descriptor table (GAP-2 deep-freeze traversal).
+/// One entry per distinct inner type T encountered at a Frozen<T> aggregate site.
+/// Phase 1 emits zero-entry placeholders; Phase 2 populates field offsets.
+pub struct LayoutDescriptor {
+    /// The global label for this descriptor (e.g., `@blood_layout.0`).
+    pub label: String,
+    /// The inner TyId.index this descriptor describes (for dedup).
+    pub ty_id_idx: u32,
+    /// Number of field entries (Phase 1: always 0).
+    pub num_entries: u32,
+}
+
 /// Mapping from a MIR local to its LLVM name.
 struct LocalName {
     local_id: u32,
@@ -645,6 +669,9 @@ impl CodegenCtx {
 
 
             string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
+            layout_table: Vec.with_capacity(16),
+            layout_counter: 0,
+            layout_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
             static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -758,6 +785,9 @@ impl CodegenCtx {
 
 
             string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
+            layout_table: Vec.with_capacity(16),
+            layout_counter: 0,
+            layout_by_ty_id: hashmap.HashMapU64U32.with_capacity(16),
             static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -2713,6 +2743,68 @@ impl CodegenCtx {
         }
     }
 
+    /// Returns the global label for a Frozen<T> layout descriptor describing the
+    /// inner type at `ty_id_idx`. If no descriptor exists yet, creates a zero-entry
+    /// placeholder (Phase 1 infrastructure; Phase 2 populates real field offsets).
+    /// Deduplicated within a single CodegenCtx via `layout_by_ty_id`.
+    pub fn add_layout_descriptor(self: &mut CodegenCtx, ty_id_idx: u32) -> String {
+        // Deactivate per-function temp region so layout_table entries persist
+        // in the codegen_region (same pattern as add_string_constant).
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp {
+            region_deactivate();
+        }
+
+        match self.layout_by_ty_id.get(ty_id_idx as u64) {
+            Option.Some(idx) => {
+                let result = self.layout_table[idx as usize].label.clone();
+                if had_temp { region_activate(self.fn_temp_region); }
+                return result;
+            }
+            Option.None => {
+                let n = self.layout_counter;
+                self.layout_counter = self.layout_counter + 1;
+                let mut label = common.make_string("@blood_layout.");
+                let num_str = codegen_types.format_u64(n as u64);
+                label.push_str(num_str.as_str());
+
+                let new_idx = self.layout_table.len() as u32;
+                self.layout_table.push(LayoutDescriptor {
+                    label: label.clone(),
+                    ty_id_idx: ty_id_idx,
+                    num_entries: 0,
+                });
+                self.layout_by_ty_id.insert(ty_id_idx as u64, new_idx);
+
+                if had_temp { region_activate(self.fn_temp_region); }
+                return label;
+            }
+        }
+    }
+
+    /// Emits all layout descriptors as module-level globals. Called once per
+    /// module after per-function codegen finishes (batch and streaming paths).
+    /// Phase 1: every descriptor has num_entries=0 and serializes as a bare
+    /// i32-count header followed by a zero-length field array. Phase 2+ will
+    /// expand the array with { offset, kind, inner_descriptor } triples.
+    pub fn emit_layout_descriptors(self: &mut CodegenCtx) {
+        for i in 0usize..self.layout_table.len() {
+            let entry = &self.layout_table[i];
+            let n_str = codegen_types.format_u64(entry.num_entries as u64);
+            self.write_string(&entry.label);
+            self.write(" = private unnamed_addr constant { i32, [");
+            self.write_string(&n_str);
+            self.write(" x { i32, i32, ptr }] } { i32 ");
+            self.write_string(&n_str);
+            self.write(", [");
+            self.write_string(&n_str);
+            self.write(" x { i32, i32, ptr }] zeroinitializer }\n");
+        }
+        if self.layout_table.len() > 0 {
+            self.newline();
+        }
+    }
+
     /// Emits a string literal as LLVM string bytes (escaping special chars).
     fn emit_string_literal_bytes(self: &mut CodegenCtx, s: &String) {
         let bytes = s.as_bytes();
@@ -2985,6 +3077,9 @@ impl CodegenCtx {
             region_locals_hash: hashmap.HashMapU64U32.new(),
             persistent_locals_hash: hashmap.HashMapU64U32.new(),
             string_table_hash: hashmap.HashMapU64U32.new(),
+            layout_table: Vec.new(),
+            layout_counter: 0,
+            layout_by_ty_id: hashmap.HashMapU64U32.new(),
             static_defs_hash: hashmap.HashMapU64U32.new(),
             static_types_hash: hashmap.HashMapU64U32.new(),
             static_hir_types_hash: hashmap.HashMapU64U32.new(),

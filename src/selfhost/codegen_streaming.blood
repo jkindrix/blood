@@ -102,6 +102,8 @@ pub fn finish_streaming_module(
     // Emit string constants into ctx.output, then copy to avoid aliased borrow
     ctx.output = String.new();
     ctx.emit_string_constants();
+    // Emit Frozen<T> layout descriptors (GAP-2 deep-freeze metadata)
+    ctx.emit_layout_descriptors();
     let constants_ir = ctx.output.clone();
     ctx.buffer_write(constants_ir.as_str());
 

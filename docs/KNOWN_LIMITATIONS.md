@@ -25,15 +25,17 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 **Note (out of scope):** `string_as_bytes` codegen still uses `blood_get_generation` (lookup-only, returns 0 for unregistered) — &[u8] from `as_bytes()` remains untracked. Symmetric fix would mirror the A3 change in `emit_string_as_bytes_call`. `blood_realloc`'s registration asymmetry (new buffer via sys_calloc bypasses registration) is also unchanged; rt_string/rt_vec growth uses `alloc_simple + free_simple` directly, not `blood_realloc`, so the asymmetry doesn't affect String/Vec stale detection.
 
-### GAP-2: `Frozen<T>` deep traversal is shallow
+### GAP-2: `Frozen<T>` deep traversal is shallow (A1 Phase 1 in place; Phase 2+ pending)
 
-`blood_freeze()` marks only the root allocation as frozen (gen set to `0x7FFFFFFE`). Inner heap pointers inside the structure are not recursively frozen. A "frozen" value can contain pointers to mutable heap data, breaking the immutability guarantee.
+`blood_freeze()` marks only the root allocation as frozen (gen set to `0x7FFFFFFE`). Inner heap pointers inside the structure are not yet recursively frozen. A "frozen" value can contain pointers to mutable heap data, breaking the immutability guarantee.
 
-**Cycle guard in place:** `blood_freeze` now checks whether an allocation is already frozen before re-marking it. This prevents infinite recursion on cyclic heap structures once the field traversal is wired in.
+**Cycle guard in place:** `blood_freeze` checks whether an allocation is already frozen before re-marking it. This prevents infinite recursion on cyclic heap structures once the field traversal is wired in.
 
-**Stub defined:** `blood_freeze_fields(ptr, layout_id)` is the API entry point for the deep traversal. It returns false (no-op) until codegen emits type-layout descriptors.
+**A1 Phase 1 (session 57):** codegen now emits a per-inner-type layout-descriptor global (`@blood_layout.N`) at every Frozen<T> aggregate site and emits `call i1 @blood_freeze_fields(ptr %persisted, ptr @blood_layout.N)` alongside the existing `blood_freeze`. Phase 1 descriptors carry `num_entries == 0` so the runtime handler validates the header and returns success — the infrastructure is fully plumbed end-to-end (descriptor pool on `CodegenCtx`, batch + streaming + parallel-worker merge paths) but no fields are walked yet. Descriptor layout: `{ i32 num_entries, [N x { i32 offset, i32 kind, ptr inner_layout }] }`. The codegen path currently activates only for the builtin `Frozen` DefId; user-defined `struct Frozen<T>` in goldens gets a different DefId and isn't exercised — the stdlib `Frozen` import that would trigger it is tracked separately.
 
-**Needed:** runtime type-layout metadata emitted by codegen so that `blood_freeze_fields` can walk pointer-typed fields and call `blood_freeze` recursively. Not currently emitted by codegen.
+**A1 Phase 2 (next session):** populate descriptors with real field entries. Kinds planned: 0 = leaf / no heap pointer (skip); 1 = String field (follow `data` ptr, freeze the byte buffer); 2 = Vec<T> field (freeze the element buffer, then recurse into each element via `inner_layout` + `element_size`); 3 = Box<T> field (dereference, freeze pointee, recurse); 4 = inline nested struct (expanded field entries already live at parent offsets). Entry size will grow to 24 bytes once Vec needs `element_size`.
+
+**A1 Phase 3:** additional goldens that exercise deep freeze with observable behavior — e.g. verify a String buffer embedded in a frozen struct is itself frozen, by checking `blood_is_frozen(data_ptr)` via `@unsafe`.
 
 ### ~~GAP-3: Aggregate operand escape analysis~~ RESOLVED (session 53, 2026-04-22)
 

@@ -2433,6 +2433,9 @@ fn codegen_pass2(
         for w in 0usize..num_workers {
             let mut wctx = ctx.create_worker_ctx();
             wctx.string_counter = ctx.string_counter + (w as u32 * 100000);
+            // Offset layout_counter the same way so worker-local @blood_layout.N labels
+            // don't collide when merged into the main ctx (A1 Phase 1, GAP-2).
+            wctx.layout_counter = ctx.layout_counter + (w as u32 * 100000);
             worker_ctxs.push(wctx);
             worker_outputs.push(String.new());
         }
@@ -2581,6 +2584,23 @@ fn codegen_pass2(
         }
         // Update string_counter to be past all worker ranges
         ctx.string_counter = ctx.string_counter + (num_workers as u32 * 100000);
+
+        // Merge worker layout descriptor tables into the main ctx (A1 Phase 1).
+        // Each worker's @blood_layout.N labels are already offset by w*100000 so
+        // labels don't collide; duplicate descriptors across workers are permitted
+        // (they serialize as identical constant globals with distinct labels).
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for li in 0usize..wctx.layout_table.len() {
+                let entry = &wctx.layout_table[li];
+                ctx.layout_table.push(codegen_ctx.LayoutDescriptor {
+                    label: entry.label.clone(),
+                    ty_id_idx: entry.ty_id_idx,
+                    num_entries: entry.num_entries,
+                });
+            }
+        }
+        ctx.layout_counter = ctx.layout_counter + (num_workers as u32 * 100000);
 
         // Merge fn_ptr_wrapper_defs from workers
         for w in 0usize..num_workers {

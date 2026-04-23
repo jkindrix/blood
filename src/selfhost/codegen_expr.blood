@@ -2300,6 +2300,20 @@ fn emit_aggregate(
                 ctx.write(" = call i1 @blood_freeze(ptr ");
                 ctx.write_cgname(&persisted);
                 ctx.write(")\n");
+                // GAP-2 deep-freeze (A1 Phase 1): pass the inner-T layout descriptor to
+                // the runtime. Phase 1 descriptors are zero-entry placeholders so
+                // blood_freeze_fields is a verified no-op; Phase 2 will walk heap-
+                // owning fields (String, Vec, Box) and freeze them recursively.
+                let inner_ty_idx: u32 = if type_args.len() > 0 { type_args[0].index } else { 0u32 };
+                let layout_label = ctx.add_layout_descriptor(inner_ty_idx);
+                let fields_ok = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&fields_ok);
+                ctx.write(" = call i1 @blood_freeze_fields(ptr ");
+                ctx.write_cgname(&persisted);
+                ctx.write(", ptr ");
+                ctx.write_string(&layout_label);
+                ctx.write(")\n");
                 // Copy persisted data back to the Frozen struct's alloca
                 ctx.write_indent();
                 ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");

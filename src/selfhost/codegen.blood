@@ -271,6 +271,8 @@ pub fn generate_module_with_items(
 
     // Append string constants from the context
     ctx.emit_string_constants();
+    // Append Frozen<T> layout descriptors (GAP-2 deep-freeze metadata)
+    ctx.emit_layout_descriptors();
     output.push_str(ctx.output.as_str());
 
     // Drain accumulated errors and warnings from the context
@@ -1986,6 +1988,7 @@ pub fn intrinsic_declarations(main_returns_unit: bool) -> String {
     // Frozen<T> support (persist + freeze)
     output.push_str("declare ptr @blood_persist(ptr, i64)\n");
     output.push_str("declare i1 @blood_freeze(ptr)\n");
+    output.push_str("declare i1 @blood_freeze_fields(ptr, ptr)\n");
 
     // Blood-name → runtime-name wrappers
     // Blood registers builtins with user-friendly names (e.g., "print"),
