@@ -25,137 +25,103 @@ pub trait Debug {
 // ============================================================
 // Debug impls for primitive types
 //
-// Each impl wraps the matching `*_to_string` builtin, which returns
-// a `&str`. The result is appended to a fresh String buffer via
-// `push_str`. We avoid `String.from(&str)` because it is declared
-// but not wired to a runtime symbol.
+// Each impl wraps the matching `*_to_string` builtin (which returns
+// a `&str`) in `String.from(...)` to produce an owned String.
 // ============================================================
 
 impl Debug for i8 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(i8_to_string(*self));
-        s
+        String.from(i8_to_string(*self))
     }
 }
 
 impl Debug for i16 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(i16_to_string(*self));
-        s
+        String.from(i16_to_string(*self))
     }
 }
 
 impl Debug for i32 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(int_to_string(*self));
-        s
+        String.from(int_to_string(*self))
     }
 }
 
 impl Debug for i64 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(i64_to_string(*self));
-        s
+        String.from(i64_to_string(*self))
     }
 }
 
 impl Debug for i128 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(i128_to_string(*self));
-        s
+        String.from(i128_to_string(*self))
     }
 }
 
 impl Debug for isize {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(i64_to_string(*self as i64));
-        s
+        String.from(i64_to_string(*self as i64))
     }
 }
 
 impl Debug for u8 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u8_to_string(*self));
-        s
+        String.from(u8_to_string(*self))
     }
 }
 
 impl Debug for u16 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u16_to_string(*self));
-        s
+        String.from(u16_to_string(*self))
     }
 }
 
 impl Debug for u32 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u32_to_string(*self));
-        s
+        String.from(u32_to_string(*self))
     }
 }
 
 impl Debug for u64 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u64_to_string(*self));
-        s
+        String.from(u64_to_string(*self))
     }
 }
 
 impl Debug for u128 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u128_to_string(*self));
-        s
+        String.from(u128_to_string(*self))
     }
 }
 
 impl Debug for usize {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(u64_to_string(*self as u64));
-        s
+        String.from(u64_to_string(*self as u64))
     }
 }
 
 impl Debug for bool {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(bool_to_string(*self));
-        s
+        String.from(bool_to_string(*self))
     }
 }
 
 impl Debug for char {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(char_to_string(*self));
-        s
+        String.from(char_to_string(*self))
     }
 }
 
 impl Debug for f32 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(f32_to_string(*self));
-        s
+        String.from(f32_to_string(*self))
     }
 }
 
 impl Debug for f64 {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str(f64_to_string(*self));
-        s
+        String.from(f64_to_string(*self))
     }
 }
 
@@ -169,8 +135,7 @@ impl Debug for f64 {
 
 impl Debug for str {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str("\"");
+        let mut s = String.from("\"");
         s.push_str(self);
         s.push_str("\"");
         s
@@ -179,8 +144,7 @@ impl Debug for str {
 
 impl Debug for String {
     fn fmt(self: &Self) -> String {
-        let mut s = String.new();
-        s.push_str("\"");
+        let mut s = String.from("\"");
         s.push_str(self.as_str());
         s.push_str("\"");
         s
