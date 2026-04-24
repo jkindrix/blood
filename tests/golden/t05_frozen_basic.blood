@@ -1,21 +1,13 @@
 // Test: Frozen<T> basic usage — wrap a Freeze type, access via get()
+//
+// A1 Phase 3c (S75): uses stdlib Frozen + Freeze instead of local
+// redeclaration. Exercises the common `mod std; use std.core.frozen.*`
+// import pattern.
+//
 // EXPECT: 42
 // EXPECT: 100
-trait Freeze {}
-
-struct Frozen<T> {
-    value: T,
-}
-
-impl<T: Freeze> Frozen<T> {
-    fn new(value: T) -> Frozen<T> {
-        Frozen { value }
-    }
-
-    fn get(self: &Self) -> &T {
-        &self.value
-    }
-}
+mod std;
+use std.core.frozen.{Frozen, Freeze};
 
 fn main() -> i32 {
     // Create a frozen i32

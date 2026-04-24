@@ -14,31 +14,28 @@
 // shape — Phase 2's `t05_frozen_deep_string.blood`) then handles persist +
 // freeze + freeze_fields with the concrete T from the call site.
 //
+// A1 Phase 3c (S75): migrated to stdlib Frozen.new. The intrinsic dispatch
+// now captures stdlib's DefId via Phase 1a.5 root-scope injection.
+//
 // EXPECT: 1
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
 
 bridge "C" Rt {
     fn blood_is_frozen(ptr: *mut u8) -> bool;
 }
 
-trait Freeze {}
 impl Freeze for String {}
 
 struct Wrapper { s: String }
 impl Freeze for Wrapper {}
 
-struct Frozen<T> { value: T }
-
-impl<T: Freeze> Frozen<T> {
-    fn new(value: T) -> Frozen<T> {
-        Frozen { value: value }
-    }
-}
-
 fn main() -> i32 {
     let mut s0: String = String.new();
     s0.push_str("hello");
     let w: Wrapper = Wrapper { s: s0 };
-    // Route through Frozen.new (generic). The MIR intrinsic dispatch
+    // Route through stdlib Frozen.new (generic). The MIR intrinsic dispatch
     // rewrites this Call to inline ADT Aggregate, matching the deep-freeze
     // semantics of inline `Frozen { value: w }` (t05_frozen_deep_string.blood).
     let f: Frozen<Wrapper> = Frozen.new(w);

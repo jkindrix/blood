@@ -15,13 +15,16 @@
 // variant's sublayout. Some(s) → disc=1 → walk `some_sub` → kind=1 at offset
 // 8 freezes the String's data buffer.
 //
+// A1 Phase 3c (S75): migrated to stdlib Frozen (no local struct redeclaration).
+//
 // EXPECT: 1
+
+mod std;
+use std.core.frozen.Frozen;
 
 bridge "C" Rt {
     fn blood_is_frozen(ptr: *mut u8) -> bool;
 }
-
-struct Frozen<T> { value: T }
 
 fn main() -> i32 {
     let mut s0: String = String.new();

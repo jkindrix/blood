@@ -1,26 +1,22 @@
 // Phase 3d-full (GAP-2): auto-derive `Freeze` for a user struct whose fields
 // are all structurally Freeze. No manual `impl Freeze for Point {}` is
 // written, yet `Frozen.new(p)` must still compile — the `T: Freeze` bound on
-// the impl is satisfied via the structural walk in `type_is_freeze`
-// (typeck.blood:2249-2292), which recurses through struct fields and returns
-// true when every field's type is Freeze.
+// stdlib's `impl<T: Freeze> Frozen<T>` is satisfied via the structural walk
+// in `type_is_freeze` (typeck.blood:2249-2292), which recurses through
+// struct fields and returns true when every field's type is Freeze.
 //
 // This is the positive counterpart to `t06_err_frozen_new_mut_ref.blood`
 // (which rejects `&mut i32`): here every field is a primitive `i32`, so the
 // auto-derive fallback in `type_implements_trait` succeeds after the manual
 // impl lookup finds nothing.
 //
+// A1 Phase 3c (S75): migrated to stdlib Frozen.
+//
 // EXPECT: 42
 // EXPECT: 99
 
-trait Freeze {}
-
-struct Frozen<T> { value: T }
-
-impl<T: Freeze> Frozen<T> {
-    fn new(value: T) -> Frozen<T> { Frozen { value: value } }
-    fn get(self: &Self) -> &T { &self.value }
-}
+mod std;
+use std.core.frozen.Frozen;
 
 // NOTE: deliberately NO `impl Freeze for Point {}`. The compiler must
 // auto-derive Freeze for Point by walking its fields: both x and y are i32

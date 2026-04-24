@@ -1,13 +1,14 @@
 // Test: Frozen<T> as type-level immutability wrapper
+//
+// A1 Phase 3c (S75): uses stdlib Frozen. `Point` has all-primitive fields
+// so the compiler's `type_is_freeze` structural walk (typeck.blood) auto-
+// derives Freeze — no explicit `impl Freeze for Point {}` required.
+//
 // EXPECT: 42
 // EXPECT: 99
 
-struct Frozen<T> { value: T }
-
-impl<T> Frozen<T> {
-    fn new(value: T) -> Frozen<T> { Frozen { value: value } }
-    fn get(self: &Self) -> &T { &self.value }
-}
+mod std;
+use std.core.frozen.Frozen;
 
 struct Point { x: i32, y: i32 }
 

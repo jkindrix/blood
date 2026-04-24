@@ -7,14 +7,12 @@
 // bounds on `impl<T: Freeze> Frozen<T>` were dropped silently at Call sites.
 // After Phase 3d, the merge happens and `type_implements_trait` rejects
 // `&mut i32` against `Freeze` (shared-ref-only marker).
+//
+// A1 Phase 3c (S75): migrated to stdlib Frozen + Freeze; the bound now
+// binds to stdlib's Freeze trait.
 
-trait Freeze {}
-
-struct Frozen<T> { value: T }
-
-impl<T: Freeze> Frozen<T> {
-    fn new(value: T) -> Frozen<T> { Frozen { value: value } }
-}
+mod std;
+use std.core.frozen.{Frozen, Freeze};
 
 fn main() -> i32 {
     let mut x: i32 = 42;

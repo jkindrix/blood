@@ -1,11 +1,12 @@
-// COMPILE_FAIL: Frozen.new() wrapper rejects non-Freeze type
+// COMPILE_FAIL: `freeze<T: Freeze>` wrapper rejects non-Freeze type
 // EXPECT: type does not implement trait
+//
+// A1 Phase 3c (S75): migrated to stdlib Frozen + Freeze. The `T: Freeze`
+// bound on the user function binds to stdlib's Freeze trait (injected
+// into root scope by `inject_stdlib_frozen_into_root`).
 
-trait Freeze {}
-
-struct Frozen<T> {
-    value: T,
-}
+mod std;
+use std.core.frozen.{Frozen, Freeze};
 
 fn freeze<T: Freeze>(val: T) -> Frozen<T> {
     Frozen { value: val }

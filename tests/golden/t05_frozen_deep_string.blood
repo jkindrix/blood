@@ -10,25 +10,23 @@
 // struct's data-pointer is shared between the original allocation and the
 // persistent copy Frozen holds, freezing through Frozen marks the original
 // buffer too.
+//
+// A1 Phase 3c (S75): migrated to stdlib Frozen + Freeze. User-declared
+// `impl Freeze for T {}` now attaches to stdlib's Freeze trait.
+//
 // EXPECT: 1
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
 
 bridge "C" Rt {
     fn blood_is_frozen(ptr: *mut u8) -> bool;
 }
 
-trait Freeze {}
 impl Freeze for String {}
 
 struct Wrapper { s: String }
 impl Freeze for Wrapper {}
-
-struct Frozen<T> { value: T }
-
-impl<T: Freeze> Frozen<T> {
-    fn new(value: T) -> Frozen<T> {
-        Frozen { value: value }
-    }
-}
 
 fn main() -> i32 {
     let mut s0: String = String.new();
@@ -36,8 +34,8 @@ fn main() -> i32 {
     let w: Wrapper = Wrapper { s: s0 };
     // Construct Frozen directly (bypass Frozen.new) so the Frozen<T> aggregate
     // codegen site sees T=Wrapper concretely instead of the erased T. This is
-    // the observable A1 Phase 2 path; Phase 3 can route Frozen<T>.new through
-    // type-preserving monomorphization.
+    // the observable A1 Phase 2 path; Phase 3a routes Frozen<T>.new through
+    // the MIR intrinsic for the same type-preserving monomorphization.
     let f: Frozen<Wrapper> = Frozen { value: w };
     // The persisted Wrapper copy inside f.value is what the runtime walker
     // freezes. Inspect its String data buffer via @unsafe pointer arithmetic:

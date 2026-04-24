@@ -2,13 +2,16 @@
 // String is deep-frozen; Err variant (i32) has no heap and produces a NULL
 // sublayout (walker no-ops if disc matches Err).
 //
+// A1 Phase 3c (S75): migrated to stdlib Frozen.
+//
 // EXPECT: 1
+
+mod std;
+use std.core.frozen.Frozen;
 
 bridge "C" Rt {
     fn blood_is_frozen(ptr: *mut u8) -> bool;
 }
-
-struct Frozen<T> { value: T }
 
 fn main() -> i32 {
     let mut s0: String = String.new();
