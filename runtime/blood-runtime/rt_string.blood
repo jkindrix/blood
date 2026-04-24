@@ -52,6 +52,41 @@ pub fn rt_string_new(out: *mut u8) {
     set_cap(out, 0);
 }
 
+// void @string_from(ptr out, ptr fat_str) — construct String from &str.
+// Inlined instead of delegating to rt_string_new + rt_string_push_str: the
+// Blood compiler's builtin codegen dispatch matches on `@string_new` and
+// `@string_push_str`, which would fire spuriously on these internal-runtime
+// calls and emit ABI-mismatched IR (the dispatch expects user &str args).
+#[export_name = "string_from"]
+pub fn rt_string_from(out: *mut u8, fat_str: *mut u8) {
+    set_data(out, 0);
+    set_len(out, 0);
+    set_cap(out, 0);
+
+    @unsafe {
+        let src_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
+        let src_len: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296;
+        if src_len == 0 { return; }
+
+        ensure_cap(out, src_len);
+        alloc.rt_blood_memcpy(get_data(out), src_ptr, src_len);
+        set_len(out, src_len);
+    }
+}
+
+// void @string_with_capacity(ptr out, i64 cap) — init empty String with
+// a preallocated data buffer of at least `cap` bytes. len=0; cap>=requested.
+// cap==0 degenerates to string_new (no alloc).
+#[export_name = "string_with_capacity"]
+pub fn rt_string_with_capacity(out: *mut u8, cap: i64) {
+    set_data(out, 0);
+    set_len(out, 0);
+    set_cap(out, 0);
+    if cap > 0 {
+        ensure_cap(out, cap);
+    }
+}
+
 // i64 @string_len(ptr)
 #[export_name = "string_len"]
 pub fn rt_string_len(s: *mut u8) -> i64 {
