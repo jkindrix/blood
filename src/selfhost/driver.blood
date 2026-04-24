@@ -1746,11 +1746,16 @@ pub fn collect_type_generic_fns(
                 }
             }
             &hir_item.ItemKind.Impl(ref impl_def) => {
+                // Option F gap 1: include impl-level type params. Methods
+                // whose only generics come from `impl<T>` must also be
+                // monomorphized — previously they were skipped (§A1-P3a).
+                let impl_type_param_count = count_type_params(&impl_def.generics);
                 for ai in 0usize..impl_def.items.len() {
                     match &impl_def.items[ai] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
-                            let type_param_count = count_type_params(&assoc_fn.sig.generics);
-                            if type_param_count > 0 {
+                            let method_type_param_count = count_type_params(&assoc_fn.sig.generics);
+                            let total_type_params = impl_type_param_count + method_type_param_count;
+                            if total_type_params > 0 {
                                 let const_count = count_const_params(&assoc_fn.sig.generics);
                                 if const_count == 0 {
                                     fn_set.push(assoc_fn.def_id.index);

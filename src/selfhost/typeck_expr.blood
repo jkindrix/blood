@@ -1705,12 +1705,12 @@ fn infer_method_call(
             // Builtin impls (no fn_sig): use positional fresh vars to substitute
             // Param(0)/Param(1) in method param/return types.
             //
-            // User impls (have fn_sig): impl-level params use Infer(body_tv) that
-            // gets bound through check_expr — do NOT create fresh vars for them
-            // (codegen resolves types through body_tv bindings).
-            //
-            // Method-level params (both): create fresh vars keyed by body TyVarId
-            // and save for TypeGenericCallInfo (triggers monomorphization).
+            // User impls (have fn_sig): freshen ALL type params (impl-level +
+            // method-level) keyed by body TyVarId. Every type param gets its
+            // own fresh var per call site, so two callers with different T can
+            // coexist without unification rejecting a body_tv rebind
+            // (§A1-P3a / Option F gap 2). Saved body_tv→fresh pairs flow into
+            // TypeGenericCallInfo to trigger monomorphization.
             //
             // The Call path (Type.method()) handles everything via instantiate_fn_sig.
             let has_fn_sig = match checker.get_fn_sig(method_info.def_id) {
@@ -1736,22 +1736,17 @@ fn infer_method_call(
             let mut saved_method_type_param_bindings: Vec<u32> = Vec.new();
             match checker.get_fn_sig(method_info.def_id) {
                 Option.Some(ref fn_sig) => {
-                    // Only freshen method-level type params (skip impl-level)
-                    let impl_gc = impl_info.num_generics;
-                    if fn_sig.num_generics > impl_gc {
-                        let method_start = impl_gc;
-                        for i in method_start..fn_sig.num_generics {
-                            let fresh_var = checker.fresh_infer();
-                            if (i as usize) < fn_sig.type_param_ids.len() {
-                                let body_tv = fn_sig.type_param_ids[i as usize];
-                                subst.add_id(body_tv, fresh_var);
-                                let fresh_index = match type_intern.type_interner().get(fresh_var) {
-                                    &type_intern.InternedTypeKind.Infer(tv) => tv.index,
-                                    _ => 0u32,
-                                };
-                                saved_method_type_param_bindings.push(body_tv);
-                                saved_method_type_param_bindings.push(fresh_index);
-                            }
+                    for i in 0u32..fn_sig.num_generics {
+                        let fresh_var = checker.fresh_infer();
+                        if (i as usize) < fn_sig.type_param_ids.len() {
+                            let body_tv = fn_sig.type_param_ids[i as usize];
+                            subst.add_id(body_tv, fresh_var);
+                            let fresh_index = match type_intern.type_interner().get(fresh_var) {
+                                &type_intern.InternedTypeKind.Infer(tv) => tv.index,
+                                _ => 0u32,
+                            };
+                            saved_method_type_param_bindings.push(body_tv);
+                            saved_method_type_param_bindings.push(fresh_index);
                         }
                     }
                 }
