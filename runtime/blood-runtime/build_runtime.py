@@ -594,11 +594,15 @@ def apply_debug_alloc(lines):
     """Patch IR for sanitizer compatibility (--debug-alloc mode).
 
     1. Set DEBUG_ALLOC_MODE global to 1 (regions use calloc instead of mmap).
-    2. Replace @__libc_free → @free and @__libc_realloc → @realloc so that
-       calloc/free/realloc all go through ASan's interceptors (full tracking).
-       The compiler IR does not define @free or @realloc, so they resolve to
-       ASan's versions at link time.
-    3. Add @free and @realloc declarations if not present.
+    2. Drop `@__libc_free` / `@__libc_realloc` declares. The LibcFree
+       bridge in runtime/blood-runtime/libc.blood also declares `@free`
+       and `@realloc`, so converting the `__libc_*` declare lines (as a
+       prior version did) produced duplicate `@free`/`@realloc` decls that
+       llc rejects as invalid redefinition.
+    3. Rewrite any `@__libc_free` / `@__libc_realloc` call sites to the
+       public symbols so ASan's interceptors cover all free/realloc traffic.
+    4. Inject `@free` / `@realloc` declarations if they are not already
+       present (defense in depth — should be a no-op with LibcFree).
     """
     out = []
     patched_global = False
@@ -606,30 +610,30 @@ def apply_debug_alloc(lines):
     has_realloc_decl = False
 
     for line in lines:
-        # Patch DEBUG_ALLOC_MODE global: @def{N}_DEBUG_ALLOC_MODE = global i32 0 → 1
         if not patched_global and '_DEBUG_ALLOC_MODE' in line and 'global i32 0' in line:
             line = line.replace('global i32 0', 'global i32 1')
             patched_global = True
 
-        # Replace @__libc_free → @free (ASan-intercepted)
-        if '@__libc_free(' in line:
-            if line.strip().startswith('declare'):
-                line = line.replace('@__libc_free(', '@free(')
-                has_free_decl = True
-            else:
-                line = line.replace('@__libc_free(', '@free(')
+        stripped = line.strip()
 
-        # Replace @__libc_realloc → @realloc (ASan-intercepted)
-        if '@__libc_realloc(' in line:
-            if line.strip().startswith('declare'):
-                line = line.replace('@__libc_realloc(', '@realloc(')
+        if stripped.startswith('declare') and (
+            '@__libc_free(' in line or '@__libc_realloc(' in line
+        ):
+            continue
+
+        if stripped.startswith('declare'):
+            if '@free(' in line:
+                has_free_decl = True
+            if '@realloc(' in line:
                 has_realloc_decl = True
-            else:
-                line = line.replace('@__libc_realloc(', '@realloc(')
+
+        if '@__libc_free(' in line:
+            line = line.replace('@__libc_free(', '@free(')
+        if '@__libc_realloc(' in line:
+            line = line.replace('@__libc_realloc(', '@realloc(')
 
         out.append(line)
 
-    # Inject declarations if not already present
     if not has_free_decl:
         out.append('declare void @free(ptr)\n')
     if not has_realloc_decl:
