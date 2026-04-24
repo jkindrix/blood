@@ -4300,6 +4300,21 @@ fn register_builtin_constructor_signatures(
     for i in 0usize..builtin_fn_defs.len() {
         let entry = &builtin_fn_defs[i];
         let def_id = hir_def.DefId.new(entry.def_id_index);
+
+        // A DefId already holding a signature at this point is a user-written
+        // Blood fn with `#[export_name = "..."]` that collides with a builtin
+        // constructor's runtime_name (e.g. the runtime's rt_string_new, whose
+        // export name "string_new" shares a runtime_name with String.new's
+        // builtin child). Preserve the Blood signature — overriding it with
+        // the constructor sig makes internal runtime callers trip ArityMismatch.
+        let def_idx = def_id.index as usize;
+        if def_idx < checker.fn_sigs.len() {
+            match &checker.fn_sigs[def_idx] {
+                &Option.Some(ref _existing) => { continue; }
+                &Option.None => {}
+            }
+        }
+
         let name = &entry.runtime_name;
 
         // Match on runtime name to determine signature
