@@ -1,0 +1,56 @@
+// Test: `#[derive(PartialEq)]` on an enum with mixed unit + tuple variants
+// (C3 Phase B, S68).
+//
+// Exercises:
+//   - `expand_partial_eq_for_enum` handles both unit and tuple variants
+//   - Tuple-variant match arms bind both sides with `ref __l_i` and
+//     `ref __r_i` (from the `left_payload_idents` / `right_payload_idents`
+//     pools) and compare `*__l_i == *__r_i`
+//   - Zero-payload variants short-circuit to `true` (acc stays at bool seed)
+//   - Wildcard arm catches different-variant pairs and returns `false`
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(PartialEq)]
+enum Color {
+    Red,
+    Gray(u32),
+    Rgb(u32, u32, u32),
+}
+
+fn main() -> i32 {
+    let red1: Color = Color.Red;
+    let red2: Color = Color.Red;
+    let g1: Color = Color.Gray(128u32);
+    let g2: Color = Color.Gray(128u32);
+    let g3: Color = Color.Gray(200u32);
+    let rgb1: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let rgb2: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let rgb3: Color = Color.Rgb(10u32, 99u32, 30u32);
+
+    // Unit variant equality.
+    if red1.eq(&red2) { println_int(1); } else { println_int(0); }
+    // Same tuple variant, equal payload.
+    if g1.eq(&g2) { println_int(1); } else { println_int(0); }
+    // Same tuple variant, different payload.
+    if !g1.eq(&g3) { println_int(1); } else { println_int(0); }
+    // Larger tuple variant, equal payloads.
+    if rgb1.eq(&rgb2) { println_int(1); } else { println_int(0); }
+    // Larger tuple variant, one field differs (middle) — probes that all
+    // ref bindings are compared, not just the first.
+    if !rgb1.eq(&rgb3) { println_int(1); } else { println_int(0); }
+    // Different variants → wildcard arm → false.
+    if !red1.eq(&g1) { println_int(1); } else { println_int(0); }
+
+    0
+}

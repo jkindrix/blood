@@ -134,6 +134,12 @@ pub struct SynIdent {
 
 /// Table of pre-interned identifiers needed by synthesized AST. Lazily
 /// initialized via `ensure_synth_spans` on first use per lowering context.
+///
+/// The `left_payload_idents` and `right_payload_idents` pools hold the per-field
+/// ref-binding names used by enum tuple-variant pattern synthesis. Hash uses
+/// only the left pool (one set of ref bindings per variant). PartialEq uses both
+/// pools (self-side and other-side bindings in the same pattern).
+/// Pool size is 8, capping supported tuple-variant arity at 8 fields.
 pub struct SyntheticSpans {
     pub hash_method: SynIdent,
     pub eq_method: SynIdent,
@@ -145,6 +151,8 @@ pub struct SyntheticSpans {
     pub bool_ty: SynIdent,
     pub hash_trait: SynIdent,
     pub partialeq_trait: SynIdent,
+    pub left_payload_idents: Vec<SynIdent>,
+    pub right_payload_idents: Vec<SynIdent>,
     pub initialized: bool,
 }
 
@@ -167,10 +175,16 @@ impl SyntheticSpans {
             bool_ty: z_ident,
             hash_trait: z_ident,
             partialeq_trait: z_ident,
+            left_payload_idents: Vec.new(),
+            right_payload_idents: Vec.new(),
             initialized: false,
         }
     }
 }
+
+// MAX_TUPLE_VARIANT_ARITY = 8 (matches payload-pool size in SyntheticSpans).
+// Enums with a tuple variant exceeding this are skipped by the enum derive
+// expanders. Record variants are unsupported regardless of field count.
 
 /// Extends `ctx.source` with identifier text and pre-interns each name in
 /// the HIR interner. Idempotent.
@@ -191,6 +205,25 @@ pub fn ensure_synth_spans(
     spans.bool_ty = register_syn(ctx, "bool");
     spans.hash_trait = register_syn(ctx, "Hash");
     spans.partialeq_trait = register_syn(ctx, "PartialEq");
+    // Pre-intern 8 left-side and 8 right-side payload binding names for enum
+    // tuple-variant patterns: __l0..__l7, __r0..__r7. Cap matches MAX_TUPLE
+    // _VARIANT_ARITY. PartialEq uses both sides; Hash uses only left.
+    spans.left_payload_idents.push(register_syn(ctx, "__l0"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l1"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l2"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l3"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l4"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l5"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l6"));
+    spans.left_payload_idents.push(register_syn(ctx, "__l7"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r0"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r1"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r2"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r3"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r4"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r5"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r6"));
+    spans.right_payload_idents.push(register_syn(ctx, "__r7"));
     spans.initialized = true;
 }
 
@@ -363,6 +396,169 @@ fn syn_bool_lit(value: bool, span: common.Span) -> ast.Expr {
     ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
 }
 
+/// Build an integer literal with an explicit numeric suffix, e.g. `42u32`.
+fn syn_int_lit_suffixed(val: u128, suffix: ast.IntSuffix, span: common.Span) -> ast.Expr {
+    let lit = ast.Literal {
+        kind: ast.LiteralKind.Int { val: val, suffix: Option.Some(suffix) },
+        span: span,
+    };
+    ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
+}
+
+/// Build a tuple literal expression `(e0, e1, ...)`.
+fn syn_tuple_expr(fields: Vec<ast.Expr>, span: common.Span) -> ast.Expr {
+    ast.Expr {
+        kind: ast.ExprKind.Tuple(fields),
+        span: span,
+    }
+}
+
+/// Build a block expression `{ stmts...; trailing }` usable as an Expr.
+fn syn_block_expr(
+    statements: Vec<ast.Statement>,
+    trailing: Option<ast.Expr>,
+    span: common.Span,
+) -> ast.Expr {
+    let trailing_boxed = match trailing {
+        Option.Some(e) => Option.Some(Box.new(e)),
+        Option.None => Option.None,
+    };
+    let block = ast.Block {
+        statements: statements,
+        expr: trailing_boxed,
+        span: span,
+    };
+    ast.Expr { kind: ast.ExprKind.Block(block), span: span }
+}
+
+/// Build a match expression `match scrutinee { arms... }`.
+fn syn_match_expr(
+    scrutinee: ast.Expr,
+    arms: Vec<ast.MatchArm>,
+    span: common.Span,
+) -> ast.Expr {
+    ast.Expr {
+        kind: ast.ExprKind.Match {
+            scrutinee: Box.new(scrutinee),
+            arms: arms,
+        },
+        span: span,
+    }
+}
+
+/// Build a match arm `pattern => body,` (no guard).
+fn syn_match_arm(
+    pattern: ast.Pattern,
+    body: ast.Expr,
+    span: common.Span,
+) -> ast.MatchArm {
+    ast.MatchArm {
+        pattern: pattern,
+        guard: Option.None,
+        body: body,
+        span: span,
+    }
+}
+
+// ============================================================
+// Pattern Synthesis Helpers
+// ============================================================
+
+/// Build a wildcard pattern `_`.
+fn syn_pat_wildcard(span: common.Span) -> ast.Pattern {
+    ast.Pattern { kind: ast.PatternKind.Wildcard, span: span }
+}
+
+/// Build a reference pattern `&inner` or `&mut inner`.
+fn syn_pat_ref(inner: ast.Pattern, is_mut: bool, span: common.Span) -> ast.Pattern {
+    ast.Pattern {
+        kind: ast.PatternKind.Ref {
+            is_mut: is_mut,
+            inner: Box.new(inner),
+        },
+        span: span,
+    }
+}
+
+/// Build a tuple pattern `(p0, p1, ...)`.
+fn syn_pat_tuple(fields: Vec<ast.Pattern>, span: common.Span) -> ast.Pattern {
+    ast.Pattern {
+        kind: ast.PatternKind.Tuple {
+            fields: fields,
+            rest_pos: Option.None,
+        },
+        span: span,
+    }
+}
+
+/// Build a by-ref identifier pattern `ref name` (immutable binding).
+/// The pattern's outer span equals the identifier's span so that
+/// `extract_param_symbol_from_ast` (which reads `pattern.span` rather than
+/// `pattern.name.span`) recovers the correct identifier text.
+fn syn_pat_ident_by_ref(ident: &SynIdent) -> ast.Pattern {
+    ast.Pattern {
+        kind: ast.PatternKind.Ident {
+            by_ref: true,
+            is_mut: false,
+            name: syn_sym(ident),
+            subpattern: Option.None,
+        },
+        span: ident.span,
+    }
+}
+
+/// Build a two-segment TypePath `EnumName.VariantName` using raw source
+/// spans. The HIR `lower_type_path` re-interns via `span_to_string`, so the
+/// stored Symbol indices are irrelevant and filled with zero.
+fn syn_variant_type_path(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    overall_span: common.Span,
+) -> ast.TypePath {
+    let seg_enum = ast.TypePathSegment {
+        name: syn_sym_span(enum_name_span),
+        args: Option.None,
+    };
+    let seg_variant = ast.TypePathSegment {
+        name: syn_sym_span(variant_name_span),
+        args: Option.None,
+    };
+    let mut segs: Vec<ast.TypePathSegment> = Vec.new();
+    segs.push(seg_enum);
+    segs.push(seg_variant);
+    ast.TypePath { segments: segs, span: overall_span }
+}
+
+/// Build a single-segment path pattern for a unit enum variant:
+/// `EnumName.VariantName`.
+fn syn_pat_variant_path(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    overall_span: common.Span,
+) -> ast.Pattern {
+    let path = syn_variant_type_path(enum_name_span, variant_name_span, overall_span);
+    ast.Pattern { kind: ast.PatternKind.Path(path), span: overall_span }
+}
+
+/// Build a tuple-struct pattern for a tuple enum variant:
+/// `EnumName.VariantName(p0, p1, ...)`.
+fn syn_pat_variant_tuple_struct(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    field_patterns: Vec<ast.Pattern>,
+    overall_span: common.Span,
+) -> ast.Pattern {
+    let path = syn_variant_type_path(enum_name_span, variant_name_span, overall_span);
+    ast.Pattern {
+        kind: ast.PatternKind.TupleStruct {
+            path: path,
+            fields: field_patterns,
+            rest_pos: Option.None,
+        },
+        span: overall_span,
+    }
+}
+
 // ============================================================
 // Attribute Extraction
 // ============================================================
@@ -376,9 +572,10 @@ fn is_derive_attribute(ctx: &hir_lower_ctx.LoweringCtx, attr: &ast.Attribute) ->
     str_equals(path_str.as_str(), "derive")
 }
 
-/// Extracts derive requests from a struct declaration's attributes.
-/// Each `#[derive(Trait1, Trait2)]` yields one request per listed trait.
-pub fn extract_derive_requests_for_struct(
+/// Extracts derive requests from an ADT (struct or enum) declaration's
+/// attributes. Each `#[derive(Trait1, Trait2)]` yields one request per listed
+/// trait. Unknown trait names are silently skipped (future: E0xxx diagnostic).
+pub fn extract_derive_requests(
     ctx: &hir_lower_ctx.LoweringCtx,
     attrs: &Vec<ast.Attribute>,
     target_def: hir_def.DefId,
@@ -456,6 +653,68 @@ fn collect_record_field_spans(
                         &hir_item.StructBody.Tuple(_) => Option.None,
                         &hir_item.StructBody.Unit => Option.None,
                     }
+                }
+                _ => Option.None,
+            }
+        }
+        Option.None => Option.None,
+    }
+}
+
+// ============================================================
+// Enum Variant Info
+// ============================================================
+
+/// Derive-visible classification of an enum variant's body. Record-variant
+/// derive support is deferred; `collect_enum_variant_info` returns `None` if
+/// any variant is a record.
+pub enum VariantKindInfo {
+    Unit,
+    Tuple(usize),
+}
+
+/// Per-variant info needed to synthesize enum derive bodies.
+pub struct VariantInfo {
+    /// Span of the variant's declared name (used in synthesized patterns).
+    pub name_span: common.Span,
+    /// Discriminant index, used as the u32 input to Hash for each arm.
+    pub discriminant: u32,
+    /// Variant body classification.
+    pub kind: VariantKindInfo,
+}
+
+/// Collect variant info from an enum HIR item. Returns `None` if:
+/// - Target is not an enum.
+/// - Any variant is a record variant (deferred).
+/// - Any tuple variant exceeds `MAX_TUPLE_VARIANT_ARITY` fields.
+fn collect_enum_variant_info(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    target_def: hir_def.DefId,
+) -> Option<Vec<VariantInfo>> {
+    match ctx.get_item(target_def) {
+        Option.Some(entry) => {
+            match &entry.item.kind {
+                &hir_item.ItemKind.Enum(ref ed) => {
+                    let mut info: Vec<VariantInfo> = Vec.with_capacity(ed.variants.len());
+                    for i in 0usize..ed.variants.len() {
+                        let v = &ed.variants[i];
+                        let kind_info = match &v.kind {
+                            &hir_item.VariantKind.Unit => VariantKindInfo.Unit,
+                            &hir_item.VariantKind.Tuple(ref tys) => {
+                                if tys.len() > 8 {
+                                    return Option.None;
+                                }
+                                VariantKindInfo.Tuple(tys.len())
+                            }
+                            &hir_item.VariantKind.Record(_) => return Option.None,
+                        };
+                        info.push(VariantInfo {
+                            name_span: v.name.span,
+                            discriminant: v.discriminant,
+                            kind: kind_info,
+                        });
+                    }
+                    Option.Some(info)
                 }
                 _ => Option.None,
             }
@@ -613,17 +872,330 @@ pub fn expand_partial_eq_for_struct(
     })
 }
 
-/// Expand a single derive request to a synthesized impl block. Returns
-/// `None` for unsupported derive kinds (Clone, Debug, Eq, Default) and for
-/// non-record struct targets.
+// ============================================================
+// Enum Expansion
+// ============================================================
+
+/// Returns true if the target DefId is an enum item.
+fn target_is_enum(ctx: &hir_lower_ctx.LoweringCtx, target_def: hir_def.DefId) -> bool {
+    match ctx.get_item(target_def) {
+        Option.Some(entry) => {
+            match &entry.item.kind {
+                &hir_item.ItemKind.Enum(_) => true,
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Build per-variant match arm for Hash: a pattern that matches the variant
+/// (with ref bindings for tuple payload fields) and a body that hashes the
+/// discriminant as u32 then each payload field.
+fn build_hash_variant_arm(
+    spans: &SyntheticSpans,
+    target_name_span: common.Span,
+    variant: &VariantInfo,
+    attr_span: common.Span,
+) -> ast.MatchArm {
+    // Pattern: &EnumName.VariantName or &EnumName.VariantName(ref __l0, ref __l1, ...).
+    let inner_pat = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let mut field_pats: Vec<ast.Pattern> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                field_pats.push(syn_pat_ident_by_ref(&spans.left_payload_idents[i]));
+            }
+            syn_pat_variant_tuple_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
+    };
+    let ref_pat = syn_pat_ref(inner_pat, false, attr_span);
+
+    // Body: { <disc>u32.hash(state); [field_i.hash(state);]* }.
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+    let disc_lit = syn_int_lit_suffixed(variant.discriminant as u128, ast.IntSuffix.U32, attr_span);
+    let mut disc_args: Vec<ast.CallArg> = Vec.new();
+    disc_args.push(syn_call_arg(syn_path_expr(&spans.state_id, attr_span), attr_span));
+    let disc_call = syn_method_call(disc_lit, &spans.hash_method, disc_args, attr_span);
+    stmts.push(ast.Statement.Expr { expr: disc_call, has_semi: true });
+    match &variant.kind {
+        &VariantKindInfo.Unit => {}
+        &VariantKindInfo.Tuple(arity) => {
+            for i in 0usize..arity {
+                let field_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                let mut args: Vec<ast.CallArg> = Vec.new();
+                args.push(syn_call_arg(syn_path_expr(&spans.state_id, attr_span), attr_span));
+                let field_call = syn_method_call(field_expr, &spans.hash_method, args, attr_span);
+                stmts.push(ast.Statement.Expr { expr: field_call, has_semi: true });
+            }
+        }
+    }
+    let arm_body = syn_block_expr(stmts, Option.None, attr_span);
+
+    syn_match_arm(ref_pat, arm_body, attr_span)
+}
+
+/// Synthesize `impl Hash for Target { fn hash(self: &Self, state: &mut u64) {
+/// match self { per-variant arms } } }` for an enum. Supports unit and tuple
+/// variants up to MAX_TUPLE_VARIANT_ARITY.
+pub fn expand_hash_for_enum(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let variants = match collect_enum_variant_info(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+
+    // Match scrutinee: `self` (an &Self binding).
+    let scrutinee = syn_path_expr(&spans.self_id, attr_span);
+
+    // Build one arm per variant. No catch-all arm: variants are exhaustive.
+    let mut arms: Vec<ast.MatchArm> = Vec.with_capacity(variants.len());
+    for i in 0usize..variants.len() {
+        arms.push(build_hash_variant_arm(spans, req.target_name_span, &variants[i], attr_span));
+    }
+
+    let match_expr = syn_match_expr(scrutinee, arms, attr_span);
+
+    // Wrap the match in a block (required because the fn has unit return
+    // type; the match is the block's trailing expression).
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(match_expr)),
+        span: attr_span,
+    };
+
+    // Params: `self: &Self`, `state: &mut u64`.
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let state_param_ty = syn_ref_type(syn_path_type(&spans.u64_ty, attr_span), true, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+    params.push(syn_param(&spans.state_id, state_param_ty, attr_span));
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.hash_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.None,
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.hash_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+/// Build the same-variant match arm for PartialEq: a tuple pattern `(left,
+/// right)` where both sides bind to the same variant with paired ref
+/// bindings, and a body that ANDs `*__l0 == *__r0 && ...` (seeded with
+/// `true` for uniform shape and zero-field variants).
+fn build_partial_eq_variant_arm(
+    spans: &SyntheticSpans,
+    target_name_span: common.Span,
+    variant: &VariantInfo,
+    attr_span: common.Span,
+) -> ast.MatchArm {
+    // Left pattern: EnumName.VariantName[(ref __l0, ...)]
+    let left_inner = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let mut fs: Vec<ast.Pattern> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                fs.push(syn_pat_ident_by_ref(&spans.left_payload_idents[i]));
+            }
+            syn_pat_variant_tuple_struct(target_name_span, variant.name_span, fs, attr_span)
+        }
+    };
+    let left_pat = syn_pat_ref(left_inner, false, attr_span);
+
+    // Right pattern: EnumName.VariantName[(ref __r0, ...)]
+    let right_inner = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let mut fs: Vec<ast.Pattern> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                fs.push(syn_pat_ident_by_ref(&spans.right_payload_idents[i]));
+            }
+            syn_pat_variant_tuple_struct(target_name_span, variant.name_span, fs, attr_span)
+        }
+    };
+    let right_pat = syn_pat_ref(right_inner, false, attr_span);
+
+    // Tuple pattern: (left, right).
+    let mut tuple_fs: Vec<ast.Pattern> = Vec.with_capacity(2);
+    tuple_fs.push(left_pat);
+    tuple_fs.push(right_pat);
+    let tuple_pat = syn_pat_tuple(tuple_fs, attr_span);
+
+    // Body: true [&& *__l_i == *__r_i]*.
+    let mut acc: ast.Expr = syn_bool_lit(true, attr_span);
+    match &variant.kind {
+        &VariantKindInfo.Unit => {}
+        &VariantKindInfo.Tuple(arity) => {
+            for i in 0usize..arity {
+                let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                let r_expr = syn_path_expr(&spans.right_payload_idents[i], attr_span);
+                let l_deref = ast.Expr {
+                    kind: ast.ExprKind.Unary {
+                        operator: common.UnaryOp.Deref,
+                        operand: Box.new(l_expr),
+                    },
+                    span: attr_span,
+                };
+                let r_deref = ast.Expr {
+                    kind: ast.ExprKind.Unary {
+                        operator: common.UnaryOp.Deref,
+                        operand: Box.new(r_expr),
+                    },
+                    span: attr_span,
+                };
+                let eq_expr = syn_binary(common.BinOp.Eq, l_deref, r_deref, attr_span);
+                acc = syn_binary(common.BinOp.And, acc, eq_expr, attr_span);
+            }
+        }
+    }
+
+    syn_match_arm(tuple_pat, acc, attr_span)
+}
+
+/// Synthesize `impl PartialEq for Target { fn eq(self: &Self, other: &Self)
+/// -> bool { match (self, other) { same-variant arms ..., _ => false } } }`
+/// for an enum.
+pub fn expand_partial_eq_for_enum(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let variants = match collect_enum_variant_info(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+
+    // Scrutinee: (self, other).
+    let mut tuple_fields: Vec<ast.Expr> = Vec.with_capacity(2);
+    tuple_fields.push(syn_path_expr(&spans.self_id, attr_span));
+    tuple_fields.push(syn_path_expr(&spans.other_id, attr_span));
+    let scrutinee = syn_tuple_expr(tuple_fields, attr_span);
+
+    // Per-variant same-same arms plus a wildcard fallthrough. The wildcard
+    // covers every mixed-variant `(&Self.A, &Self.B)` pair — it's unreachable
+    // for 0- or 1-variant enums but cheap and keeps the match shape uniform.
+    let mut arms: Vec<ast.MatchArm> = Vec.with_capacity(variants.len() + 1);
+    for i in 0usize..variants.len() {
+        arms.push(build_partial_eq_variant_arm(spans, req.target_name_span, &variants[i], attr_span));
+    }
+    arms.push(syn_match_arm(
+        syn_pat_wildcard(attr_span),
+        syn_bool_lit(false, attr_span),
+        attr_span,
+    ));
+
+    let match_expr = syn_match_expr(scrutinee, arms, attr_span);
+
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(match_expr)),
+        span: attr_span,
+    };
+
+    // Params: `self: &Self`, `other: &Self`.
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let other_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+    params.push(syn_param(&spans.other_id, other_param_ty, attr_span));
+
+    let return_ty = syn_path_type(&spans.bool_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.eq_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.partialeq_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+/// Expand a single derive request to a synthesized impl block. Dispatches
+/// based on whether the target is a struct or enum. Returns `None` for
+/// unsupported derive kinds (Clone, Debug, Eq, Default) and for targets
+/// whose shape isn't supported (e.g., record enum variants, oversized
+/// tuple variants).
 pub fn expand_request(
     ctx: &hir_lower_ctx.LoweringCtx,
     spans: &SyntheticSpans,
     req: &DeriveRequest,
 ) -> Option<ast.ImplBlock> {
+    let is_enum = target_is_enum(ctx, req.target_def);
     match &req.kind {
-        &DeriveKind.Hash => expand_hash_for_struct(ctx, spans, req),
-        &DeriveKind.PartialEq => expand_partial_eq_for_struct(ctx, spans, req),
+        &DeriveKind.Hash => {
+            if is_enum {
+                expand_hash_for_enum(ctx, spans, req)
+            } else {
+                expand_hash_for_struct(ctx, spans, req)
+            }
+        }
+        &DeriveKind.PartialEq => {
+            if is_enum {
+                expand_partial_eq_for_enum(ctx, spans, req)
+            } else {
+                expand_partial_eq_for_struct(ctx, spans, req)
+            }
+        }
         &DeriveKind.Clone => Option.None,
         &DeriveKind.Debug => Option.None,
         &DeriveKind.Eq => Option.None,

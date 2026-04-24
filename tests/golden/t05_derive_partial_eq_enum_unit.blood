@@ -1,0 +1,47 @@
+// Test: `#[derive(PartialEq)]` on a C-like (unit-only) enum (C3 Phase B, S68).
+//
+// Exercises:
+//   - `#[derive(PartialEq)]` attribute on an enum declaration routes to
+//     `expand_partial_eq_for_enum` in `src/selfhost/derive.blood`
+//   - Synthesized `impl PartialEq for Color { fn eq(self: &Self, other: &Self)
+//     -> bool }` produces a `match (self, other) { (&Color.V, &Color.V) =>
+//     true, ..., _ => false }` body
+//   - Same-variant comparisons return true
+//   - Different-variant comparisons return false via the wildcard arm
+//   - The synthesized impl participates in normal method resolution — callable
+//     as `a.eq(&b)` through trait dispatch
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(PartialEq)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let red1: Color = Color.Red;
+    let red2: Color = Color.Red;
+    let green: Color = Color.Green;
+    let blue: Color = Color.Blue;
+
+    // Same-variant equality (each of the three variants).
+    if red1.eq(&red2) { println_int(1); } else { println_int(0); }
+    if green.eq(&Color.Green) { println_int(1); } else { println_int(0); }
+    if blue.eq(&Color.Blue) { println_int(1); } else { println_int(0); }
+    // Different-variant inequality.
+    if !red1.eq(&green) { println_int(1); } else { println_int(0); }
+    if !green.eq(&blue) { println_int(1); } else { println_int(0); }
+
+    0
+}

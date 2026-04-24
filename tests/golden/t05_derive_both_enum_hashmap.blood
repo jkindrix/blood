@@ -1,0 +1,65 @@
+// Test: `#[derive(Hash, PartialEq)]` on a mixed-variant enum used as a
+// HashMap key (C3 Phase B + Phase C integration, S68).
+//
+// Exercises:
+//   - Both derive expansions run on the same enum declaration (two
+//     synthesized impls feed through `lower_impl_decl` in Pass 1.5)
+//   - The synthesized Hash/PartialEq impls satisfy S66's typeck bound
+//     enforcement for HashMap keys (`enforce_hashmap_key_bounds`) — no
+//     E0206 emitted
+//   - S65's kk=2 codegen path routes HashMap<Color, i32> through
+//     `@hashmap_*_fn` runtime variants with per-K wrapper thunks
+//     (`__blood_hashmap_hash_tyN` / `__blood_hashmap_eq_tyN`) that
+//     delegate to the derived impls
+//   - End-to-end insert/get/contains_key/remove lifecycle works with an
+//     enum key type whose equality varies across variants AND across
+//     payloads within the same variant
+//
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 0
+mod std;
+use std.traits.hash.Hash;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(Hash, PartialEq)]
+enum Color {
+    Red,
+    Gray(u32),
+    Rgb(u32, u32, u32),
+}
+
+fn main() -> i32 {
+    let mut m: HashMap<Color, i32> = HashMap.new();
+
+    m.insert(Color.Red, 100);
+    m.insert(Color.Gray(128u32), 200);
+    m.insert(Color.Rgb(10u32, 20u32, 30u32), 300);
+
+    // Lookup by matching variants.
+    match m.get(&Color.Red) {
+        Option.Some(v) => println_int(v),
+        Option.None => println_int(-1),
+    }
+    match m.get(&Color.Gray(128u32)) {
+        Option.Some(v) => println_int(v),
+        Option.None => println_int(-1),
+    }
+
+    // Different-payload lookup miss.
+    if m.contains_key(&Color.Gray(128u32)) { println_int(1); } else { println_int(0); }
+    if m.contains_key(&Color.Gray(200u32)) { println_int(1); } else { println_int(0); }
+
+    // Remove + verify gone.
+    m.remove(&Color.Red);
+    if !m.contains_key(&Color.Red) { println_int(1); } else { println_int(0); }
+    if m.contains_key(&Color.Red) { println_int(1); } else { println_int(0); }
+
+    0
+}

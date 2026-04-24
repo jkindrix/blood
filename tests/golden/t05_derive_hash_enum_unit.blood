@@ -1,0 +1,55 @@
+// Test: `#[derive(Hash)]` on a C-like (unit-only) enum (C3 Phase B, S68).
+//
+// Exercises:
+//   - `#[derive(Hash)]` attribute on an enum declaration routes to
+//     `expand_hash_for_enum` in `src/selfhost/derive.blood`
+//   - Synthesized `impl Hash for Color { fn hash(self: &Self, state: &mut u64) }`
+//     produces a `match self { &Color.V => { Nu32.hash(state); } ... }`
+//     body where each arm hashes the variant's 0-based discriminant index
+//   - Determinism: the same variant hashes to the same value
+//   - Distinction: different variants produce different hashes (overwhelming
+//     FNV-1a probability for discriminants 0..N)
+//   - All arms run: the match on a reference scrutinee correctly matches
+//     &Color.Red, &Color.Green, &Color.Blue individually
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+#[derive(Hash)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let c1: Color = Color.Red;
+    let c2: Color = Color.Red;
+    let c3: Color = Color.Green;
+    let c4: Color = Color.Blue;
+
+    let mut s1: u64 = FNV_OFFSET_BASIS();
+    let mut s2: u64 = FNV_OFFSET_BASIS();
+    let mut s3: u64 = FNV_OFFSET_BASIS();
+    let mut s4: u64 = FNV_OFFSET_BASIS();
+
+    c1.hash(&mut s1);
+    c2.hash(&mut s2);
+    c3.hash(&mut s3);
+    c4.hash(&mut s4);
+
+    // Determinism: equal variants produce equal hashes.
+    if s1 == s2 { println_int(1); } else { println_int(0); }
+    // Distinction: Red vs Green.
+    if s1 != s3 { println_int(1); } else { println_int(0); }
+    // Distinction: Green vs Blue (probes the third arm, not just first-vs-rest).
+    if s3 != s4 { println_int(1); } else { println_int(0); }
+    // Non-trivial fold: accumulator moved off seed (confirms the match arm ran).
+    if s1 != FNV_OFFSET_BASIS() { println_int(1); } else { println_int(0); }
+
+    0
+}

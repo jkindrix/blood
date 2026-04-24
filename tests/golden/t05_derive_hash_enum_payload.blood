@@ -1,0 +1,61 @@
+// Test: `#[derive(Hash)]` on an enum with mixed unit + tuple variants
+// (C3 Phase B, S68).
+//
+// Exercises:
+//   - `expand_hash_for_enum` handles both `VariantKindInfo.Unit` and
+//     `VariantKindInfo.Tuple(arity)` arms
+//   - Tuple-variant arms use the pre-interned `left_payload_idents` pool
+//     (`__l0`, `__l1`, ...) as `ref` bindings in the pattern
+//   - Each payload field contributes to the hash via `__l_i.hash(state)`
+//     (method dispatch on `&T`, where T is the payload field's type)
+//   - Different payloads on the same variant produce different hashes
+//   - Different variants with equal payloads produce different hashes
+//     (because the variant discriminant is folded first)
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+#[derive(Hash)]
+enum Color {
+    Red,
+    Gray(u32),
+    Rgb(u32, u32, u32),
+}
+
+fn main() -> i32 {
+    let red: Color = Color.Red;
+    let g1: Color = Color.Gray(128u32);
+    let g2: Color = Color.Gray(128u32);
+    let g3: Color = Color.Gray(200u32);
+    let rgb1: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let rgb2: Color = Color.Rgb(10u32, 20u32, 30u32);
+
+    let mut s_red: u64 = FNV_OFFSET_BASIS();
+    let mut s_g1: u64 = FNV_OFFSET_BASIS();
+    let mut s_g2: u64 = FNV_OFFSET_BASIS();
+    let mut s_g3: u64 = FNV_OFFSET_BASIS();
+    let mut s_rgb1: u64 = FNV_OFFSET_BASIS();
+    let mut s_rgb2: u64 = FNV_OFFSET_BASIS();
+
+    red.hash(&mut s_red);
+    g1.hash(&mut s_g1);
+    g2.hash(&mut s_g2);
+    g3.hash(&mut s_g3);
+    rgb1.hash(&mut s_rgb1);
+    rgb2.hash(&mut s_rgb2);
+
+    // Determinism: Gray(128) hashes the same both times.
+    if s_g1 == s_g2 { println_int(1); } else { println_int(0); }
+    // Determinism: Rgb(10,20,30) hashes the same both times.
+    if s_rgb1 == s_rgb2 { println_int(1); } else { println_int(0); }
+    // Payload sensitivity: Gray(128) != Gray(200).
+    if s_g1 != s_g3 { println_int(1); } else { println_int(0); }
+    // Variant distinction: Red != Gray(128) (different discriminants folded first).
+    if s_red != s_g1 { println_int(1); } else { println_int(0); }
+
+    0
+}
