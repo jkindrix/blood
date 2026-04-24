@@ -390,6 +390,42 @@ fn syn_call_arg(val: ast.Expr, span: common.Span) -> ast.CallArg {
     ast.CallArg { name: Option.None, val: val, span: span }
 }
 
+/// Build a function/variant call: `callee(args...)`.
+fn syn_call_expr(callee: ast.Expr, args: Vec<ast.CallArg>, span: common.Span) -> ast.Expr {
+    ast.Expr {
+        kind: ast.ExprKind.Call {
+            callee: Box.new(callee),
+            args: args,
+        },
+        span: span,
+    }
+}
+
+/// Build a two-segment path expression `EnumName.VariantName` from raw
+/// source spans. Used as a unit-variant constructor expression
+/// (`Color.Red`) and as the callee for tuple-variant constructors
+/// (`Color.Gray(...)`). HIR's path resolver re-interns by span; the
+/// stored Symbol indices are placeholder zeros.
+fn syn_variant_path_expr(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    overall_span: common.Span,
+) -> ast.Expr {
+    let seg_enum = ast.ExprPathSegment {
+        name: syn_sym_span(enum_name_span),
+        args: Option.None,
+    };
+    let seg_variant = ast.ExprPathSegment {
+        name: syn_sym_span(variant_name_span),
+        args: Option.None,
+    };
+    let mut segs: Vec<ast.ExprPathSegment> = Vec.new();
+    segs.push(seg_enum);
+    segs.push(seg_variant);
+    let path = ast.ExprPath { segments: segs, span: overall_span };
+    ast.Expr { kind: ast.ExprKind.Path(path), span: overall_span }
+}
+
 /// Build a binary expression `left op right`.
 fn syn_binary(op: common.BinOp, left: ast.Expr, right: ast.Expr, span: common.Span) -> ast.Expr {
     ast.Expr {
@@ -1294,6 +1330,132 @@ pub fn expand_partial_eq_for_enum(
 }
 
 // ============================================================
+// Clone Expansion (enum)
+// ============================================================
+
+/// Build per-variant match arm for Clone: pattern `&Enum.V[(ref __l_i*)]`
+/// with body `Enum.V[(__l_i.clone(), ...)]` reconstructing the variant.
+fn build_clone_variant_arm(
+    spans: &SyntheticSpans,
+    target_name_span: common.Span,
+    variant: &VariantInfo,
+    attr_span: common.Span,
+) -> ast.MatchArm {
+    // Pattern: &Enum.V or &Enum.V(ref __l0, ref __l1, ...).
+    let inner_pat = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let mut field_pats: Vec<ast.Pattern> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                field_pats.push(syn_pat_ident_by_ref(&spans.left_payload_idents[i]));
+            }
+            syn_pat_variant_tuple_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
+    };
+    let ref_pat = syn_pat_ref(inner_pat, false, attr_span);
+
+    // Body: Enum.V or Enum.V(__l0.clone(), __l1.clone(), ...).
+    let arm_body = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_variant_path_expr(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let callee = syn_variant_path_expr(target_name_span, variant.name_span, attr_span);
+            let mut args: Vec<ast.CallArg> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                let clone_call = syn_method_call(
+                    l_expr,
+                    &spans.clone_method,
+                    Vec.new(),
+                    attr_span,
+                );
+                args.push(syn_call_arg(clone_call, attr_span));
+            }
+            syn_call_expr(callee, args, attr_span)
+        }
+    };
+
+    syn_match_arm(ref_pat, arm_body, attr_span)
+}
+
+/// Synthesize `impl Clone for Target { fn clone(self: &Self) -> Self {
+/// match self { per-variant arms } } }` for an enum. Each arm
+/// reconstructs the matched variant with per-field `.clone()` calls.
+/// Supports unit and tuple variants up to MAX_TUPLE_VARIANT_ARITY.
+pub fn expand_clone_for_enum(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let variants = match collect_enum_variant_info(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+
+    // Match scrutinee: `self` (an &Self binding).
+    let scrutinee = syn_path_expr(&spans.self_id, attr_span);
+
+    // Build one arm per variant. No catch-all needed — variants are
+    // exhaustive, and no arm uses any binding the next arm could catch.
+    let mut arms: Vec<ast.MatchArm> = Vec.with_capacity(variants.len());
+    for i in 0usize..variants.len() {
+        arms.push(build_clone_variant_arm(spans, req.target_name_span, &variants[i], attr_span));
+    }
+
+    let match_expr = syn_match_expr(scrutinee, arms, attr_span);
+
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(match_expr)),
+        span: attr_span,
+    };
+
+    // Params: `self: &Self`.
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+
+    // Return type: `Self`.
+    let return_ty = syn_path_type(&spans.self_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.clone_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.clone_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+// ============================================================
 // Eq Expansion (marker trait)
 // ============================================================
 
@@ -1348,7 +1510,7 @@ pub fn expand_request(
         &DeriveKind.Eq => expand_eq_for_adt(spans, req),
         &DeriveKind.Clone => {
             if is_enum {
-                Option.None
+                expand_clone_for_enum(ctx, spans, req)
             } else {
                 expand_clone_for_struct(ctx, spans, req)
             }

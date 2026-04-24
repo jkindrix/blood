@@ -1,0 +1,62 @@
+// Test: `#[derive(Clone)]` on an enum with unit and tuple variants
+// (C3 Phase B, S69).
+//
+// Exercises:
+//   - `expand_clone_for_enum` synthesizes
+//     `impl Clone for Color { fn clone(self: &Self) -> Self {
+//        match self { &Color.Red => Color.Red,
+//                     &Color.Gray(ref __l0) => Color.Gray(__l0.clone()),
+//                     &Color.Rgb(ref __l0, ref __l1, ref __l2) =>
+//                         Color.Rgb(__l0.clone(), __l1.clone(), __l2.clone()) }
+//     } }`
+//   - Both unit-variant arms (no payload, just path-expr body) and
+//     tuple-variant arms (call-expr body with per-field `.clone()`) work
+//   - Pre-interned `__l0..__l2` payload bindings are reused from the
+//     existing `left_payload_idents` pool (set up in S68 for Hash/PartialEq)
+//   - The synthesized impl satisfies the stdlib `trait Clone`
+//
+// Equality is verified via a locally-declared `trait PartialEq` plus
+// `#[derive(PartialEq)]` (S68). Cross-variant negative case (`r1.eq(&g1)`)
+// confirms the wildcard arm in derived PartialEq fires correctly even after
+// a clone round-trip.
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.clone.Clone;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(Clone, PartialEq)]
+enum Color {
+    Red,
+    Gray(u32),
+    Rgb(u32, u32, u32),
+}
+
+fn main() -> i32 {
+    // Unit variant clone.
+    let r1: Color = Color.Red;
+    let r2: Color = r1.clone();
+    if r1.eq(&r2) { println_int(1); } else { println_int(0); }
+
+    // Single-field tuple variant clone.
+    let g1: Color = Color.Gray(128u32);
+    let g2: Color = g1.clone();
+    if g1.eq(&g2) { println_int(1); } else { println_int(0); }
+
+    // Three-field tuple variant clone.
+    let rgb1: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let rgb2: Color = rgb1.clone();
+    if rgb1.eq(&rgb2) { println_int(1); } else { println_int(0); }
+
+    // Cross-variant: cloned Red is still distinct from Gray (wildcard arm
+    // in derived PartialEq fires).
+    if !r1.eq(&g1) { println_int(1); } else { println_int(0); }
+
+    0
+}
