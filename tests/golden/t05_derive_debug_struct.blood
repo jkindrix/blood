@@ -1,0 +1,28 @@
+// Test: `#[derive(Debug)]` on a record struct emits Rust-like
+// `Name { field: value, ... }` output (C3 Phase B, S72).
+//
+// Exercises:
+//   - `expand_debug_for_struct` synthesizes
+//     `impl Debug for Point { fn fmt(self: &Self) -> String { let mut __buf =
+//       String.new(); __buf.push_str("Point { x: "); __buf.push_str(
+//       self.x.fmt().as_str()); ... } }`.
+//   - Method dispatch on `self.x.fmt()` resolves to the stdlib
+//     `impl Debug for i32` (which wraps `int_to_string`).
+//   - Composed Debug fold matches the expected textual form.
+//
+// EXPECT: Point { x: 1, y: 2 }
+mod std;
+use std.traits.debug.Debug;
+
+#[derive(Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    let s: String = p.fmt();
+    println_str(s.as_str());
+    0
+}

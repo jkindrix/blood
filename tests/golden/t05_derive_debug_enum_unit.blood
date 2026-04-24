@@ -1,0 +1,30 @@
+// Test: `#[derive(Debug)]` on an enum with unit variants (C3 Phase B, S72).
+//
+// Exercises:
+//   - `expand_debug_for_enum` synthesizes a `match self { ... }` body
+//     whose arms append just the variant name to `__buf` for Unit variants.
+//   - Variant-name text is recovered via `ctx.span_to_string(
+//     variant.name_span)` at derive time.
+//
+// EXPECT: Red
+// EXPECT: Green
+// EXPECT: Blue
+mod std;
+use std.traits.debug.Debug;
+
+#[derive(Debug)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let a: Color = Color.Red;
+    let b: Color = Color.Green;
+    let c: Color = Color.Blue;
+    println_str(a.fmt().as_str());
+    println_str(b.fmt().as_str());
+    println_str(c.fmt().as_str());
+    0
+}

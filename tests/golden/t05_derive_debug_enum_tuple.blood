@@ -1,0 +1,28 @@
+// Test: `#[derive(Debug)]` on an enum with a tuple variant (C3 Phase B, S72).
+//
+// Exercises:
+//   - `build_debug_variant_arm` for `Tuple(arity)` emits `__l_i.fmt()`
+//     method calls against the pre-interned `left_payload_idents`
+//     payload bindings (`__l0..__l7`).
+//   - The `, ` separator is emitted between payload slots but not
+//     before the first or after the last.
+//   - Unit variant's arm still falls through to Unit-only synthesis.
+//
+// EXPECT: Empty
+// EXPECT: Rgb(255, 128, 0)
+mod std;
+use std.traits.debug.Debug;
+
+#[derive(Debug)]
+enum Color {
+    Empty,
+    Rgb(u8, u8, u8),
+}
+
+fn main() -> i32 {
+    let a: Color = Color.Empty;
+    let b: Color = Color.Rgb(255u8, 128u8, 0u8);
+    println_str(a.fmt().as_str());
+    println_str(b.fmt().as_str());
+    0
+}

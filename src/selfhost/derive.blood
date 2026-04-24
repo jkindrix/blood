@@ -14,9 +14,13 @@ module blood.derive;
 // module, record the offsets in `SyntheticSpans`, and use those spans in
 // the synthesized AST.
 //
-// Supported derives (S67 Phase B):
+// Supported derives (C3 Phase B):
 // - Hash: fn hash(self: &Self, state: &mut u64) — per-field self.F.hash(state)
 // - PartialEq: fn eq(self: &Self, other: &Self) -> bool — ANDed field equality
+// - Eq: empty marker impl
+// - Clone: fn clone(self: &Self) -> Self — per-field self.F.clone()
+// - Default: fn default() -> Self — inline primitive literals + FieldType.default()
+// - Debug: fn fmt(self: &Self) -> String — Rust-like `Name { f: <fmt> }` format
 
 mod common;
 mod hir;
@@ -146,17 +150,24 @@ pub struct SyntheticSpans {
     pub eq_method: SynIdent,
     pub clone_method: SynIdent,
     pub default_method: SynIdent,
+    pub fmt_method: SynIdent,
+    pub new_method: SynIdent,
+    pub as_str_method: SynIdent,
+    pub push_str_method: SynIdent,
     pub self_id: SynIdent,
     pub other_id: SynIdent,
     pub state_id: SynIdent,
+    pub buf_id: SynIdent,
     pub self_ty: SynIdent,
     pub u64_ty: SynIdent,
     pub bool_ty: SynIdent,
+    pub string_ty: SynIdent,
     pub hash_trait: SynIdent,
     pub partialeq_trait: SynIdent,
     pub eq_trait: SynIdent,
     pub clone_trait: SynIdent,
     pub default_trait: SynIdent,
+    pub debug_trait: SynIdent,
     pub left_payload_idents: Vec<SynIdent>,
     pub right_payload_idents: Vec<SynIdent>,
     pub initialized: bool,
@@ -175,17 +186,24 @@ impl SyntheticSpans {
             eq_method: z_ident,
             clone_method: z_ident,
             default_method: z_ident,
+            fmt_method: z_ident,
+            new_method: z_ident,
+            as_str_method: z_ident,
+            push_str_method: z_ident,
             self_id: z_ident,
             other_id: z_ident,
             state_id: z_ident,
+            buf_id: z_ident,
             self_ty: z_ident,
             u64_ty: z_ident,
             bool_ty: z_ident,
+            string_ty: z_ident,
             hash_trait: z_ident,
             partialeq_trait: z_ident,
             eq_trait: z_ident,
             clone_trait: z_ident,
             default_trait: z_ident,
+            debug_trait: z_ident,
             left_payload_idents: Vec.new(),
             right_payload_idents: Vec.new(),
             initialized: false,
@@ -210,17 +228,24 @@ pub fn ensure_synth_spans(
     spans.eq_method = register_syn(ctx, "eq");
     spans.clone_method = register_syn(ctx, "clone");
     spans.default_method = register_syn(ctx, "default");
+    spans.fmt_method = register_syn(ctx, "fmt");
+    spans.new_method = register_syn(ctx, "new");
+    spans.as_str_method = register_syn(ctx, "as_str");
+    spans.push_str_method = register_syn(ctx, "push_str");
     spans.self_id = register_syn(ctx, "self");
     spans.other_id = register_syn(ctx, "other");
     spans.state_id = register_syn(ctx, "state");
+    spans.buf_id = register_syn(ctx, "__buf");
     spans.self_ty = register_syn(ctx, "Self");
     spans.u64_ty = register_syn(ctx, "u64");
     spans.bool_ty = register_syn(ctx, "bool");
+    spans.string_ty = register_syn(ctx, "String");
     spans.hash_trait = register_syn(ctx, "Hash");
     spans.partialeq_trait = register_syn(ctx, "PartialEq");
     spans.eq_trait = register_syn(ctx, "Eq");
     spans.clone_trait = register_syn(ctx, "Clone");
     spans.default_trait = register_syn(ctx, "Default");
+    spans.debug_trait = register_syn(ctx, "Debug");
     // Pre-intern 8 left-side and 8 right-side payload binding names for enum
     // tuple-variant patterns: __l0..__l7, __r0..__r7. Cap matches MAX_TUPLE
     // _VARIANT_ARITY. PartialEq uses both sides; Hash uses only left.
@@ -339,6 +364,32 @@ fn syn_pat_ident(ident: &SynIdent) -> ast.Pattern {
     }
 }
 
+/// Build a mutable identifier pattern `mut name`. The span placement rule
+/// is the same as `syn_pat_ident`.
+fn syn_pat_ident_mut(ident: &SynIdent) -> ast.Pattern {
+    ast.Pattern {
+        kind: ast.PatternKind.Ident {
+            by_ref: false,
+            is_mut: true,
+            name: syn_sym(ident),
+            subpattern: Option.None,
+        },
+        span: ident.span,
+    }
+}
+
+/// Build a `let` statement `let <pat> = <init>;` with an inferred type and
+/// a non-None initializer. Used by Debug derive to introduce a String
+/// buffer local.
+fn syn_let_stmt(pat: ast.Pattern, init: ast.Expr, span: common.Span) -> ast.Statement {
+    ast.Statement.Let {
+        pattern: pat,
+        ty: Option.None,
+        init_val: Option.Some(init),
+        span: span,
+    }
+}
+
 /// Build a function parameter `name: ty`.
 fn syn_param(ident: &SynIdent, ty: ast.Type, span: common.Span) -> ast.Param {
     ast.Param {
@@ -395,6 +446,20 @@ fn syn_method_call(
 /// Build a positional call argument with no name label.
 fn syn_call_arg(val: ast.Expr, span: common.Span) -> ast.CallArg {
     ast.CallArg { name: Option.None, val: val, span: span }
+}
+
+/// Build a call to a 2-segment path `First.Second(args...)`, e.g.
+/// `String.new()`. Both spans must point into `ctx.source`; HIR lowering
+/// re-interns each segment via `span_to_string`. Used by Debug derive to
+/// introduce fresh String buffers.
+fn syn_two_seg_path_call(
+    first_name_span: common.Span,
+    second_name_span: common.Span,
+    args: Vec<ast.CallArg>,
+    overall_span: common.Span,
+) -> ast.Expr {
+    let callee = syn_variant_path_expr(first_name_span, second_name_span, overall_span);
+    syn_call_expr(callee, args, overall_span)
 }
 
 /// Build a function/variant call: `callee(args...)`.
@@ -477,6 +542,19 @@ fn syn_float_lit_suffixed(bits: u64, suffix: ast.FloatSuffix, span: common.Span)
 fn syn_char_lit(c: char, span: common.Span) -> ast.Expr {
     let lit = ast.Literal {
         kind: ast.LiteralKind.Char(c),
+        span: span,
+    };
+    ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
+}
+
+/// Build a string literal expression holding an arbitrary payload. The span
+/// is used only for diagnostics — `LiteralKind.Str(String)` carries the
+/// actual bytes inline, so no source-buffer placement is required.
+fn syn_str_lit(payload: &str, span: common.Span) -> ast.Expr {
+    let mut s = String.new();
+    s.push_str(payload);
+    let lit = ast.Literal {
+        kind: ast.LiteralKind.Str(s),
         span: span,
     };
     ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
@@ -1733,6 +1811,322 @@ pub fn expand_clone_for_enum(
 }
 
 // ============================================================
+// Debug Expansion (struct + enum)
+// ============================================================
+
+/// Build `__buf.push_str(<arg>);` as a semicolon-terminated statement. Used
+/// by every Debug body to append output — both literal-string segments
+/// (header, separators, closing brace) and method-call results
+/// (`<field>.fmt().as_str()` for each child).
+fn push_str_stmt(
+    spans: &SyntheticSpans,
+    arg: ast.Expr,
+    span: common.Span,
+) -> ast.Statement {
+    let buf_expr = syn_path_expr(&spans.buf_id, span);
+    let mut args: Vec<ast.CallArg> = Vec.new();
+    args.push(syn_call_arg(arg, span));
+    let call = syn_method_call(buf_expr, &spans.push_str_method, args, span);
+    ast.Statement.Expr { expr: call, has_semi: true }
+}
+
+/// Build `__buf.push_str(self.<field>.fmt().as_str());` — the per-field
+/// append used by struct/tuple-variant/record-variant Debug bodies. The
+/// receiver is supplied by the caller (either `self.<field>` for structs
+/// or a payload ident like `__l0` for enum variants).
+fn push_str_field_value_stmt(
+    spans: &SyntheticSpans,
+    field_value: ast.Expr,
+    span: common.Span,
+) -> ast.Statement {
+    let fmt_call = syn_method_call(field_value, &spans.fmt_method, Vec.new(), span);
+    let as_str_call = syn_method_call(fmt_call, &spans.as_str_method, Vec.new(), span);
+    push_str_stmt(spans, as_str_call, span)
+}
+
+/// Synthesize `impl Debug for Target { fn fmt(self: &Self) -> String {
+/// let mut __buf = String.new(); __buf.push_str("Target { "); ...; __buf } }`
+/// for a record struct. The output format mirrors Rust's `{:?}` for a
+/// derived Debug struct. Returns `None` if the target is not a record
+/// struct (tuple and unit structs are unsupported).
+pub fn expand_debug_for_struct(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let field_spans = match collect_record_field_spans(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+
+    // let mut __buf = String.new();
+    let string_new_call = syn_two_seg_path_call(
+        spans.string_ty.span,
+        spans.new_method.span,
+        Vec.new(),
+        attr_span,
+    );
+    stmts.push(syn_let_stmt(syn_pat_ident_mut(&spans.buf_id), string_new_call, attr_span));
+
+    // __buf.push_str("TargetName { "):
+    let target_name_str = ctx.span_to_string(req.target_name_span);
+    let mut opening = String.new();
+    opening.push_str(target_name_str.as_str());
+    if field_spans.len() == 0usize {
+        // Empty record struct — emit `TargetName {}`.
+        opening.push_str(" {}");
+        stmts.push(push_str_stmt(spans, syn_str_lit(opening.as_str(), attr_span), attr_span));
+    } else {
+        opening.push_str(" { ");
+        stmts.push(push_str_stmt(spans, syn_str_lit(opening.as_str(), attr_span), attr_span));
+
+        // Per field: `<name>: <value>` separated by `, ` between fields.
+        for i in 0usize..field_spans.len() {
+            let field_name_str = ctx.span_to_string(field_spans[i]);
+            let mut label = String.new();
+            if i > 0usize {
+                label.push_str(", ");
+            }
+            label.push_str(field_name_str.as_str());
+            label.push_str(": ");
+            stmts.push(push_str_stmt(spans, syn_str_lit(label.as_str(), attr_span), attr_span));
+
+            let self_expr = syn_path_expr(&spans.self_id, attr_span);
+            let self_field = syn_field_expr(self_expr, field_spans[i], attr_span);
+            stmts.push(push_str_field_value_stmt(spans, self_field, attr_span));
+        }
+
+        // Closing ` }`:
+        stmts.push(push_str_stmt(spans, syn_str_lit(" }", attr_span), attr_span));
+    }
+
+    // Trailing: __buf
+    let buf_expr = syn_path_expr(&spans.buf_id, attr_span);
+
+    let body = ast.Block {
+        statements: stmts,
+        expr: Option.Some(Box.new(buf_expr)),
+        span: attr_span,
+    };
+
+    // Params: `self: &Self`. Return type: `String`.
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+    let return_ty = syn_path_type(&spans.string_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.fmt_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.debug_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+/// Build per-variant match arm for Debug. Pattern binds payload fields
+/// through `left_payload_idents`. Body is a block of `__buf.push_str(...)`
+/// statements emitting the variant's textual form:
+///   Unit   — `"VariantName"`
+///   Tuple  — `"VariantName(" + per-arg .fmt().as_str() + ", " + ... + ")"`
+///   Record — `"VariantName { field0: " + <fmt> + ", field1: " + <fmt> + " }"`
+fn build_debug_variant_arm(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    target_name_span: common.Span,
+    variant: &VariantInfo,
+    attr_span: common.Span,
+) -> ast.MatchArm {
+    // Pattern: same shape as Clone's pattern builder.
+    let inner_pat = match &variant.kind {
+        &VariantKindInfo.Unit => {
+            syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            let mut field_pats: Vec<ast.Pattern> = Vec.with_capacity(arity);
+            for i in 0usize..arity {
+                field_pats.push(syn_pat_ident_by_ref(&spans.left_payload_idents[i]));
+            }
+            syn_pat_variant_tuple_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut field_pats: Vec<ast.StructPatternField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let binding = syn_pat_ident_by_ref(&spans.left_payload_idents[i]);
+                field_pats.push(syn_struct_pattern_field(field_spans[i], binding, attr_span));
+            }
+            syn_pat_variant_struct_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
+    };
+    let ref_pat = syn_pat_ref(inner_pat, false, attr_span);
+
+    // Body statements. The arm's scrutinee binds payload fields via
+    // `__l_i`, so each value is a path expression to the binding.
+    let variant_name_str = ctx.span_to_string(variant.name_span);
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+
+    match &variant.kind {
+        &VariantKindInfo.Unit => {
+            // __buf.push_str("VariantName");
+            stmts.push(push_str_stmt(spans, syn_str_lit(variant_name_str.as_str(), attr_span), attr_span));
+        }
+        &VariantKindInfo.Tuple(arity) => {
+            // __buf.push_str("VariantName(");
+            let mut opening = String.new();
+            opening.push_str(variant_name_str.as_str());
+            opening.push_str("(");
+            stmts.push(push_str_stmt(spans, syn_str_lit(opening.as_str(), attr_span), attr_span));
+            // Per payload slot: optional ", " separator, then __l_i.fmt().as_str()
+            for i in 0usize..arity {
+                if i > 0usize {
+                    stmts.push(push_str_stmt(spans, syn_str_lit(", ", attr_span), attr_span));
+                }
+                let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                stmts.push(push_str_field_value_stmt(spans, l_expr, attr_span));
+            }
+            stmts.push(push_str_stmt(spans, syn_str_lit(")", attr_span), attr_span));
+        }
+        &VariantKindInfo.Record(ref field_spans) => {
+            // __buf.push_str("VariantName { ");
+            let mut opening = String.new();
+            opening.push_str(variant_name_str.as_str());
+            if field_spans.len() == 0usize {
+                opening.push_str(" {}");
+                stmts.push(push_str_stmt(spans, syn_str_lit(opening.as_str(), attr_span), attr_span));
+            } else {
+                opening.push_str(" { ");
+                stmts.push(push_str_stmt(spans, syn_str_lit(opening.as_str(), attr_span), attr_span));
+                for i in 0usize..field_spans.len() {
+                    let field_name_str = ctx.span_to_string(field_spans[i]);
+                    let mut label = String.new();
+                    if i > 0usize {
+                        label.push_str(", ");
+                    }
+                    label.push_str(field_name_str.as_str());
+                    label.push_str(": ");
+                    stmts.push(push_str_stmt(spans, syn_str_lit(label.as_str(), attr_span), attr_span));
+                    let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                    stmts.push(push_str_field_value_stmt(spans, l_expr, attr_span));
+                }
+                stmts.push(push_str_stmt(spans, syn_str_lit(" }", attr_span), attr_span));
+            }
+        }
+    }
+
+    let arm_body = syn_block_expr(stmts, Option.None, attr_span);
+    syn_match_arm(ref_pat, arm_body, attr_span)
+}
+
+/// Synthesize `impl Debug for Target { fn fmt(self: &Self) -> String {
+/// let mut __buf = String.new(); match self { per-variant arms } __buf } }`
+/// for an enum. Each arm mutates the shared `__buf` local with the
+/// variant's textual form. Supports unit, tuple (arity ≤ 8), and record
+/// (fields ≤ 8) variants; oversized variants cause
+/// `collect_enum_variant_info` to return `None`, aborting the derive.
+pub fn expand_debug_for_enum(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let variants = match collect_enum_variant_info(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+
+    // let mut __buf = String.new();
+    let string_new_call = syn_two_seg_path_call(
+        spans.string_ty.span,
+        spans.new_method.span,
+        Vec.new(),
+        attr_span,
+    );
+    stmts.push(syn_let_stmt(syn_pat_ident_mut(&spans.buf_id), string_new_call, attr_span));
+
+    // match self { per-variant arms }
+    let scrutinee = syn_path_expr(&spans.self_id, attr_span);
+    let mut arms: Vec<ast.MatchArm> = Vec.with_capacity(variants.len());
+    for i in 0usize..variants.len() {
+        arms.push(build_debug_variant_arm(ctx, spans, req.target_name_span, &variants[i], attr_span));
+    }
+    let match_expr = syn_match_expr(scrutinee, arms, attr_span);
+    stmts.push(ast.Statement.Expr { expr: match_expr, has_semi: true });
+
+    // Trailing: __buf
+    let buf_expr = syn_path_expr(&spans.buf_id, attr_span);
+
+    let body = ast.Block {
+        statements: stmts,
+        expr: Option.Some(Box.new(buf_expr)),
+        span: attr_span,
+    };
+
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+    let return_ty = syn_path_type(&spans.string_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.fmt_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.debug_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+// ============================================================
 // Default Expansion (struct + enum)
 // ============================================================
 
@@ -1939,31 +2333,23 @@ pub fn expand_eq_for_adt(
     })
 }
 
-/// Emit an E0901 diagnostic when a known derive kind fails to expand —
-/// either because the kind itself is not yet implemented (Debug) or because
-/// the target's shape is unsupported (e.g., tuple/unit struct, enum with
-/// record variants, tuple variant with arity > 8, or — for Default — a
-/// field whose type has no default representation).
+/// Emit an E0901 diagnostic when a known derive kind fails to expand
+/// because the target's shape is unsupported (e.g., tuple/unit struct,
+/// enum variant with arity > 8, or — for Default — a field whose type has
+/// no default representation).
 fn emit_derive_failure_diag(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     req: &DeriveRequest,
     is_enum: bool,
 ) {
     let mut msg = String.new();
-    match &req.kind {
-        &DeriveKind.Debug => {
-            msg.push_str("`#[derive(Debug)]` is not yet implemented");
-        }
-        _ => {
-            msg.push_str("`#[derive(");
-            msg.push_str(req.kind.trait_name());
-            msg.push_str(")]` is not supported for this ");
-            if is_enum {
-                msg.push_str("enum (tuple and record variants with more than 8 fields are unsupported)");
-            } else {
-                msg.push_str("struct (only record structs are supported; tuple and unit structs are unsupported)");
-            }
-        }
+    msg.push_str("`#[derive(");
+    msg.push_str(req.kind.trait_name());
+    msg.push_str(")]` is not supported for this ");
+    if is_enum {
+        msg.push_str("enum (tuple and record variants with more than 8 fields are unsupported)");
+    } else {
+        msg.push_str("struct (only record structs are supported; tuple and unit structs are unsupported)");
     }
     ctx.error(hir.DiagnosticCode.E0901, msg, req.span);
 }
@@ -2012,7 +2398,13 @@ pub fn expand_request(
                 _ => Option.None,
             }
         }
-        &DeriveKind.Debug => Option.None,
+        &DeriveKind.Debug => {
+            if is_enum {
+                expand_debug_for_enum(ctx, spans, req)
+            } else {
+                expand_debug_for_struct(ctx, spans, req)
+            }
+        }
     };
     match &result {
         &Option.Some(_) => {}

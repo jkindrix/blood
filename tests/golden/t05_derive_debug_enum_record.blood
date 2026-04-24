@@ -1,0 +1,29 @@
+// Test: `#[derive(Debug)]` on an enum with a record variant (C3 Phase B,
+// S72).
+//
+// Exercises:
+//   - `build_debug_variant_arm` for `Record(field_spans)` emits per-field
+//     `<name>: ` labels plus `__l_i.fmt()` calls against the pre-interned
+//     `left_payload_idents` pool — mirroring the struct body logic with
+//     per-field bindings.
+//   - Field names come from `ctx.span_to_string(field_spans[i])` at
+//     derive time.
+//
+// EXPECT: Pt { x: 3, y: 4 }
+// EXPECT: Circ { r: 5 }
+mod std;
+use std.traits.debug.Debug;
+
+#[derive(Debug)]
+enum Shape {
+    Pt { x: i32, y: i32 },
+    Circ { r: i32 },
+}
+
+fn main() -> i32 {
+    let a: Shape = Shape.Pt { x: 3i32, y: 4i32 };
+    let b: Shape = Shape.Circ { r: 5i32 };
+    println_str(a.fmt().as_str());
+    println_str(b.fmt().as_str());
+    0
+}
