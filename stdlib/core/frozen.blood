@@ -1,0 +1,58 @@
+// Blood Standard Library - Frozen<T> + Freeze marker trait
+//
+// A1 Phase 3c (GAP-2, S75): stdlib Frozen wire-up. Previously every
+// Frozen-using golden redeclared `struct Frozen<T>` and `trait Freeze {}`
+// locally. This module provides the canonical definitions; the compiler's
+// `rebind_builtin_frozen_to_stdlib` (hir_lower.blood) points
+// `ctx.builtin_frozen_def` at this struct after Phase 1 so the S60 MIR
+// intrinsic dispatch + S61 kind=5 variant walker + S62 T: Freeze bound
+// all resolve to the stdlib DefId.
+//
+// This is a deliberately MINIMAL API. Trait delegations
+// (impl<T: Clone> Clone for Frozen<T>, etc.) are NOT provided because
+// they hit the multi-caller generic-impl bug (BUGS_OPEN §A1-P3a). The
+// prototype in stdlib/_rust_prototype/core/frozen.blood retains the full
+// design for when that bug is fixed (Option F).
+
+/// Marker trait for types with no interior mutability.
+///
+/// A type `T` is `Freeze` if holding `&T` prevents any mutation of its
+/// storage. Primitive types are structurally Freeze; user structs whose
+/// fields are all Freeze are auto-derived Freeze by the compiler
+/// (typeck.blood:type_is_freeze walks struct fields). Types with
+/// interior mutability (e.g. `&mut T`, shared mutable cells) are NOT
+/// Freeze.
+///
+/// The `T: Freeze` bound on `Frozen<T>.new(value)` enforces that only
+/// deep-freeze-safe values can be placed inside `Frozen`.
+pub trait Freeze {}
+
+/// Immutable wrapper that guarantees deep immutability of `T`.
+///
+/// Constructed via `Frozen.new(value)`, `Frozen<T>` moves `value` into a
+/// persist region and freezes its memory (including transitively for
+/// heap-allocated fields like `String` buffers, per A1 Phase 2/3a/3b).
+/// Once frozen, neither the wrapper nor any interior content can be
+/// mutated; only shared references are exposed via `get()`.
+pub struct Frozen<T> {
+    pub value: T,
+}
+
+impl<T: Freeze> Frozen<T> {
+    /// Creates a new frozen value.
+    ///
+    /// The compiler's S60 MIR intrinsic rewrites calls to this
+    /// associated function into an inline `Rvalue.Aggregate` with the
+    /// concrete `T` type args, bypassing the generic body's i64
+    /// erasure. Codegen's ADT aggregate path then handles the
+    /// persist + freeze + freeze_fields sequence with a layout
+    /// descriptor for `T`.
+    pub fn new(value: T) -> Frozen<T> {
+        Frozen { value: value }
+    }
+
+    /// Returns a shared reference to the frozen value.
+    pub fn get(self: &Self) -> &T {
+        &self.value
+    }
+}

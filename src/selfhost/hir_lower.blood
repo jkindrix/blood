@@ -93,6 +93,18 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     register_type_names(&mut ctx, &program.declarations, &mut parsed_module_cache);
     alloc_tag_set(0 as u64);
 
+    // Phase 1a.5: Pre-inject stdlib `Frozen<T>` into root scope so that
+    // Phase 1b's `register_or_use_existing_builtin("Frozen", ...)` finds it
+    // via `resolver.lookup` and reuses its real DefId rather than allocating
+    // a synthetic. A1 Phase 3c (GAP-2, S75). Phase 1 registered stdlib's
+    // `struct Frozen<T>` as a child of `std.core.frozen` in child_def_hash
+    // only — not globally. Without pre-injection, the synthetic DefId would
+    // shadow stdlib's, `use std.core.frozen.Frozen` would silently fail as
+    // a duplicate binding, and qualified calls `Frozen.new(...)` would miss
+    // stdlib's impl methods. Skipped when stdlib isn't loaded or the user
+    // declared `struct Frozen` locally (already in root scope from Phase 1).
+    inject_stdlib_frozen_into_root(&mut ctx);
+
     // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
     // Only registers names not already defined by user code
     hir_lower_builtin.register_builtin_types(&mut ctx);
@@ -952,6 +964,88 @@ fn load_codebase_module(
 // ============================================================
 // Stdlib Prelude Auto-Import
 // ============================================================
+
+/// A1 Phase 3c (GAP-2, S75): pre-inject stdlib `Frozen<T>` into root scope
+/// so Phase 1b's `register_or_use_existing_builtin` picks it up.
+///
+/// Phase 1 recursively loads stdlib via `load_external_module`, registering
+/// `std.core.frozen.Frozen` as a child of `std.core.frozen`'s module DefId
+/// in `child_def_hash` — but NOT in root scope. Phase 1b's
+/// `register_or_use_existing_builtin` does a global-scope `resolver.lookup`
+/// which misses the nested registration and would allocate a synthetic
+/// DefId. That synthetic would then shadow stdlib's via the root-scope
+/// binding installed by `define_global`, and `use std.core.frozen.Frozen`
+/// would silently fail in Phase 3a.5 (duplicate binding in root scope).
+///
+/// This function, running BEFORE Phase 1b, navigates std → core → frozen →
+/// Frozen via `lookup_in_parent` and calls `define_global` to bind the
+/// stdlib DefId as "Frozen" in root scope. Phase 1b then finds it and
+/// reuses the DefId; the `use` import is a no-op duplicate-skip rather
+/// than a conflict. S60's `frozen_new_def_ids` capture in `lower_assoc_fn`
+/// (which fires for stdlib impls lowered in Phase 3a) correctly matches
+/// against the stdlib DefId via `ctx.builtin_frozen_def`.
+///
+/// Skipped if stdlib_path is unset (no stdlib to inject from), or if the
+/// user already declared a local `struct Frozen` — Phase 1 registered that
+/// globally; `define_global` would refuse to overwrite, and the user's
+/// choice is respected all the way through (including the Phase 1b
+/// `register_or_use_existing_builtin` path, which finds the user's Frozen
+/// and reuses its DefId).
+fn inject_stdlib_frozen_into_root(ctx: &mut hir_lower_ctx.LoweringCtx) {
+    if ctx.stdlib_path.is_none() {
+        return;
+    }
+
+    // Navigate std → core → frozen → Frozen.
+    let std_sym = ctx.intern("std");
+    let std_lookup = ctx.resolver.lookup(std_sym);
+    if std_lookup.is_none() {
+        return;
+    }
+    let std_result = std_lookup.unwrap();
+    let std_binding = ctx.resolver.scope_binding(std_result.scope_index, std_result.binding_index);
+    let std_def = std_binding.def_id;
+
+    let core_sym = ctx.intern("core");
+    let core_def_opt = ctx.resolver.lookup_in_parent(std_def, core_sym);
+    if core_def_opt.is_none() {
+        return;
+    }
+    let core_def = core_def_opt.unwrap();
+
+    let frozen_mod_sym = ctx.intern("frozen");
+    let frozen_mod_opt = ctx.resolver.lookup_in_parent(core_def, frozen_mod_sym);
+    if frozen_mod_opt.is_none() {
+        return;
+    }
+    let frozen_mod_def = frozen_mod_opt.unwrap();
+
+    let frozen_sym = ctx.intern("Frozen");
+    let frozen_struct_opt = ctx.resolver.lookup_in_parent(frozen_mod_def, frozen_sym);
+    if frozen_struct_opt.is_none() {
+        return;
+    }
+    let frozen_struct_def = frozen_struct_opt.unwrap();
+
+    // Verify it's a struct before injecting (defensive — the stdlib path
+    // should never produce anything else for this name, but a naming
+    // collision in a future stdlib revision shouldn't corrupt resolution).
+    let info_opt = ctx.resolver.get_def_info(frozen_struct_def);
+    match info_opt {
+        Option.Some(info) => {
+            match info.kind {
+                hir_def.DefKind.Struct => {
+                    // `define_global` silently returns false if the name is
+                    // already globally bound (user declared a local Frozen).
+                    // That's the correct behavior — user's choice wins.
+                    let _ = ctx.resolver.define_global(frozen_sym, frozen_struct_def);
+                }
+                _ => {}
+            }
+        }
+        Option.None => {}
+    }
+}
 
 /// Auto-imports stdlib prelude items into root scope when --stdlib-path is set.
 /// Primary path: if `mod std;` is loaded, finds the prelude sub-module and
