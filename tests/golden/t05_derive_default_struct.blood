@@ -1,0 +1,40 @@
+// Test: `#[derive(Default)]` on a record struct with mixed primitive
+// field types (C3 Phase B, S70).
+//
+// Exercises:
+//   - `expand_default_for_struct` synthesizes
+//     `impl Default for Config {
+//         fn default() -> Self { Config { port: 0u16, active: false,
+//                                          count: 0i32, ratio: 0.0f64 } }
+//      }`
+//   - Per-field dispatch via `build_field_default_expr` / `primitive_default_expr`:
+//     each primitive type resolves to an inline literal rather than a
+//     `TypeName.default()` call (primitive-typed expression paths like
+//     `i32.default()` do not resolve in Blood's HIR lowering).
+//   - `Config.default()` produces zero-valued fields end-to-end.
+//
+// EXPECT: 0
+// EXPECT: 0
+// EXPECT: 0
+// EXPECT: 0
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+struct Config {
+    port: u16,
+    active: bool,
+    count: i32,
+    ratio: f64,
+}
+
+fn main() -> i32 {
+    let c: Config = Config.default();
+
+    println_int(c.port as i32);
+    if c.active { println_int(9); } else { println_int(0); }
+    println_int(c.count);
+    println_int(c.ratio as i32);
+
+    0
+}

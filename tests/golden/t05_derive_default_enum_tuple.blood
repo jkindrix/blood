@@ -1,0 +1,33 @@
+// Test: `#[derive(Default)]` on an enum whose first variant is a tuple
+// variant with primitive payloads (C3 Phase B, S70).
+//
+// `expand_default_for_enum` synthesizes
+// `Reading.Value(0i32, false)` for the first variant. Each payload type
+// routes through `build_field_default_expr` — primitives become literals,
+// not `T.default()` calls (same reason as struct fields).
+//
+// EXPECT: 0
+// EXPECT: 0
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+enum Reading {
+    Value(i32, bool),
+    Sentinel,
+}
+
+fn main() -> i32 {
+    let r: Reading = Reading.default();
+    match &r {
+        &Reading.Value(ref v, ref b) => {
+            println_int(*v);
+            if *b { println_int(9); } else { println_int(0); }
+        }
+        &Reading.Sentinel => {
+            println_int(77);
+            println_int(77);
+        }
+    }
+    0
+}

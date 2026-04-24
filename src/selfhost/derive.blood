@@ -145,6 +145,7 @@ pub struct SyntheticSpans {
     pub hash_method: SynIdent,
     pub eq_method: SynIdent,
     pub clone_method: SynIdent,
+    pub default_method: SynIdent,
     pub self_id: SynIdent,
     pub other_id: SynIdent,
     pub state_id: SynIdent,
@@ -155,6 +156,7 @@ pub struct SyntheticSpans {
     pub partialeq_trait: SynIdent,
     pub eq_trait: SynIdent,
     pub clone_trait: SynIdent,
+    pub default_trait: SynIdent,
     pub left_payload_idents: Vec<SynIdent>,
     pub right_payload_idents: Vec<SynIdent>,
     pub initialized: bool,
@@ -172,6 +174,7 @@ impl SyntheticSpans {
             hash_method: z_ident,
             eq_method: z_ident,
             clone_method: z_ident,
+            default_method: z_ident,
             self_id: z_ident,
             other_id: z_ident,
             state_id: z_ident,
@@ -182,6 +185,7 @@ impl SyntheticSpans {
             partialeq_trait: z_ident,
             eq_trait: z_ident,
             clone_trait: z_ident,
+            default_trait: z_ident,
             left_payload_idents: Vec.new(),
             right_payload_idents: Vec.new(),
             initialized: false,
@@ -205,6 +209,7 @@ pub fn ensure_synth_spans(
     spans.hash_method = register_syn(ctx, "hash");
     spans.eq_method = register_syn(ctx, "eq");
     spans.clone_method = register_syn(ctx, "clone");
+    spans.default_method = register_syn(ctx, "default");
     spans.self_id = register_syn(ctx, "self");
     spans.other_id = register_syn(ctx, "other");
     spans.state_id = register_syn(ctx, "state");
@@ -215,6 +220,7 @@ pub fn ensure_synth_spans(
     spans.partialeq_trait = register_syn(ctx, "PartialEq");
     spans.eq_trait = register_syn(ctx, "Eq");
     spans.clone_trait = register_syn(ctx, "Clone");
+    spans.default_trait = register_syn(ctx, "Default");
     // Pre-intern 8 left-side and 8 right-side payload binding names for enum
     // tuple-variant patterns: __l0..__l7, __r0..__r7. Cap matches MAX_TUPLE
     // _VARIANT_ARITY. PartialEq uses both sides; Hash uses only left.
@@ -457,6 +463,25 @@ fn syn_int_lit_suffixed(val: u128, suffix: ast.IntSuffix, span: common.Span) -> 
     ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
 }
 
+/// Build a float literal with an explicit suffix, e.g. `0.0f32`. The value
+/// is passed in its IEEE-754 bit representation (matching ast.LiteralKind.Float).
+fn syn_float_lit_suffixed(bits: u64, suffix: ast.FloatSuffix, span: common.Span) -> ast.Expr {
+    let lit = ast.Literal {
+        kind: ast.LiteralKind.Float { bits: bits, suffix: Option.Some(suffix) },
+        span: span,
+    };
+    ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
+}
+
+/// Build a character literal, e.g. `'\0'`.
+fn syn_char_lit(c: char, span: common.Span) -> ast.Expr {
+    let lit = ast.Literal {
+        kind: ast.LiteralKind.Char(c),
+        span: span,
+    };
+    ast.Expr { kind: ast.ExprKind.Literal(lit), span: span }
+}
+
 /// Build a tuple literal expression `(e0, e1, ...)`.
 fn syn_tuple_expr(fields: Vec<ast.Expr>, span: common.Span) -> ast.Expr {
     ast.Expr {
@@ -529,6 +554,132 @@ fn syn_match_arm(
         body: body,
         span: span,
     }
+}
+
+// ============================================================
+// Default-expansion Helpers
+// ============================================================
+
+/// If `name_str` is a recognized primitive type with a canonical zero /
+/// empty default, returns a literal expression for that default.
+///
+/// Primitive-typed expression paths (`i32.default()`, `bool.default()`)
+/// do not resolve in Blood's HIR lowering because primitive names are
+/// not registered as expression-path targets. The derive expander
+/// bypasses that by emitting the literal directly. The stdlib
+/// `impl Default for <primitive>` blocks remain callable from
+/// user-written generic code with a `T: Default` bound.
+///
+/// Returns `None` for non-primitive names (user types, String) so the
+/// caller can fall back to a `FieldTypeName.default()` call.
+fn primitive_default_expr(name_str: &str, span: common.Span) -> Option<ast.Expr> {
+    if str_equals(name_str, "bool") {
+        return Option.Some(syn_bool_lit(false, span));
+    }
+    if str_equals(name_str, "char") {
+        return Option.Some(syn_char_lit('\0', span));
+    }
+    if str_equals(name_str, "i8") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I8, span));
+    }
+    if str_equals(name_str, "i16") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I16, span));
+    }
+    if str_equals(name_str, "i32") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I32, span));
+    }
+    if str_equals(name_str, "i64") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I64, span));
+    }
+    if str_equals(name_str, "i128") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I128, span));
+    }
+    if str_equals(name_str, "isize") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.Isize, span));
+    }
+    if str_equals(name_str, "u8") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U8, span));
+    }
+    if str_equals(name_str, "u16") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U16, span));
+    }
+    if str_equals(name_str, "u32") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U32, span));
+    }
+    if str_equals(name_str, "u64") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U64, span));
+    }
+    if str_equals(name_str, "u128") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U128, span));
+    }
+    if str_equals(name_str, "usize") {
+        return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.Usize, span));
+    }
+    if str_equals(name_str, "f32") {
+        return Option.Some(syn_float_lit_suffixed(0u64, ast.FloatSuffix.F32, span));
+    }
+    if str_equals(name_str, "f64") {
+        return Option.Some(syn_float_lit_suffixed(0u64, ast.FloatSuffix.F64, span));
+    }
+    Option.None
+}
+
+/// Synthesize `FieldTypeName.default()` for a non-primitive path-shaped
+/// field type. The callee is built as a two-segment expression path
+/// `FieldTypeName.default`, analogous to `syn_variant_path_expr`, then
+/// applied with no arguments.
+///
+/// Returns `None` for non-Path types (references, arrays, slices,
+/// tuples, function types, etc.) and for zero-segment paths — those
+/// cases bubble up and cause the overall Default expansion to skip with
+/// an E0901 diagnostic.
+fn syn_field_default_call(
+    field_ty: &ast.Type,
+    default_method: &SynIdent,
+    attr_span: common.Span,
+) -> Option<ast.Expr> {
+    match &field_ty.kind {
+        &ast.TypeKind.Path(ref tp) => {
+            if tp.segments.len() == 0usize {
+                return Option.None;
+            }
+            let first_seg_name_span = tp.segments[0].name.span;
+            let callee = syn_variant_path_expr(
+                first_seg_name_span,
+                default_method.span,
+                attr_span,
+            );
+            Option.Some(syn_call_expr(callee, Vec.new(), attr_span))
+        }
+        _ => Option.None,
+    }
+}
+
+/// Build the default expression for a single field. Primitive-typed
+/// fields get a literal zero / `false` / `'\0'`; path-typed fields get
+/// a `TypeName.default()` call; everything else returns `None` (which
+/// propagates as an expansion failure).
+fn build_field_default_expr(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    field_ty: &ast.Type,
+    attr_span: common.Span,
+) -> Option<ast.Expr> {
+    match &field_ty.kind {
+        &ast.TypeKind.Path(ref tp) => {
+            if tp.segments.len() == 1usize {
+                let first_seg_name_span = tp.segments[0].name.span;
+                let name_str = ctx.span_to_string(first_seg_name_span);
+                let prim = primitive_default_expr(name_str.as_str(), attr_span);
+                match prim {
+                    Option.Some(_) => return prim,
+                    Option.None => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    syn_field_default_call(field_ty, &spans.default_method, attr_span)
 }
 
 // ============================================================
@@ -1461,6 +1612,170 @@ pub fn expand_clone_for_enum(
 }
 
 // ============================================================
+// Default Expansion (struct + enum)
+// ============================================================
+
+/// Synthesize `impl Default for Target { fn default() -> Self {
+/// Target { f0: <default_0>, f1: <default_1>, ... } } }` for a record
+/// struct. Per-field defaults come from `build_field_default_expr`:
+/// primitive-typed fields get an inline literal; path-typed user-type
+/// fields get a `FieldTypeName.default()` call. Returns `None` if any
+/// field's type cannot be defaulted, or if the target is not a record
+/// struct.
+pub fn expand_default_for_struct(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+    ast_struct: &ast.StructDecl,
+) -> Option<ast.ImplBlock> {
+    let fields_ast = match &ast_struct.body {
+        &ast.StructBody.Record(ref fs) => fs,
+        &ast.StructBody.Tuple(_) => return Option.None,
+        &ast.StructBody.Unit => return Option.None,
+    };
+
+    let attr_span = req.span;
+
+    // Build each field's default; any untypeable field aborts the whole
+    // expansion so the caller can emit a single E0901 at the attribute.
+    let mut record_fields: Vec<ast.RecordExprField> = Vec.with_capacity(fields_ast.len());
+    for i in 0usize..fields_ast.len() {
+        let f = &fields_ast[i];
+        let val_expr = match build_field_default_expr(ctx, spans, &f.ty, attr_span) {
+            Option.Some(e) => e,
+            Option.None => return Option.None,
+        };
+        record_fields.push(ast.RecordExprField {
+            name: syn_sym_span(f.name.span),
+            val: Option.Some(val_expr),
+            span: attr_span,
+        });
+    }
+
+    let target_type_path = syn_type_path_from_span(req.target_name_span, attr_span);
+    let body_expr = syn_record_expr(target_type_path, record_fields, attr_span);
+
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(body_expr)),
+        span: attr_span,
+    };
+
+    // `fn default() -> Self` — no parameters, returns Self by value.
+    let params: Vec<ast.Param> = Vec.new();
+    let return_ty = syn_path_type(&spans.self_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.default_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.default_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+/// Synthesize `impl Default for Target { fn default() -> Self {
+/// Target.V[(<default_0>, <default_1>, ...)] } }` for an enum, picking the
+/// first declared variant. Unit first variant produces `Target.V`; tuple
+/// first variant produces `Target.V(...)` with per-field defaults. Record
+/// first variants and empty enums return `None`.
+pub fn expand_default_for_enum(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+    ast_enum: &ast.EnumDecl,
+) -> Option<ast.ImplBlock> {
+    if ast_enum.variants.len() == 0usize {
+        return Option.None;
+    }
+
+    let first_variant = &ast_enum.variants[0];
+    let attr_span = req.span;
+
+    let body_expr = match &first_variant.body {
+        &ast.StructBody.Unit => {
+            syn_variant_path_expr(req.target_name_span, first_variant.name.span, attr_span)
+        }
+        &ast.StructBody.Tuple(ref tys) => {
+            let mut args: Vec<ast.CallArg> = Vec.with_capacity(tys.len());
+            for i in 0usize..tys.len() {
+                let val_expr = match build_field_default_expr(ctx, spans, &tys[i], attr_span) {
+                    Option.Some(e) => e,
+                    Option.None => return Option.None,
+                };
+                args.push(syn_call_arg(val_expr, attr_span));
+            }
+            let callee = syn_variant_path_expr(req.target_name_span, first_variant.name.span, attr_span);
+            syn_call_expr(callee, args, attr_span)
+        }
+        &ast.StructBody.Record(_) => return Option.None,
+    };
+
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(body_expr)),
+        span: attr_span,
+    };
+
+    let params: Vec<ast.Param> = Vec.new();
+    let return_ty = syn_path_type(&spans.self_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.default_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.default_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+// ============================================================
 // Eq Expansion (marker trait)
 // ============================================================
 
@@ -1487,9 +1802,10 @@ pub fn expand_eq_for_adt(
 }
 
 /// Emit an E0901 diagnostic when a known derive kind fails to expand —
-/// either because the kind itself is not yet implemented (Debug, Default)
-/// or because the target's shape is unsupported (e.g., tuple/unit struct,
-/// enum with record variants, tuple variant with arity > 8).
+/// either because the kind itself is not yet implemented (Debug) or because
+/// the target's shape is unsupported (e.g., tuple/unit struct, enum with
+/// record variants, tuple variant with arity > 8, or — for Default — a
+/// field whose type has no default representation).
 fn emit_derive_failure_diag(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     req: &DeriveRequest,
@@ -1499,9 +1815,6 @@ fn emit_derive_failure_diag(
     match &req.kind {
         &DeriveKind.Debug => {
             msg.push_str("`#[derive(Debug)]` is not yet implemented");
-        }
-        &DeriveKind.Default => {
-            msg.push_str("`#[derive(Default)]` is not yet implemented");
         }
         _ => {
             msg.push_str("`#[derive(");
@@ -1518,14 +1831,17 @@ fn emit_derive_failure_diag(
 }
 
 /// Expand a single derive request to a synthesized impl block. Dispatches
-/// based on whether the target is a struct or enum. When the dispatch path
-/// returns None (unimplemented kind OR unsupported target shape), emits
-/// E0901 at the attribute's span with a kind-specific message before
-/// propagating None.
+/// based on whether the target is a struct or enum and on the requested
+/// kind. `ast_decl` is the original AST declaration for the target and is
+/// used by Default expansion to reach field types (other kinds read from
+/// HIR via `ctx.get_item`). When the dispatch path returns None
+/// (unimplemented kind OR unsupported target shape), emits E0901 at the
+/// attribute's span with a kind-specific message before propagating None.
 pub fn expand_request(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     spans: &SyntheticSpans,
     req: &DeriveRequest,
+    ast_decl: &ast.Declaration,
 ) -> Option<ast.ImplBlock> {
     let is_enum = target_is_enum(ctx, req.target_def);
     let result = match &req.kind {
@@ -1551,8 +1867,14 @@ pub fn expand_request(
                 expand_clone_for_struct(ctx, spans, req)
             }
         }
+        &DeriveKind.Default => {
+            match ast_decl {
+                &ast.Declaration.Struct(ref s) => expand_default_for_struct(ctx, spans, req, s),
+                &ast.Declaration.Enum(ref e) => expand_default_for_enum(ctx, spans, req, e),
+                _ => Option.None,
+            }
+        }
         &DeriveKind.Debug => Option.None,
-        &DeriveKind.Default => Option.None,
     };
     match &result {
         &Option.Some(_) => {}

@@ -358,6 +358,83 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructBody
 // ============================================================
 
 /// Lower all declarations to HIR items.
+/// Register the methods of a synth (derive-generated) impl block as
+/// children of the impl's self-type DefId. Mirrors the Phase-2 logic in
+/// `hir_lower.register_impl_items` but is inlined here because Pass 1.5
+/// runs after Phase 2 and needs to register synth impls at that point.
+///
+/// The registration populates `child_def_hash` so qualified-path
+/// resolution (e.g. `Config.default()` for derived Default) finds the
+/// method. Method-call dispatch (`value.clone()`) doesn't use this
+/// hash, which is why Hash/PartialEq/Clone/Eq derives work without
+/// this step — only Default's static-style call site hits the gap.
+fn register_synth_impl_items(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
+    let type_def_id_opt: Option<hir_def.DefId> = match &imp.self_ty.kind {
+        &ast.TypeKind.Path(ref tp) => {
+            if tp.segments.len() == 0usize {
+                Option.None
+            } else {
+                let mut seg_names: Vec<common.SpannedSymbol> = Vec.with_capacity(tp.segments.len());
+                for si in 0usize..tp.segments.len() {
+                    let s_str = ctx.span_to_string(tp.segments[si].name.span);
+                    let s_sym = ctx.intern(s_str.as_str());
+                    seg_names.push(common.SpannedSymbol { symbol: s_sym, span: tp.segments[si].name.span });
+                }
+                let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
+                match path_result {
+                    Option.Some(result) => Option.Some(result.def_id),
+                    Option.None => Option.None,
+                }
+            }
+        }
+        _ => Option.None,
+    };
+    if type_def_id_opt.is_none() {
+        return;
+    }
+    let type_def_id = type_def_id_opt.unwrap();
+    for j in 0usize..imp.items.len() {
+        match &imp.items[j] {
+            &ast.ImplItem.Function(ref f) => {
+                let fn_def_id = ctx.alloc_def_id();
+                let fn_name_str = ctx.span_to_string(f.name.span);
+                let fn_name_sym = ctx.intern(fn_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    fn_def_id,
+                    hir_def.DefKind.Fn,
+                    fn_name_sym,
+                    f.name.span,
+                    Option.Some(type_def_id),
+                );
+            }
+            &ast.ImplItem.TypeAlias(ref ta) => {
+                let ta_def_id = ctx.alloc_def_id();
+                let ta_name_str = ctx.span_to_string(ta.name.span);
+                let ta_name_sym = ctx.intern(ta_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    ta_def_id,
+                    hir_def.DefKind.TypeAlias,
+                    ta_name_sym,
+                    ta.name.span,
+                    Option.Some(type_def_id),
+                );
+            }
+            &ast.ImplItem.Const(ref c) => {
+                let c_def_id = ctx.alloc_def_id();
+                let c_name_str = ctx.span_to_string(c.name.span);
+                let c_name_sym = ctx.intern(c_name_str.as_str());
+                ctx.resolver.register_def_info(
+                    c_def_id,
+                    hir_def.DefKind.Const,
+                    c_name_sym,
+                    c.name.span,
+                    Option.Some(type_def_id),
+                );
+            }
+        }
+    }
+}
+
 pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.Declaration>) {
     // Two-pass lowering: first non-impl declarations (enums, structs, traits,
     // functions, etc.) to ensure all enum variants and type information is
@@ -384,7 +461,8 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.D
     let mut synth_spans = derive.SyntheticSpans.zero();
     let mut ii: usize = 0;
     while ii < decls.len() {
-        match &decls[ii] {
+        let decl_ref = &decls[ii];
+        match decl_ref {
             &ast.Declaration.Struct(ref s) => {
                 // Re-intern struct name to look up its DefId in the resolver.
                 let name_str = ctx.span_to_string(s.name.span);
@@ -403,7 +481,7 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.D
                     if requests.len() > 0 {
                         derive.ensure_synth_spans(ctx, &mut synth_spans);
                         for ri in 0usize..requests.len() {
-                            let synth = derive.expand_request(ctx, &synth_spans, &requests[ri]);
+                            let synth = derive.expand_request(ctx, &synth_spans, &requests[ri], decl_ref);
                             match synth {
                                 Option.Some(imp) => { synth_impls.push(imp); }
                                 Option.None => {}
@@ -429,7 +507,7 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.D
                     if requests.len() > 0 {
                         derive.ensure_synth_spans(ctx, &mut synth_spans);
                         for ri in 0usize..requests.len() {
-                            let synth = derive.expand_request(ctx, &synth_spans, &requests[ri]);
+                            let synth = derive.expand_request(ctx, &synth_spans, &requests[ri], decl_ref);
                             match synth {
                                 Option.Some(imp) => { synth_impls.push(imp); }
                                 Option.None => {}
@@ -441,6 +519,15 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.D
             _ => {}
         }
         ii += 1;
+    }
+    // Register synth-impl associated items as children of the self type so
+    // qualified-path lookups (e.g. `Config.default()` for derived Default)
+    // find them. User-written impls go through the equivalent registration
+    // in `hir_lower.register_declaration` during Phase 2; synth impls are
+    // created in Pass 1.5, after Phase 2 has run, so they need the same
+    // registration here before lowering.
+    for si in 0usize..synth_impls.len() {
+        register_synth_impl_items(ctx, &synth_impls[si]);
     }
     for si in 0usize..synth_impls.len() {
         lower_impl_decl(ctx, &synth_impls[si]);

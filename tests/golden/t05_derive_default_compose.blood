@@ -1,0 +1,32 @@
+// Test: `#[derive(Default)]` composes with nested derived-Default types
+// (C3 Phase B, S70).
+//
+// The outer struct's Default calls the inner struct's Default via
+// `Inner.default()` — exercising the non-primitive path of
+// `build_field_default_expr`. Both structs derive Default.
+//
+// EXPECT: 0
+// EXPECT: 0
+// EXPECT: 0
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+struct Inner {
+    a: i32,
+    b: bool,
+}
+
+#[derive(Default)]
+struct Outer {
+    inner: Inner,
+    tag: u32,
+}
+
+fn main() -> i32 {
+    let o: Outer = Outer.default();
+    println_int(o.inner.a);
+    if o.inner.b { println_int(9); } else { println_int(0); }
+    println_int(o.tag as i32);
+    0
+}

@@ -1,0 +1,28 @@
+// Test: `#[derive(Default)]` on an enum with a unit first variant
+// (C3 Phase B, S70).
+//
+// `expand_default_for_enum` picks the first declared variant. For a unit
+// variant, the body is a bare `Enum.Variant` path expression. We verify
+// the result via pattern matching since Blood has no stdlib PartialEq
+// trait yet.
+//
+// EXPECT: 1
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+enum Status {
+    Idle,
+    Busy,
+    Done,
+}
+
+fn main() -> i32 {
+    let d: Status = Status.default();
+    match &d {
+        &Status.Idle => println_int(1),
+        &Status.Busy => println_int(2),
+        &Status.Done => println_int(3),
+    }
+    0
+}
