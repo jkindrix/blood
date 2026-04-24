@@ -1,0 +1,42 @@
+// Test: `#[derive(Eq)]` on a record struct and an enum (C3 Phase B, S69).
+//
+// Exercises:
+//   - `expand_eq_for_adt` synthesizes an empty `impl Eq for T {}` block
+//   - The empty-impl path through `lower_impl_decl` registers the type as
+//     implementing the marker trait (no methods to define)
+//   - The `requires_eq<T: Eq>` bound is satisfied for the derived types
+//
+// Eq is a marker trait with no methods. Blood has no canonical stdlib Eq
+// trait yet; the test declares it locally — same pattern S66 uses for
+// PartialEq. The synthesized impl attaches to the locally-declared trait.
+//
+// EXPECT: 1
+mod std;
+
+trait Eq {}
+
+#[derive(Eq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Eq)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// Compile-only marker check: the bound `T: Eq` is satisfied iff the
+// synthesized `impl Eq for ...` actually registered the type.
+fn requires_eq<T: Eq>(_v: &T) {}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    let c: Color = Color.Red;
+    requires_eq(&p);
+    requires_eq(&c);
+    println_int(1);
+    0
+}

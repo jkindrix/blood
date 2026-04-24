@@ -151,6 +151,7 @@ pub struct SyntheticSpans {
     pub bool_ty: SynIdent,
     pub hash_trait: SynIdent,
     pub partialeq_trait: SynIdent,
+    pub eq_trait: SynIdent,
     pub left_payload_idents: Vec<SynIdent>,
     pub right_payload_idents: Vec<SynIdent>,
     pub initialized: bool,
@@ -175,6 +176,7 @@ impl SyntheticSpans {
             bool_ty: z_ident,
             hash_trait: z_ident,
             partialeq_trait: z_ident,
+            eq_trait: z_ident,
             left_payload_idents: Vec.new(),
             right_payload_idents: Vec.new(),
             initialized: false,
@@ -205,6 +207,7 @@ pub fn ensure_synth_spans(
     spans.bool_ty = register_syn(ctx, "bool");
     spans.hash_trait = register_syn(ctx, "Hash");
     spans.partialeq_trait = register_syn(ctx, "PartialEq");
+    spans.eq_trait = register_syn(ctx, "Eq");
     // Pre-intern 8 left-side and 8 right-side payload binding names for enum
     // tuple-variant patterns: __l0..__l7, __r0..__r7. Cap matches MAX_TUPLE
     // _VARIANT_ARITY. PartialEq uses both sides; Hash uses only left.
@@ -1170,9 +1173,35 @@ pub fn expand_partial_eq_for_enum(
     })
 }
 
+// ============================================================
+// Eq Expansion (marker trait)
+// ============================================================
+
+/// Synthesize `impl Eq for Target {}` — an empty impl. Eq is a marker trait
+/// in Rust; in Blood we treat it the same way. The impl has no methods, only
+/// the trait_ty + self_ty binding which registers the type as implementing Eq.
+/// Works identically for structs and enums.
+pub fn expand_eq_for_adt(
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let attr_span = req.span;
+    let trait_ty = syn_path_type(&spans.eq_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: Vec.new(),
+        span: attr_span,
+    })
+}
+
 /// Expand a single derive request to a synthesized impl block. Dispatches
 /// based on whether the target is a struct or enum. Returns `None` for
-/// unsupported derive kinds (Clone, Debug, Eq, Default) and for targets
+/// unsupported derive kinds (Clone, Debug, Default) and for targets
 /// whose shape isn't supported (e.g., record enum variants, oversized
 /// tuple variants).
 pub fn expand_request(
@@ -1196,9 +1225,9 @@ pub fn expand_request(
                 expand_partial_eq_for_struct(ctx, spans, req)
             }
         }
+        &DeriveKind.Eq => expand_eq_for_adt(spans, req),
         &DeriveKind.Clone => Option.None,
         &DeriveKind.Debug => Option.None,
-        &DeriveKind.Eq => Option.None,
         &DeriveKind.Default => Option.None,
     }
 }
