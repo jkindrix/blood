@@ -1,0 +1,23 @@
+// Test: `String.from(&str)` constructs a String containing the source
+// bytes. Exercises S73's fix for the latent `String.from` builtin: prior
+// to S73 the runtime had no `@string_from` symbol and codegen had no
+// dispatch, so any call produced `llc: use of undefined value
+// '@string_from'`. S73 adds the runtime function (inlined form of
+// string_new + string_push_str — internal calls would otherwise trip the
+// compiler's builtin dispatch) plus `is_string_from` / `emit_string_from_call`
+// in codegen_builtins.blood.
+//
+// EXPECT: hello
+// EXPECT: 5
+// EXPECT: world!
+
+fn main() -> i32 {
+    let greeting: String = String.from("hello");
+    println_str(greeting.as_str());
+    println_int(greeting.len() as i32);
+
+    let mut combo: String = String.from("world");
+    combo.push_str("!");
+    println_str(combo.as_str());
+    0
+}

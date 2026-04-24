@@ -514,6 +514,16 @@ pub fn is_string_new(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@string_new")
 }
 
+/// Checks if the function name is @string_from.
+pub fn is_string_from(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_from")
+}
+
+/// Checks if the function name is @string_with_capacity.
+pub fn is_string_with_capacity(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_with_capacity")
+}
+
 /// Checks if the function name is @string_push_str.
 pub fn is_string_push_str(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@string_push_str")
@@ -554,6 +564,84 @@ pub fn emit_string_new_call(
     // Emit: call void @string_new(ptr out_ptr)
     ctx.begin_call(Option.None, "void", "@string_new");
     ctx.call_arg_str(true, "ptr", out_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_from call with correct calling convention.
+/// Runtime signature: void @string_from(ptr out_ptr, ptr str_ref)
+pub fn emit_string_from_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get output data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    // Get the &str argument (fat pointer) and stage into a stack temp,
+    // because the runtime expects a pointer to BloodStr.
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+    let str_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&str_tmp, "{ ptr, i64 }");
+    ctx.emit_store_str_cg("{ ptr, i64 }", arg_val.as_str(), &str_tmp);
+
+    // Emit: call void @string_from(ptr out_ptr, ptr str_tmp)
+    ctx.begin_call(Option.None, "void", "@string_from");
+    ctx.call_arg_str(true, "ptr", out_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &str_tmp);
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_with_capacity call with correct calling convention.
+/// Runtime signature: void @string_with_capacity(ptr out_ptr, i64 cap)
+pub fn emit_string_with_capacity_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get output data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    // Get the usize arg (i64 at LLVM layer on x86_64).
+    let (cap_val, cap_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Emit: call void @string_with_capacity(ptr out_ptr, i64 cap_val)
+    ctx.begin_call(Option.None, "void", "@string_with_capacity");
+    ctx.call_arg_str(true, "ptr", out_ptr.as_str());
+    ctx.call_arg_str(false, "i64", cap_val.as_str());
     ctx.end_call();
 
     // Jump to continuation

@@ -1,0 +1,22 @@
+// Test: `String.with_capacity(n)` returns an empty String with a data
+// buffer of at least `n` bytes preallocated. Exercises S73's fix for the
+// latent `String.with_capacity` builtin (previously missing runtime
+// symbol + missing codegen dispatch — same bug class as String.from).
+//
+// After construction: len == 0, but subsequent pushes up to `n` bytes
+// reuse the preallocated buffer without requiring ensure_cap to grow it.
+//
+// EXPECT: 0
+// EXPECT: hi
+// EXPECT: 2
+
+fn main() -> i32 {
+    let s: String = String.with_capacity(64usize);
+    println_int(s.len() as i32);
+
+    let mut s2: String = String.with_capacity(8usize);
+    s2.push_str("hi");
+    println_str(s2.as_str());
+    println_int(s2.len() as i32);
+    0
+}
