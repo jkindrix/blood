@@ -1,0 +1,95 @@
+// Blood Standard Library - Default Trait
+//
+// The Default trait provides a zero-valued / sensible-default construction
+// method for types. It is the companion trait targeted by
+// `#[derive(Default)]`, which synthesizes an impl that returns a
+// field-by-field zero-initialized value.
+
+/// Trait for types that have a default value.
+///
+/// Default provides a `default` method that returns a canonical
+/// zero / empty value for the type. It takes no self parameter —
+/// it is a type-directed constructor.
+pub trait Default {
+    /// Returns the default value for this type.
+    fn default() -> Self / pure;
+}
+
+// Implementations for primitive types.
+//
+// NOTE: The derive expander in `src/selfhost/derive.blood` does not call
+// these impls for primitive fields — it synthesizes the equivalent
+// literal (e.g. `0i32`, `false`) directly. Primitive-typed expression
+// paths such as `i32.default()` do not resolve in Blood's HIR lowering
+// (primitive type names are absent from the expression path table), so
+// the derive expander must emit literals. These impls are retained so
+// that user-written generic code with a `T: Default` bound can be
+// instantiated with primitive T.
+
+impl Default for bool {
+    fn default() -> Self / pure { false }
+}
+
+impl Default for i8 {
+    fn default() -> Self / pure { 0i8 }
+}
+
+impl Default for i16 {
+    fn default() -> Self / pure { 0i16 }
+}
+
+impl Default for i32 {
+    fn default() -> Self / pure { 0i32 }
+}
+
+impl Default for i64 {
+    fn default() -> Self / pure { 0i64 }
+}
+
+impl Default for i128 {
+    fn default() -> Self / pure { 0i128 }
+}
+
+impl Default for isize {
+    fn default() -> Self / pure { 0isize }
+}
+
+impl Default for u8 {
+    fn default() -> Self / pure { 0u8 }
+}
+
+impl Default for u16 {
+    fn default() -> Self / pure { 0u16 }
+}
+
+impl Default for u32 {
+    fn default() -> Self / pure { 0u32 }
+}
+
+impl Default for u64 {
+    fn default() -> Self / pure { 0u64 }
+}
+
+impl Default for u128 {
+    fn default() -> Self / pure { 0u128 }
+}
+
+impl Default for usize {
+    fn default() -> Self / pure { 0usize }
+}
+
+impl Default for f32 {
+    fn default() -> Self / pure { 0.0f32 }
+}
+
+impl Default for f64 {
+    fn default() -> Self / pure { 0.0f64 }
+}
+
+// NOTE: `impl Default for String` is not defined here because qualified-
+// path resolution for methods on the builtin `String` type requires
+// additional builtin-side wiring (see `hir_lower_builtin.register_builtin_children`)
+// to register method DefIds as children of `ctx.builtin_string_def`.
+// Until that landing, `#[derive(Default)]` on a struct with a `String`
+// field emits a `String.default()` call that fails to resolve. Avoid
+// such structs in derive(Default) usage until the wire-up is done.
