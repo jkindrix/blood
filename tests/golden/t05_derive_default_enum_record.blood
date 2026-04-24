@@ -1,0 +1,37 @@
+// Test: `#[derive(Default)]` on an enum whose first variant is a record
+// variant (C3 Phase B enum record-variant extension, S71).
+//
+// `expand_default_for_enum` synthesizes
+//   Target.V { f0: <default_0>, f1: <default_1>, ... }
+// via the new `syn_variant_record_expr` helper (composes
+// `syn_variant_type_path` with `syn_record_expr`). Each field type routes
+// through `build_field_default_expr` — primitives become literals.
+//
+// EXPECT: 0
+// EXPECT: 0
+// EXPECT: 0
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+enum Config {
+    Fresh { port: u16, active: bool, tag: i32 },
+    Stale,
+}
+
+fn main() -> i32 {
+    let c: Config = Config.default();
+    match &c {
+        &Config.Fresh { port: ref p, active: ref a, tag: ref t } => {
+            println_int(*p as i32);
+            if *a { println_int(9); } else { println_int(0); }
+            println_int(*t);
+        }
+        &Config.Stale => {
+            println_int(77);
+            println_int(77);
+            println_int(77);
+        }
+    }
+    0
+}

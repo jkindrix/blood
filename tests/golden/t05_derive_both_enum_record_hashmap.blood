@@ -1,0 +1,77 @@
+// Test: `#[derive(Hash, PartialEq)]` on an enum with a record variant used
+// as a HashMap key (C3 Phase B enum record-variant extension + Phase C
+// integration, S71).
+//
+// Exercises:
+//   - Both derives accept `VariantKindInfo.Record(field_spans)` via the S71
+//     extension to `collect_enum_variant_info`
+//   - The synthesized record-variant match arms (pattern via
+//     `syn_pat_variant_struct_struct`, body via the shared payload pool)
+//     satisfy S66's typeck bound enforcement — no E0206
+//   - S65's kk=2 codegen path routes HashMap<ShapeKey, i32> through the
+//     per-K wrapper thunks that delegate to the derived impls
+//   - insert/get/contains_key/remove lifecycle works with a key type
+//     whose equality varies across variants AND across record-field
+//     values within the same variant
+//
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 0
+mod std;
+use std.traits.hash.Hash;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(Hash, PartialEq)]
+enum ShapeKey {
+    Point,
+    Rect { w: u32, h: u32 },
+    Box3 { x: u32, y: u32, z: u32 },
+}
+
+fn main() -> i32 {
+    let mut m: HashMap<ShapeKey, i32> = HashMap.new();
+
+    let k_point: ShapeKey = ShapeKey.Point;
+    let k_rect: ShapeKey = ShapeKey.Rect { w: 10u32, h: 20u32 };
+    let k_box: ShapeKey = ShapeKey.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+    let k_rect_miss: ShapeKey = ShapeKey.Rect { w: 10u32, h: 99u32 };
+
+    m.insert(k_point, 100);
+    m.insert(k_rect, 200);
+    m.insert(k_box, 300);
+
+    // Lookup by matching variants / payloads. Re-build each lookup key
+    // because the HashMap consumed the originals.
+    let q_point: ShapeKey = ShapeKey.Point;
+    let q_rect: ShapeKey = ShapeKey.Rect { w: 10u32, h: 20u32 };
+    match m.get(&q_point) {
+        Option.Some(v) => println_int(v),
+        Option.None => println_int(-1),
+    }
+    match m.get(&q_rect) {
+        Option.Some(v) => println_int(v),
+        Option.None => println_int(-1),
+    }
+
+    // Different-payload lookup miss (same variant, different h).
+    let q_rect2: ShapeKey = ShapeKey.Rect { w: 10u32, h: 20u32 };
+    let q_rect_miss: ShapeKey = ShapeKey.Rect { w: 10u32, h: 99u32 };
+    if m.contains_key(&q_rect2) { println_int(1); } else { println_int(0); }
+    if m.contains_key(&q_rect_miss) { println_int(1); } else { println_int(0); }
+
+    // Remove + verify gone.
+    let q_point_rm: ShapeKey = ShapeKey.Point;
+    m.remove(&q_point_rm);
+    let q_point_after1: ShapeKey = ShapeKey.Point;
+    if !m.contains_key(&q_point_after1) { println_int(1); } else { println_int(0); }
+    let q_point_after2: ShapeKey = ShapeKey.Point;
+    if m.contains_key(&q_point_after2) { println_int(1); } else { println_int(0); }
+
+    0
+}

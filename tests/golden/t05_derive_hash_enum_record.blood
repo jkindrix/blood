@@ -1,0 +1,62 @@
+// Test: `#[derive(Hash)]` on an enum with a record variant
+// (C3 Phase B enum record-variant extension, S71).
+//
+// Exercises:
+//   - `collect_enum_variant_info` accepts `VariantKind.Record(fs)` and
+//     materializes `VariantKindInfo.Record(field_spans)` (S71 change;
+//     previously returned None for any enum with a record variant)
+//   - `build_hash_variant_arm` emits `&Enum.V { f0: ref __l0, ... }` via
+//     the new `syn_pat_variant_struct_struct` helper
+//   - Payload hashing reuses `left_payload_idents[i]` uniformly with
+//     tuple variants — only the pattern shape differs
+//   - Different payloads on the same record variant hash differently
+//   - Different record variants with equal payloads hash differently
+//     (discriminant is folded first)
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+#[derive(Hash)]
+enum Shape {
+    Point,
+    Rect { w: u32, h: u32 },
+    Box3 { x: u32, y: u32, z: u32 },
+}
+
+fn main() -> i32 {
+    let point: Shape = Shape.Point;
+    let r1: Shape = Shape.Rect { w: 10u32, h: 20u32 };
+    let r2: Shape = Shape.Rect { w: 10u32, h: 20u32 };
+    let r3: Shape = Shape.Rect { w: 10u32, h: 99u32 };
+    let b1: Shape = Shape.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+    let b2: Shape = Shape.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+
+    let mut s_point: u64 = FNV_OFFSET_BASIS();
+    let mut s_r1: u64 = FNV_OFFSET_BASIS();
+    let mut s_r2: u64 = FNV_OFFSET_BASIS();
+    let mut s_r3: u64 = FNV_OFFSET_BASIS();
+    let mut s_b1: u64 = FNV_OFFSET_BASIS();
+    let mut s_b2: u64 = FNV_OFFSET_BASIS();
+
+    point.hash(&mut s_point);
+    r1.hash(&mut s_r1);
+    r2.hash(&mut s_r2);
+    r3.hash(&mut s_r3);
+    b1.hash(&mut s_b1);
+    b2.hash(&mut s_b2);
+
+    // Determinism: Rect { w: 10, h: 20 } hashes the same both times.
+    if s_r1 == s_r2 { println_int(1); } else { println_int(0); }
+    // Determinism: Box3 { x: 1, y: 2, z: 3 } hashes the same both times.
+    if s_b1 == s_b2 { println_int(1); } else { println_int(0); }
+    // Payload sensitivity: Rect { w: 10, h: 20 } != Rect { w: 10, h: 99 }.
+    if s_r1 != s_r3 { println_int(1); } else { println_int(0); }
+    // Variant distinction: Point != Rect { w: 10, h: 20 } (discriminants differ).
+    if s_point != s_r1 { println_int(1); } else { println_int(0); }
+
+    0
+}

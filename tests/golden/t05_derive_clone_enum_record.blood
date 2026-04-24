@@ -1,0 +1,51 @@
+// Test: `#[derive(Clone)]` on an enum with a record variant
+// (C3 Phase B enum record-variant extension, S71).
+//
+// Exercises:
+//   - `build_clone_variant_arm` handles `VariantKindInfo.Record(field_spans)`:
+//     pattern emitted via `syn_pat_variant_struct_struct`, body via
+//     `syn_variant_record_expr` reconstructing
+//     `Enum.V { f0: __l0.clone(), f1: __l1.clone(), ... }`
+//   - Combined #[derive(Clone, PartialEq)] shows the two expansions
+//     coexist without overlap
+//   - Clone of Record variant is equal to the source via derived PartialEq
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.traits.clone.Clone;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(Clone, PartialEq)]
+enum Shape {
+    Point,
+    Rect { w: u32, h: u32 },
+    Box3 { x: u32, y: u32, z: u32 },
+}
+
+fn main() -> i32 {
+    // Unit variant clone.
+    let pt1: Shape = Shape.Point;
+    let pt2: Shape = pt1.clone();
+    if pt1.eq(&pt2) { println_int(1); } else { println_int(0); }
+
+    // Record variant clone (2-field).
+    let r1: Shape = Shape.Rect { w: 10u32, h: 20u32 };
+    let r2: Shape = r1.clone();
+    if r1.eq(&r2) { println_int(1); } else { println_int(0); }
+
+    // Record variant clone (3-field).
+    let b1: Shape = Shape.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+    let b2: Shape = b1.clone();
+    if b1.eq(&b2) { println_int(1); } else { println_int(0); }
+
+    // Cross-variant: cloned Point is still distinct from Rect.
+    if !pt1.eq(&r1) { println_int(1); } else { println_int(0); }
+
+    0
+}

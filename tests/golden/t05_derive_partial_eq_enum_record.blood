@@ -1,0 +1,56 @@
+// Test: `#[derive(PartialEq)]` on an enum with a record variant
+// (C3 Phase B enum record-variant extension, S71).
+//
+// Exercises:
+//   - `build_partial_eq_variant_arm` emits both
+//     `&Enum.V { f0: ref __l0, ... }` and `&Enum.V { f0: ref __r0, ... }`
+//     sides via `syn_pat_variant_struct_struct`
+//   - Body `true && *__l_i == *__r_i && ...` iterates uniformly regardless
+//     of variant kind
+//   - Wildcard arm catches different-variant pairs returning false
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(PartialEq)]
+enum Shape {
+    Point,
+    Rect { w: u32, h: u32 },
+    Box3 { x: u32, y: u32, z: u32 },
+}
+
+fn main() -> i32 {
+    let pt1: Shape = Shape.Point;
+    let pt2: Shape = Shape.Point;
+    let r1: Shape = Shape.Rect { w: 10u32, h: 20u32 };
+    let r2: Shape = Shape.Rect { w: 10u32, h: 20u32 };
+    let r3: Shape = Shape.Rect { w: 10u32, h: 99u32 };
+    let b1: Shape = Shape.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+    let b2: Shape = Shape.Box3 { x: 1u32, y: 2u32, z: 3u32 };
+    let b3: Shape = Shape.Box3 { x: 1u32, y: 99u32, z: 3u32 };
+
+    // Unit variant equality.
+    if pt1.eq(&pt2) { println_int(1); } else { println_int(0); }
+    // Record variant equality (2-field).
+    if r1.eq(&r2) { println_int(1); } else { println_int(0); }
+    // Record variant inequality (h differs).
+    if !r1.eq(&r3) { println_int(1); } else { println_int(0); }
+    // Record variant equality (3-field).
+    if b1.eq(&b2) { println_int(1); } else { println_int(0); }
+    // Record variant inequality (middle field y differs — probes that
+    // every ref binding is actually compared, not just the first).
+    if !b1.eq(&b3) { println_int(1); } else { println_int(0); }
+    // Different variants -> wildcard arm -> false.
+    if !pt1.eq(&r1) { println_int(1); } else { println_int(0); }
+
+    0
+}

@@ -781,6 +781,55 @@ fn syn_pat_variant_tuple_struct(
     }
 }
 
+/// Build a `StructPatternField` with a named field binding — the inner
+/// pattern is wrapped as `Option.Some(pattern)` (the shorthand form
+/// `{ name }` is the `None` variant; derive synthesis always spells
+/// out the field: binding form).
+fn syn_struct_pattern_field(
+    name_span: common.Span,
+    pattern: ast.Pattern,
+    overall_span: common.Span,
+) -> ast.StructPatternField {
+    ast.StructPatternField {
+        name: syn_sym_span(name_span),
+        pattern: Option.Some(pattern),
+        span: overall_span,
+    }
+}
+
+/// Build a record-struct pattern for a record enum variant:
+/// `EnumName.VariantName { f0: p0, f1: p1, ... }`.
+fn syn_pat_variant_struct_struct(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    field_patterns: Vec<ast.StructPatternField>,
+    overall_span: common.Span,
+) -> ast.Pattern {
+    let path = syn_variant_type_path(enum_name_span, variant_name_span, overall_span);
+    ast.Pattern {
+        kind: ast.PatternKind.Struct {
+            path: path,
+            fields: field_patterns,
+            has_rest: false,
+        },
+        span: overall_span,
+    }
+}
+
+/// Build a record expression for an enum variant:
+/// `EnumName.VariantName { f0: v0, f1: v1, ... }`. Uses a 2-segment
+/// variant TypePath (parallels `syn_variant_path_expr` for tuple
+/// variants; `syn_record_expr` for record structs).
+fn syn_variant_record_expr(
+    enum_name_span: common.Span,
+    variant_name_span: common.Span,
+    record_fields: Vec<ast.RecordExprField>,
+    overall_span: common.Span,
+) -> ast.Expr {
+    let path = syn_variant_type_path(enum_name_span, variant_name_span, overall_span);
+    syn_record_expr(path, record_fields, overall_span)
+}
+
 // ============================================================
 // Attribute Extraction
 // ============================================================
@@ -891,12 +940,17 @@ fn collect_record_field_spans(
 // Enum Variant Info
 // ============================================================
 
-/// Derive-visible classification of an enum variant's body. Record-variant
-/// derive support is deferred; `collect_enum_variant_info` returns `None` if
-/// any variant is a record.
+/// Derive-visible classification of an enum variant's body. Tuple and
+/// record variants carry enough information for the arm builders to
+/// reach the pre-interned payload ident pool (`left_payload_idents` /
+/// `right_payload_idents`, 8 slots each) and — for record variants —
+/// to spell the field names in the synthesized pattern. A variant
+/// whose arity exceeds the ident pool causes `collect_enum_variant_info`
+/// to return `None`, aborting the whole derive.
 pub enum VariantKindInfo {
     Unit,
     Tuple(usize),
+    Record(Vec<common.Span>),
 }
 
 /// Per-variant info needed to synthesize enum derive bodies.
@@ -911,8 +965,9 @@ pub struct VariantInfo {
 
 /// Collect variant info from an enum HIR item. Returns `None` if:
 /// - Target is not an enum.
-/// - Any variant is a record variant (deferred).
-/// - Any tuple variant exceeds `MAX_TUPLE_VARIANT_ARITY` fields.
+/// - Any tuple variant exceeds 8 fields (pre-interned `__l0..__l7`
+///   ident pool cap).
+/// - Any record variant exceeds 8 fields (same ident-pool cap).
 fn collect_enum_variant_info(
     ctx: &hir_lower_ctx.LoweringCtx,
     target_def: hir_def.DefId,
@@ -932,7 +987,16 @@ fn collect_enum_variant_info(
                                 }
                                 VariantKindInfo.Tuple(tys.len())
                             }
-                            &hir_item.VariantKind.Record(_) => return Option.None,
+                            &hir_item.VariantKind.Record(ref fs) => {
+                                if fs.len() > 8 {
+                                    return Option.None;
+                                }
+                                let mut field_spans: Vec<common.Span> = Vec.with_capacity(fs.len());
+                                for j in 0usize..fs.len() {
+                                    field_spans.push(fs[j].name.span);
+                                }
+                                VariantKindInfo.Record(field_spans)
+                            }
                         };
                         info.push(VariantInfo {
                             name_span: v.name.span,
@@ -1213,7 +1277,8 @@ fn build_hash_variant_arm(
     variant: &VariantInfo,
     attr_span: common.Span,
 ) -> ast.MatchArm {
-    // Pattern: &EnumName.VariantName or &EnumName.VariantName(ref __l0, ref __l1, ...).
+    // Pattern: &EnumName.VariantName | &EnumName.VariantName(ref __l0, ...) |
+    //          &EnumName.VariantName { f0: ref __l0, f1: ref __l1, ... }.
     let inner_pat = match &variant.kind {
         &VariantKindInfo.Unit => {
             syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
@@ -1225,27 +1290,37 @@ fn build_hash_variant_arm(
             }
             syn_pat_variant_tuple_struct(target_name_span, variant.name_span, field_pats, attr_span)
         }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut field_pats: Vec<ast.StructPatternField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let binding = syn_pat_ident_by_ref(&spans.left_payload_idents[i]);
+                field_pats.push(syn_struct_pattern_field(field_spans[i], binding, attr_span));
+            }
+            syn_pat_variant_struct_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
     };
     let ref_pat = syn_pat_ref(inner_pat, false, attr_span);
 
-    // Body: { <disc>u32.hash(state); [field_i.hash(state);]* }.
+    // Body: { <disc>u32.hash(state); [__l_i.hash(state);]* }. Tuple and Record
+    // variants hash the same way — both bind payload fields through the
+    // `left_payload_idents` pool, so only the payload count differs.
     let mut stmts: Vec<ast.Statement> = Vec.new();
     let disc_lit = syn_int_lit_suffixed(variant.discriminant as u128, ast.IntSuffix.U32, attr_span);
     let mut disc_args: Vec<ast.CallArg> = Vec.new();
     disc_args.push(syn_call_arg(syn_path_expr(&spans.state_id, attr_span), attr_span));
     let disc_call = syn_method_call(disc_lit, &spans.hash_method, disc_args, attr_span);
     stmts.push(ast.Statement.Expr { expr: disc_call, has_semi: true });
-    match &variant.kind {
-        &VariantKindInfo.Unit => {}
-        &VariantKindInfo.Tuple(arity) => {
-            for i in 0usize..arity {
-                let field_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
-                let mut args: Vec<ast.CallArg> = Vec.new();
-                args.push(syn_call_arg(syn_path_expr(&spans.state_id, attr_span), attr_span));
-                let field_call = syn_method_call(field_expr, &spans.hash_method, args, attr_span);
-                stmts.push(ast.Statement.Expr { expr: field_call, has_semi: true });
-            }
-        }
+    let payload_count = match &variant.kind {
+        &VariantKindInfo.Unit => 0usize,
+        &VariantKindInfo.Tuple(arity) => arity,
+        &VariantKindInfo.Record(ref field_spans) => field_spans.len(),
+    };
+    for i in 0usize..payload_count {
+        let field_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+        let mut args: Vec<ast.CallArg> = Vec.new();
+        args.push(syn_call_arg(syn_path_expr(&spans.state_id, attr_span), attr_span));
+        let field_call = syn_method_call(field_expr, &spans.hash_method, args, attr_span);
+        stmts.push(ast.Statement.Expr { expr: field_call, has_semi: true });
     }
     let arm_body = syn_block_expr(stmts, Option.None, attr_span);
 
@@ -1335,7 +1410,9 @@ fn build_partial_eq_variant_arm(
     variant: &VariantInfo,
     attr_span: common.Span,
 ) -> ast.MatchArm {
-    // Left pattern: EnumName.VariantName[(ref __l0, ...)]
+    // Left pattern: EnumName.VariantName |
+    //               EnumName.VariantName(ref __l0, ...) |
+    //               EnumName.VariantName { f0: ref __l0, ... }
     let left_inner = match &variant.kind {
         &VariantKindInfo.Unit => {
             syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
@@ -1347,10 +1424,18 @@ fn build_partial_eq_variant_arm(
             }
             syn_pat_variant_tuple_struct(target_name_span, variant.name_span, fs, attr_span)
         }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut fs: Vec<ast.StructPatternField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let binding = syn_pat_ident_by_ref(&spans.left_payload_idents[i]);
+                fs.push(syn_struct_pattern_field(field_spans[i], binding, attr_span));
+            }
+            syn_pat_variant_struct_struct(target_name_span, variant.name_span, fs, attr_span)
+        }
     };
     let left_pat = syn_pat_ref(left_inner, false, attr_span);
 
-    // Right pattern: EnumName.VariantName[(ref __r0, ...)]
+    // Right pattern: same shape as left, but bindings come from `__r_i`.
     let right_inner = match &variant.kind {
         &VariantKindInfo.Unit => {
             syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
@@ -1362,6 +1447,14 @@ fn build_partial_eq_variant_arm(
             }
             syn_pat_variant_tuple_struct(target_name_span, variant.name_span, fs, attr_span)
         }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut fs: Vec<ast.StructPatternField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let binding = syn_pat_ident_by_ref(&spans.right_payload_idents[i]);
+                fs.push(syn_struct_pattern_field(field_spans[i], binding, attr_span));
+            }
+            syn_pat_variant_struct_struct(target_name_span, variant.name_span, fs, attr_span)
+        }
     };
     let right_pat = syn_pat_ref(right_inner, false, attr_span);
 
@@ -1371,32 +1464,34 @@ fn build_partial_eq_variant_arm(
     tuple_fs.push(right_pat);
     let tuple_pat = syn_pat_tuple(tuple_fs, attr_span);
 
-    // Body: true [&& *__l_i == *__r_i]*.
+    // Body: true [&& *__l_i == *__r_i]*. Tuple and Record compare the same
+    // way (both bind through `left_payload_idents` / `right_payload_idents`),
+    // only the field count differs.
     let mut acc: ast.Expr = syn_bool_lit(true, attr_span);
-    match &variant.kind {
-        &VariantKindInfo.Unit => {}
-        &VariantKindInfo.Tuple(arity) => {
-            for i in 0usize..arity {
-                let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
-                let r_expr = syn_path_expr(&spans.right_payload_idents[i], attr_span);
-                let l_deref = ast.Expr {
-                    kind: ast.ExprKind.Unary {
-                        operator: common.UnaryOp.Deref,
-                        operand: Box.new(l_expr),
-                    },
-                    span: attr_span,
-                };
-                let r_deref = ast.Expr {
-                    kind: ast.ExprKind.Unary {
-                        operator: common.UnaryOp.Deref,
-                        operand: Box.new(r_expr),
-                    },
-                    span: attr_span,
-                };
-                let eq_expr = syn_binary(common.BinOp.Eq, l_deref, r_deref, attr_span);
-                acc = syn_binary(common.BinOp.And, acc, eq_expr, attr_span);
-            }
-        }
+    let payload_count = match &variant.kind {
+        &VariantKindInfo.Unit => 0usize,
+        &VariantKindInfo.Tuple(arity) => arity,
+        &VariantKindInfo.Record(ref field_spans) => field_spans.len(),
+    };
+    for i in 0usize..payload_count {
+        let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+        let r_expr = syn_path_expr(&spans.right_payload_idents[i], attr_span);
+        let l_deref = ast.Expr {
+            kind: ast.ExprKind.Unary {
+                operator: common.UnaryOp.Deref,
+                operand: Box.new(l_expr),
+            },
+            span: attr_span,
+        };
+        let r_deref = ast.Expr {
+            kind: ast.ExprKind.Unary {
+                operator: common.UnaryOp.Deref,
+                operand: Box.new(r_expr),
+            },
+            span: attr_span,
+        };
+        let eq_expr = syn_binary(common.BinOp.Eq, l_deref, r_deref, attr_span);
+        acc = syn_binary(common.BinOp.And, acc, eq_expr, attr_span);
     }
 
     syn_match_arm(tuple_pat, acc, attr_span)
@@ -1497,7 +1592,7 @@ fn build_clone_variant_arm(
     variant: &VariantInfo,
     attr_span: common.Span,
 ) -> ast.MatchArm {
-    // Pattern: &Enum.V or &Enum.V(ref __l0, ref __l1, ...).
+    // Pattern: &Enum.V | &Enum.V(ref __l0, ...) | &Enum.V { f0: ref __l0, ... }.
     let inner_pat = match &variant.kind {
         &VariantKindInfo.Unit => {
             syn_pat_variant_path(target_name_span, variant.name_span, attr_span)
@@ -1509,10 +1604,18 @@ fn build_clone_variant_arm(
             }
             syn_pat_variant_tuple_struct(target_name_span, variant.name_span, field_pats, attr_span)
         }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut field_pats: Vec<ast.StructPatternField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let binding = syn_pat_ident_by_ref(&spans.left_payload_idents[i]);
+                field_pats.push(syn_struct_pattern_field(field_spans[i], binding, attr_span));
+            }
+            syn_pat_variant_struct_struct(target_name_span, variant.name_span, field_pats, attr_span)
+        }
     };
     let ref_pat = syn_pat_ref(inner_pat, false, attr_span);
 
-    // Body: Enum.V or Enum.V(__l0.clone(), __l1.clone(), ...).
+    // Body: Enum.V | Enum.V(__l0.clone(), ...) | Enum.V { f0: __l0.clone(), ... }.
     let arm_body = match &variant.kind {
         &VariantKindInfo.Unit => {
             syn_variant_path_expr(target_name_span, variant.name_span, attr_span)
@@ -1531,6 +1634,24 @@ fn build_clone_variant_arm(
                 args.push(syn_call_arg(clone_call, attr_span));
             }
             syn_call_expr(callee, args, attr_span)
+        }
+        &VariantKindInfo.Record(ref field_spans) => {
+            let mut record_fields: Vec<ast.RecordExprField> = Vec.with_capacity(field_spans.len());
+            for i in 0usize..field_spans.len() {
+                let l_expr = syn_path_expr(&spans.left_payload_idents[i], attr_span);
+                let clone_call = syn_method_call(
+                    l_expr,
+                    &spans.clone_method,
+                    Vec.new(),
+                    attr_span,
+                );
+                record_fields.push(ast.RecordExprField {
+                    name: syn_sym_span(field_spans[i]),
+                    val: Option.Some(clone_call),
+                    span: attr_span,
+                });
+            }
+            syn_variant_record_expr(target_name_span, variant.name_span, record_fields, attr_span)
         }
     };
 
@@ -1698,10 +1819,12 @@ pub fn expand_default_for_struct(
 }
 
 /// Synthesize `impl Default for Target { fn default() -> Self {
-/// Target.V[(<default_0>, <default_1>, ...)] } }` for an enum, picking the
-/// first declared variant. Unit first variant produces `Target.V`; tuple
-/// first variant produces `Target.V(...)` with per-field defaults. Record
-/// first variants and empty enums return `None`.
+/// Target.V[...] } }` for an enum, picking the first declared variant.
+/// Unit first variant produces `Target.V`; tuple first variant produces
+/// `Target.V(<default_0>, ...)` with per-field defaults; record first
+/// variant produces `Target.V { f0: <default_0>, ... }`. Empty enums or
+/// any field whose type cannot be defaulted cause `None` (which
+/// `expand_request` surfaces as E0901 at the attribute).
 pub fn expand_default_for_enum(
     ctx: &hir_lower_ctx.LoweringCtx,
     spans: &SyntheticSpans,
@@ -1731,7 +1854,22 @@ pub fn expand_default_for_enum(
             let callee = syn_variant_path_expr(req.target_name_span, first_variant.name.span, attr_span);
             syn_call_expr(callee, args, attr_span)
         }
-        &ast.StructBody.Record(_) => return Option.None,
+        &ast.StructBody.Record(ref fs) => {
+            let mut record_fields: Vec<ast.RecordExprField> = Vec.with_capacity(fs.len());
+            for i in 0usize..fs.len() {
+                let f = &fs[i];
+                let val_expr = match build_field_default_expr(ctx, spans, &f.ty, attr_span) {
+                    Option.Some(e) => e,
+                    Option.None => return Option.None,
+                };
+                record_fields.push(ast.RecordExprField {
+                    name: syn_sym_span(f.name.span),
+                    val: Option.Some(val_expr),
+                    span: attr_span,
+                });
+            }
+            syn_variant_record_expr(req.target_name_span, first_variant.name.span, record_fields, attr_span)
+        }
     };
 
     let body = ast.Block {
@@ -1821,7 +1959,7 @@ fn emit_derive_failure_diag(
             msg.push_str(req.kind.trait_name());
             msg.push_str(")]` is not supported for this ");
             if is_enum {
-                msg.push_str("enum (record variants and tuple variants with more than 8 fields are unsupported)");
+                msg.push_str("enum (tuple and record variants with more than 8 fields are unsupported)");
             } else {
                 msg.push_str("struct (only record structs are supported; tuple and unit structs are unsupported)");
             }
