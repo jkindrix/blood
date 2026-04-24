@@ -1,0 +1,40 @@
+// Test: `#[derive(Clone)]` on a record struct (C3 Phase B, S69).
+//
+// Exercises:
+//   - `expand_clone_for_struct` synthesizes
+//     `impl Clone for Point { fn clone(self: &Self) -> Self {
+//         Point { x: self.x.clone(), y: self.y.clone() } } }`
+//   - The synthesized impl attaches to stdlib's `trait Clone`, so
+//     primitive fields' existing `impl Clone for i32` etc. satisfy
+//     per-field `.clone()` method-dispatch
+//   - `p.clone()` returns an independent value (mutating the clone doesn't
+//     touch the original, verified via println of both post-mutation)
+//
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 99
+// EXPECT: 2
+mod std;
+use std.traits.clone.Clone;
+
+#[derive(Clone)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mut p1: Point = Point { x: 1, y: 2 };
+    let c: Point = p1.clone();
+
+    // Original fields unchanged.
+    println_int(p1.x);
+    println_int(p1.y);
+
+    // Mutating p1 after cloning must not reach the clone.
+    p1.x = 99;
+    println_int(p1.x);
+    println_int(c.x + c.y - 1);
+
+    0
+}

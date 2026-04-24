@@ -143,6 +143,7 @@ pub struct SynIdent {
 pub struct SyntheticSpans {
     pub hash_method: SynIdent,
     pub eq_method: SynIdent,
+    pub clone_method: SynIdent,
     pub self_id: SynIdent,
     pub other_id: SynIdent,
     pub state_id: SynIdent,
@@ -152,6 +153,7 @@ pub struct SyntheticSpans {
     pub hash_trait: SynIdent,
     pub partialeq_trait: SynIdent,
     pub eq_trait: SynIdent,
+    pub clone_trait: SynIdent,
     pub left_payload_idents: Vec<SynIdent>,
     pub right_payload_idents: Vec<SynIdent>,
     pub initialized: bool,
@@ -168,6 +170,7 @@ impl SyntheticSpans {
         SyntheticSpans {
             hash_method: z_ident,
             eq_method: z_ident,
+            clone_method: z_ident,
             self_id: z_ident,
             other_id: z_ident,
             state_id: z_ident,
@@ -177,6 +180,7 @@ impl SyntheticSpans {
             hash_trait: z_ident,
             partialeq_trait: z_ident,
             eq_trait: z_ident,
+            clone_trait: z_ident,
             left_payload_idents: Vec.new(),
             right_payload_idents: Vec.new(),
             initialized: false,
@@ -199,6 +203,7 @@ pub fn ensure_synth_spans(
     }
     spans.hash_method = register_syn(ctx, "hash");
     spans.eq_method = register_syn(ctx, "eq");
+    spans.clone_method = register_syn(ctx, "clone");
     spans.self_id = register_syn(ctx, "self");
     spans.other_id = register_syn(ctx, "other");
     spans.state_id = register_syn(ctx, "state");
@@ -208,6 +213,7 @@ pub fn ensure_synth_spans(
     spans.hash_trait = register_syn(ctx, "Hash");
     spans.partialeq_trait = register_syn(ctx, "PartialEq");
     spans.eq_trait = register_syn(ctx, "Eq");
+    spans.clone_trait = register_syn(ctx, "Clone");
     // Pre-intern 8 left-side and 8 right-side payload binding names for enum
     // tuple-variant patterns: __l0..__l7, __r0..__r7. Cap matches MAX_TUPLE
     // _VARIANT_ARITY. PartialEq uses both sides; Hash uses only left.
@@ -278,17 +284,23 @@ fn syn_path_type(ident: &SynIdent, overall_span: common.Span) -> ast.Type {
     ast.Type { kind: ast.TypeKind.Path(path), span: overall_span }
 }
 
-/// Build a type path segment from a raw span (struct target name). The
-/// source span directly matches the struct's declared name and is later
-/// re-interned by `lower_type`.
-fn syn_path_type_from_span(name_span: common.Span, overall_span: common.Span) -> ast.Type {
+/// Build a single-segment type path from a raw source span (the target
+/// type's declared name). The span is later re-interned by `lower_type`.
+fn syn_type_path_from_span(name_span: common.Span, overall_span: common.Span) -> ast.TypePath {
     let seg = ast.TypePathSegment {
         name: syn_sym_span(name_span),
         args: Option.None,
     };
     let mut segs: Vec<ast.TypePathSegment> = Vec.new();
     segs.push(seg);
-    let path = ast.TypePath { segments: segs, span: overall_span };
+    ast.TypePath { segments: segs, span: overall_span }
+}
+
+/// Build a type path segment from a raw span (struct target name). The
+/// source span directly matches the struct's declared name and is later
+/// re-interned by `lower_type`.
+fn syn_path_type_from_span(name_span: common.Span, overall_span: common.Span) -> ast.Type {
+    let path = syn_type_path_from_span(name_span, overall_span);
     ast.Type { kind: ast.TypeKind.Path(path), span: overall_span }
 }
 
@@ -412,6 +424,25 @@ fn syn_int_lit_suffixed(val: u128, suffix: ast.IntSuffix, span: common.Span) -> 
 fn syn_tuple_expr(fields: Vec<ast.Expr>, span: common.Span) -> ast.Expr {
     ast.Expr {
         kind: ast.ExprKind.Tuple(fields),
+        span: span,
+    }
+}
+
+/// Build a record-struct literal expression `Path { ... }` wrapping an
+/// already-constructed Vec of RecordExprFields. Caller is responsible for
+/// building each field (avoids having to move `ast.Expr` out of an indexed
+/// Vec, which Blood's borrow semantics don't permit element-wise).
+fn syn_record_expr(
+    path: ast.TypePath,
+    record_fields: Vec<ast.RecordExprField>,
+    span: common.Span,
+) -> ast.Expr {
+    ast.Expr {
+        kind: ast.ExprKind.Record {
+            path: Option.Some(path),
+            fields: record_fields,
+            base: Option.None,
+        },
         span: span,
     }
 }
@@ -876,6 +907,95 @@ pub fn expand_partial_eq_for_struct(
 }
 
 // ============================================================
+// Clone Expansion (record struct)
+// ============================================================
+
+/// Synthesize `impl Clone for Target { fn clone(self: &Self) -> Self {
+/// Target { f0: self.f0.clone(), f1: self.f1.clone(), ... } } }` for a
+/// record struct. Unit and tuple structs return `None` (deferred — the
+/// same decision point that `collect_record_field_spans` enforces for
+/// Hash/PartialEq).
+pub fn expand_clone_for_struct(
+    ctx: &hir_lower_ctx.LoweringCtx,
+    spans: &SyntheticSpans,
+    req: &DeriveRequest,
+) -> Option<ast.ImplBlock> {
+    let field_spans = match collect_record_field_spans(ctx, req.target_def) {
+        Option.Some(v) => v,
+        Option.None => return Option.None,
+    };
+
+    let attr_span = req.span;
+
+    // Build `{ f0: self.f0.clone(), f1: self.f1.clone(), ... }` as a record
+    // literal whose path targets the derived type.
+    let mut record_fields: Vec<ast.RecordExprField> = Vec.with_capacity(field_spans.len());
+    for i in 0usize..field_spans.len() {
+        let self_expr = syn_path_expr(&spans.self_id, attr_span);
+        let self_field = syn_field_expr(self_expr, field_spans[i], attr_span);
+        let clone_call = syn_method_call(
+            self_field,
+            &spans.clone_method,
+            Vec.new(),
+            attr_span,
+        );
+        record_fields.push(ast.RecordExprField {
+            name: syn_sym_span(field_spans[i]),
+            val: Option.Some(clone_call),
+            span: attr_span,
+        });
+    }
+
+    let target_type_path = syn_type_path_from_span(req.target_name_span, attr_span);
+    let body_expr = syn_record_expr(target_type_path, record_fields, attr_span);
+
+    let body = ast.Block {
+        statements: Vec.new(),
+        expr: Option.Some(Box.new(body_expr)),
+        span: attr_span,
+    };
+
+    // Params: `self: &Self`.
+    let self_param_ty = syn_ref_type(syn_path_type(&spans.self_ty, attr_span), false, attr_span);
+    let mut params: Vec<ast.Param> = Vec.new();
+    params.push(syn_param(&spans.self_id, self_param_ty, attr_span));
+
+    // Return type: `Self`.
+    let return_ty = syn_path_type(&spans.self_ty, attr_span);
+
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Public,
+        qualifiers: common.FnQualifiers.none(),
+        name: syn_sym(&spans.clone_method),
+        type_params: Option.None,
+        params: params,
+        return_type: Option.Some(return_ty),
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
+        body: Option.Some(body),
+        span: attr_span,
+    };
+
+    let mut items: Vec<ast.ImplItem> = Vec.new();
+    items.push(ast.ImplItem.Function(fn_decl));
+
+    let trait_ty = syn_path_type(&spans.clone_trait, attr_span);
+    let self_ty_node = syn_path_type_from_span(req.target_name_span, attr_span);
+
+    Option.Some(ast.ImplBlock {
+        attrs: Vec.new(),
+        type_params: Option.None,
+        trait_ty: Option.Some(trait_ty),
+        self_ty: self_ty_node,
+        where_clause: Option.None,
+        items: items,
+        span: attr_span,
+    })
+}
+
+// ============================================================
 // Enum Expansion
 // ============================================================
 
@@ -1226,7 +1346,13 @@ pub fn expand_request(
             }
         }
         &DeriveKind.Eq => expand_eq_for_adt(spans, req),
-        &DeriveKind.Clone => Option.None,
+        &DeriveKind.Clone => {
+            if is_enum {
+                Option.None
+            } else {
+                expand_clone_for_struct(ctx, spans, req)
+            }
+        }
         &DeriveKind.Debug => Option.None,
         &DeriveKind.Default => Option.None,
     }
