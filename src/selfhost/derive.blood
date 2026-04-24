@@ -19,6 +19,7 @@ module blood.derive;
 // - PartialEq: fn eq(self: &Self, other: &Self) -> bool — ANDed field equality
 
 mod common;
+mod hir;
 mod hir_def;
 mod hir_item;
 mod hir_lower_ctx;
@@ -643,10 +644,11 @@ fn is_derive_attribute(ctx: &hir_lower_ctx.LoweringCtx, attr: &ast.Attribute) ->
 }
 
 /// Extracts derive requests from an ADT (struct or enum) declaration's
-/// attributes. Each `#[derive(Trait1, Trait2)]` yields one request per listed
-/// trait. Unknown trait names are silently skipped (future: E0xxx diagnostic).
+/// attributes. Each `#[derive(Trait1, Trait2)]` yields one request per
+/// listed trait. Unknown trait names emit E0102 at the name's span
+/// listing the supported derive kinds.
 pub fn extract_derive_requests(
-    ctx: &hir_lower_ctx.LoweringCtx,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
     attrs: &Vec<ast.Attribute>,
     target_def: hir_def.DefId,
     target_name_span: common.Span,
@@ -677,8 +679,11 @@ pub fn extract_derive_requests(
                                             });
                                         }
                                         Option.None => {
-                                            // Unknown derive name — silently skip for now.
-                                            // Future: emit an E0xxx diagnostic.
+                                            let mut msg = String.new();
+                                            msg.push_str("unknown derive trait `");
+                                            msg.push_str(name_str.as_str());
+                                            msg.push_str("` (supported: Clone, Debug, PartialEq, Eq, Default, Hash)");
+                                            ctx.error(hir.DiagnosticCode.E0102, msg, name.span);
                                         }
                                     }
                                 }
@@ -1481,18 +1486,49 @@ pub fn expand_eq_for_adt(
     })
 }
 
+/// Emit an E0901 diagnostic when a known derive kind fails to expand —
+/// either because the kind itself is not yet implemented (Debug, Default)
+/// or because the target's shape is unsupported (e.g., tuple/unit struct,
+/// enum with record variants, tuple variant with arity > 8).
+fn emit_derive_failure_diag(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    req: &DeriveRequest,
+    is_enum: bool,
+) {
+    let mut msg = String.new();
+    match &req.kind {
+        &DeriveKind.Debug => {
+            msg.push_str("`#[derive(Debug)]` is not yet implemented");
+        }
+        &DeriveKind.Default => {
+            msg.push_str("`#[derive(Default)]` is not yet implemented");
+        }
+        _ => {
+            msg.push_str("`#[derive(");
+            msg.push_str(req.kind.trait_name());
+            msg.push_str(")]` is not supported for this ");
+            if is_enum {
+                msg.push_str("enum (record variants and tuple variants with more than 8 fields are unsupported)");
+            } else {
+                msg.push_str("struct (only record structs are supported; tuple and unit structs are unsupported)");
+            }
+        }
+    }
+    ctx.error(hir.DiagnosticCode.E0901, msg, req.span);
+}
+
 /// Expand a single derive request to a synthesized impl block. Dispatches
-/// based on whether the target is a struct or enum. Returns `None` for
-/// unsupported derive kinds (Clone, Debug, Default) and for targets
-/// whose shape isn't supported (e.g., record enum variants, oversized
-/// tuple variants).
+/// based on whether the target is a struct or enum. When the dispatch path
+/// returns None (unimplemented kind OR unsupported target shape), emits
+/// E0901 at the attribute's span with a kind-specific message before
+/// propagating None.
 pub fn expand_request(
-    ctx: &hir_lower_ctx.LoweringCtx,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
     spans: &SyntheticSpans,
     req: &DeriveRequest,
 ) -> Option<ast.ImplBlock> {
     let is_enum = target_is_enum(ctx, req.target_def);
-    match &req.kind {
+    let result = match &req.kind {
         &DeriveKind.Hash => {
             if is_enum {
                 expand_hash_for_enum(ctx, spans, req)
@@ -1517,5 +1553,10 @@ pub fn expand_request(
         }
         &DeriveKind.Debug => Option.None,
         &DeriveKind.Default => Option.None,
+    };
+    match &result {
+        &Option.Some(_) => {}
+        &Option.None => { emit_derive_failure_diag(ctx, req, is_enum); }
     }
+    result
 }

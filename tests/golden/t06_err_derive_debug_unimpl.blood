@@ -1,0 +1,21 @@
+// COMPILE_FAIL: `#[derive(Debug)]` is a known kind but expansion isn't
+// yet implemented
+// EXPECT: not yet implemented
+// EXPECT: Debug
+//
+// C3 Phase B (S69): `expand_request` now emits E0901 when a known derive
+// kind cannot be expanded — either because the kind itself isn't yet
+// implemented (Debug, Default) or because the target's shape is
+// unsupported (tuple/unit struct, record-variant enum, oversized tuple
+// variants). Clone, Eq, Hash, and PartialEq ship in S67/S68/S69; Debug
+// and Default remain unimplemented and emit this diagnostic.
+#[derive(Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let _p = Point { x: 1, y: 2 };
+    0
+}

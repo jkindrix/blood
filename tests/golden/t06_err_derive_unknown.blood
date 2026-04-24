@@ -1,0 +1,19 @@
+// COMPILE_FAIL: `#[derive(Foo)]` where `Foo` is not a known derive trait
+// EXPECT: unknown derive trait
+// EXPECT: Foo
+//
+// C3 Phase B (S69): `extract_derive_requests` now emits E0102 at the
+// trait name's span when `DeriveKind.from_name` returns None. Previously
+// these were silently dropped, so a typo like `#[derive(Clon)]` would
+// compile without a Clone impl and surface only as a missing-method error
+// later. The new diagnostic includes the supported derive list as a hint.
+#[derive(Foo)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let _p = Point { x: 1, y: 2 };
+    0
+}
