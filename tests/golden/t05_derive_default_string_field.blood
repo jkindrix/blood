@@ -1,0 +1,34 @@
+// Test: `#[derive(Default)]` on a struct with a `String` field resolves
+// `String.default()` through the builtin pipeline (C3 Phase B follow-up,
+// S72).
+//
+// Exercises:
+//   - `register_builtin_children` in hir_lower_builtin.blood registers
+//     `default` as a child of `ctx.builtin_string_def` mapped to the
+//     `string_new` runtime symbol (both produce an empty String).
+//   - `build_field_default_expr` takes the non-primitive path for the
+//     `name` field, emitting `String.default()`; this now resolves
+//     because the builtin child exists.
+//   - `Config.default()` yields `{ name: "", level: 0i32 }` end-to-end.
+//
+// EXPECT: empty
+// EXPECT: 0
+mod std;
+use std.traits.default.Default;
+
+#[derive(Default)]
+struct Config {
+    name: String,
+    level: i32,
+}
+
+fn main() -> i32 {
+    let c: Config = Config.default();
+    if c.name.len() == 0usize {
+        println_str("empty");
+    } else {
+        println_str("not-empty");
+    }
+    println_int(c.level);
+    0
+}

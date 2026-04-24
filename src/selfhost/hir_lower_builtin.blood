@@ -142,6 +142,11 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
             ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d2.index, common.make_string("string_from")));
             let d3 = register_builtin_child(ctx, parent, "with_capacity", hir_def.DefKind.Fn, dummy_span);
             ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d3.index, common.make_string("string_with_capacity")));
+            // `String.default()` shares the `@string_new` runtime symbol — both produce an empty
+            // String. Wired as a builtin child so `#[derive(Default)]` on a String-field struct
+            // can emit `String.default()` and have it resolve through the qualified-path pipeline.
+            let d4 = register_builtin_child(ctx, parent, "default", hir_def.DefKind.Fn, dummy_span);
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d4.index, common.make_string("string_new")));
         }
         Option.None => {}
     }

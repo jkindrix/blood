@@ -86,10 +86,11 @@ impl Default for f64 {
     fn default() -> Self / pure { 0.0f64 }
 }
 
-// NOTE: `impl Default for String` is not defined here because qualified-
-// path resolution for methods on the builtin `String` type requires
-// additional builtin-side wiring (see `hir_lower_builtin.register_builtin_children`)
-// to register method DefIds as children of `ctx.builtin_string_def`.
-// Until that landing, `#[derive(Default)]` on a struct with a `String`
-// field emits a `String.default()` call that fails to resolve. Avoid
-// such structs in derive(Default) usage until the wire-up is done.
+// NOTE: `impl Default for String` is not defined here. Instead,
+// `String.default()` is wired into the builtin pipeline: a builtin
+// child named `default` is registered under `ctx.builtin_string_def`
+// in `hir_lower_builtin.register_builtin_children`, and its DefId
+// shares the `string_new` runtime symbol (both produce an empty
+// String). This mirrors how `String.new()` and `String.from()` are
+// handled and lets `#[derive(Default)]` on a String-field struct
+// emit `String.default()` successfully.
