@@ -1,0 +1,52 @@
+// Test: HashMap with user ADT key (kk=2 codegen path) through a wrapper
+// function. Pre-S90 the wrapper-receiver miscompile bypassed the kk=2
+// per-K hash/eq wrapper emission (because get_adt_args saw `&HashMap`
+// not `HashMap`, so kk fell back to 0/default and the wrapper-emission
+// branch was never taken at all). This golden verifies that user-ADT
+// keys still route through the per-K wrappers when the call originates
+// inside a wrapper function.
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: -1
+mod std;
+use std.traits.hash.Hash;
+
+struct Pt { x: i32, y: i32 }
+
+impl Hash for Pt {
+    fn hash(self: &Self, state: &mut u64) {
+        self.x.hash(state);
+        self.y.hash(state);
+    }
+}
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+impl PartialEq for Pt {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+
+fn lookup(m: &HashMap<Pt, i32>, k: &Pt) -> i32 / pure {
+    match m.get(k) {
+        Option.Some(v) => v,
+        Option.None => -1,
+    }
+}
+
+fn main() -> i32 {
+    let mut m: HashMap<Pt, i32> = HashMap.new();
+    m.insert(Pt { x: 1, y: 2 }, 100);
+    m.insert(Pt { x: 3, y: 4 }, 200);
+
+    let q1 = Pt { x: 1, y: 2 };
+    let q2 = Pt { x: 3, y: 4 };
+    let q3 = Pt { x: 5, y: 6 };
+
+    println_int(lookup(&m, &q1));
+    println_int(lookup(&m, &q2));
+    println_int(lookup(&m, &q3));
+    0
+}

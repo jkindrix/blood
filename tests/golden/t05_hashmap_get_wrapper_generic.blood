@@ -1,0 +1,38 @@
+// Test: HashMap.get through a generic `<K: Hash + Eq>` wrapper. Closes
+// S90's "Direction B-2" probe (S86 follow-up). The earlier S86 trail
+// described this as "per-K hash wrapper not emitted from generic
+// context". The actual root cause was that codegen's
+// extract_hashmap_sizes peeled only one Ref layer from the operand's
+// HIR type, so any HashMap call from inside *any* wrapper function
+// (generic or concrete) silently miscompiled. This golden exercises
+// the generic-wrapper case specifically — the body is monomorphized
+// per concrete K (S78/S85 chained mono) and each instance must still
+// see the correct ks/vs for the concrete K that flowed in at the call
+// site.
+//
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: -1
+
+mod std;
+use std.traits.hash.Hash;
+use std.traits.cmp.Eq;
+
+fn lookup<K: Hash + Eq>(m: &HashMap<K, i32>, key: &K) -> i32 / pure {
+    match m.get(key) {
+        Option.Some(v) => v,
+        Option.None => -1,
+    }
+}
+
+fn main() -> i32 {
+    let mut m: HashMap<i32, i32> = HashMap.new();
+    m.insert(1, 100);
+    m.insert(2, 200);
+    m.insert(3, 300);
+
+    println_int(lookup(&m, &1));
+    println_int(lookup(&m, &2));
+    println_int(lookup(&m, &99));
+    0
+}
