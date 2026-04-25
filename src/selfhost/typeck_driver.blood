@@ -953,6 +953,15 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     let t_p3_start = blood_clock_millis();
     resolve_pending_methods(&mut checker);
     resolve_pending_field_accesses(&mut checker);
+    // Option F: retry recording of type-generic method calls whose fresh_vars
+    // were unresolved at call-site check-time (e.g., `let p1 = Pair.new(1, 2);
+    // let a1: i32 = *p1.get_first();` — p1's T is bound by a1's declared type
+    // AFTER the get_first call is checked, so the call-site recording sees
+    // fresh_vars still chained to unresolved Infers). After all bodies have
+    // type-checked, the subst_table has the final chain; re-resolve each
+    // deferred record and emit the TypeGenericCallInfo if every fresh_tv is
+    // now concrete.
+    finalize_deferred_type_generic_calls(&mut checker);
     let t_p3_ms = blood_clock_millis() - t_p3_start;
 
     // Phase 4: Build impl method table and collect unresolved pending method calls
@@ -3181,6 +3190,47 @@ fn type_contains_infer(ty: &hir_ty.Type) -> bool {
 // ============================================================
 // Deferred Method Resolution
 // ============================================================
+
+/// Option F: retries resolution of type-generic method calls whose
+/// fresh inference variables were not concrete at call-site check time.
+/// Runs after all bodies have been checked, when the subst_table holds
+/// the final chain of bindings (let-binding type annotations have
+/// propagated to receiver type parameters, etc.). Each deferred record
+/// is re-resolved; if every fresh_tv now lands on a concrete type, the
+/// call is promoted into `type_generic_calls` for MIR lowering.
+fn finalize_deferred_type_generic_calls(checker: &mut typeck.TypeChecker) {
+    let interner = type_intern.type_interner();
+    let mut di: usize = 0;
+    while di < checker.deferred_type_generic_calls.len() {
+        let saved_bindings = &checker.deferred_type_generic_calls[di].saved_bindings;
+        let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+        let mut all_concrete = true;
+        let mut bpi: usize = 0;
+        while bpi + 1 < saved_bindings.len() {
+            let body_tv = saved_bindings[bpi];
+            let fresh_tv = saved_bindings[bpi + 1];
+            let fresh_infer = interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
+            let concrete = checker.resolve(fresh_infer);
+            match interner.get(concrete) {
+                &type_intern.InternedTypeKind.Infer(_) => {
+                    all_concrete = false;
+                }
+                _ => {
+                    bindings.push(common.TypeMonoBinding.new(body_tv, concrete.index));
+                }
+            }
+            bpi += 2;
+        }
+        if all_concrete && bindings.len() > 0 {
+            let call_span_start = checker.deferred_type_generic_calls[di].call_span_start;
+            let callee_def_id = checker.deferred_type_generic_calls[di].callee_def_id;
+            checker.type_generic_calls.push(common.TypeGenericCallInfo.new(
+                call_span_start, callee_def_id, bindings,
+            ));
+        }
+        di += 1;
+    }
+}
 
 /// Resolves pending method calls whose receivers were Infer variables.
 /// Uses a fixpoint loop: resolving one call may produce a return type

@@ -449,6 +449,11 @@ pub struct TypeChecker {
     /// Records of calls to type-generic functions with resolved concrete types.
     /// Used by MIR lowering to create monomorphization requests.
     pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// Option F: deferred records for calls whose fresh_vars were not yet
+    /// concrete at the call-site check (e.g., receiver's T depends on a
+    /// let-binding type annotation that propagates later). finalize_deferred_type_generic_calls
+    /// runs after all bodies have been checked and retries resolution.
+    pub deferred_type_generic_calls: Vec<common.DeferredTypeGenericCall>,
     /// Flat table of impl methods for resolving trait methods during monomorphization.
     /// Each entry maps (self_ty_id, method_name) → method_def_id.
     pub impl_method_table: Vec<common.ImplMethodEntry>,
@@ -540,6 +545,7 @@ impl TypeChecker {
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
+            deferred_type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
             generic_impl_method_defs: Vec.new(),
             def_names: Vec.new(),
@@ -625,6 +631,7 @@ impl TypeChecker {
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
+            deferred_type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
             generic_impl_method_defs: Vec.new(),
             def_names: Vec.new(),
@@ -747,6 +754,21 @@ impl TypeChecker {
     /// Used by MIR lowering to create monomorphization requests.
     pub fn record_type_generic_call(self: &mut Self, info: common.TypeGenericCallInfo) {
         self.type_generic_calls.push(info);
+    }
+
+    /// Option F: defer a type-generic call record when fresh_vars aren't yet
+    /// concrete. finalize_deferred_type_generic_calls retries after all bodies
+    /// have been checked — by that time let-binding type annotations have
+    /// propagated through the subst_table chain.
+    pub fn defer_type_generic_call(
+        self: &mut Self,
+        call_span_start: usize,
+        callee_def_id: u32,
+        saved_bindings: Vec<u32>,
+    ) {
+        self.deferred_type_generic_calls.push(
+            common.DeferredTypeGenericCall.new(call_span_start, callee_def_id, saved_bindings)
+        );
     }
 
     /// Gets the field index for a struct field by name.

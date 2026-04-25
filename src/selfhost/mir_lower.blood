@@ -223,6 +223,11 @@ pub fn lower_body_with_const_info(
     type_generic_fn_set: Vec<u32>,
     type_generic_calls: Vec<common.TypeGenericCallInfo>,
     frozen_new_def_ids: Vec<u32>,
+    // Option F Change B (gap 3): type_bindings for mono body specialization.
+    // Non-mono callers pass Vec.new(); the main.blood mono path passes
+    // req.type_bindings to override body_tv → concrete mappings after the
+    // subst_table post-pass.
+    type_bindings: Vec<common.TypeMonoBinding>,
 ) -> MirLowerResult {
     // Perf diagnostics: share the static-mut counters with lower_body.
     let t_setup_start = blood_clock_millis();
@@ -286,6 +291,41 @@ pub fn lower_body_with_const_info(
     for li in 0usize..mir_body.locals.len() {
         let resolved = unify.apply_substs_id(subst_table, mir_body.locals[li].ty);
         mir_body.locals[li].ty = resolved;
+    }
+
+    // Option F Change B (gap 3): apply type_bindings to mono body locals + return_ty.
+    // The subst_table pass above resolves Infer chains through typeck's shared
+    // subst_table. For impl-generic methods monomorphized from a multi-caller
+    // site, subst_table's body_tv binding may be absent or stale. The mono
+    // request's type_bindings hold the correct body_tv → concrete mapping for
+    // THIS specialization; apply them via a local TypeParamSubst that rewrites
+    // any remaining Infer(body_tv) / Param(body_tv) nodes regardless of nesting
+    // depth (substitute_type_params_id handles both and recurses into Adt/Ref
+    // args). Non-mono callers pass an empty Vec so this is a cheap no-op.
+    let tb_len = type_bindings.len();
+    if tb_len > 0usize {
+        // Option F Change B (gap 3): apply type_bindings to mono body locals.
+        // The subst_table pass above handles chains that begin at the body's
+        // type references, but lookup_ty_id cannot find subtree positions
+        // (e.g., Infer(X) nested inside Ref(Adt(..., [Infer(X)]))). We build
+        // a local TypeParamSubst from type_bindings (which main.blood already
+        // forward-walked across the typeck subst_table chain) and call
+        // substitute_type_params_id to rewrite any Infer(body_tv)/Param(body_tv)
+        // still present in the MIR locals. Non-mono callers pass Vec.new()
+        // so this loop is a cheap no-op.
+        let mut local_subst = unify.TypeParamSubst.new();
+        for tbi in 0usize..tb_len {
+            let body_tv = type_bindings[tbi].ty_var_index;
+            let concrete_id = type_intern.TyId.new(type_bindings[tbi].concrete_ty_id);
+            local_subst.add_id(body_tv, concrete_id);
+        }
+        // MirBody stores the return type as locals[0].ty, so the local loop
+        // covers it. substitute_type_params_id recurses into Ref/Adt/etc. and
+        // rewrites any Infer/Param whose var_index matches a binding key.
+        for li in 0usize..mir_body.locals.len() {
+            let new_ty = unify.substitute_type_params_id(mir_body.locals[li].ty, &local_subst);
+            mir_body.locals[li].ty = new_ty;
+        }
     }
 
     @unsafe { MIR_T_RESOLVE_MS += blood_clock_millis() - t_resolve_start; }

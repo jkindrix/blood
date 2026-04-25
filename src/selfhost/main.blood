@@ -2800,6 +2800,7 @@ fn codegen_pass2(
                 driver.clone_u32_vec(type_generic_fn_set),
                 driver.clone_type_generic_calls(type_generic_calls),
                 driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
+                Vec.new(), // No type_bindings for non-specialized bodies
             )
         } else {
             mir_lower.lower_body(
@@ -5381,11 +5382,45 @@ fn compile_monomorphized_bodies(
                     // instead of Phase 3 signature TyVarIds (from req.type_bindings.ty_var_index).
                     // Phase 3 and Phase 4 allocate separate TyVarIds for the same type params;
                     // the body uses Phase 4 IDs, so we must inject those into the subst table.
+                    //
+                    // Option F Change B (gap 3): forward-walk each sig_var_id's
+                    // chain in the ORIGINAL typeck subst_table before overriding
+                    // it on mono_subst. Body-check resolves self-expression
+                    // types eagerly and can produce entries like
+                    // `sig_var_id → Infer(intermediate)`, baking `intermediate`
+                    // into downstream expression types (e.g., the self-copy temp
+                    // `_2 = Use(Copy(_1))`). Binding only sig_var_id → concrete
+                    // fixes _1 (whose HIR type directly references sig_var_id)
+                    // but leaves `intermediate` unresolved in downstream temps.
+                    // Injecting concrete for every intermediate var_id on the
+                    // chain unblocks `substitute_type_params_id` in mir_lower's
+                    // post-pass. Must read from typeck_result.subst_table so
+                    // we see the pre-override chain.
+                    let interner_ms = type_intern.type_interner();
                     for tbi in 0usize..req.type_bindings.len() {
                         let concrete = type_intern.TyId.new(req.type_bindings[tbi].concrete_ty_id);
+                        let sig_var_id = hir_def.TyVarId.new(req.type_bindings[tbi].ty_var_index);
+                        // Walk the chain BEFORE injecting the override below.
+                        let mut cursor_var = sig_var_id.index;
+                        let mut depth: i32 = 0;
+                        while depth < 1000 {
+                            depth += 1;
+                            let cursor_lookup = typeck_result.subst_table.lookup_ty_id(
+                                hir_def.TyVarId.new(cursor_var));
+                            let cursor_ty = match cursor_lookup {
+                                Option.Some(ty_id) => ty_id,
+                                Option.None => { break; }
+                            };
+                            match interner_ms.get(cursor_ty) {
+                                &type_intern.InternedTypeKind.Infer(next_var) => {
+                                    mono_subst.add_ty_subst_id(next_var, concrete);
+                                    cursor_var = next_var.index;
+                                }
+                                _ => { break; }
+                            }
+                        }
                         // Add Phase 3 signature TyVarId binding so that the function
                         // return type (which uses Phase 3 IDs) resolves correctly.
-                        let sig_var_id = hir_def.TyVarId.new(req.type_bindings[tbi].ty_var_index);
                         mono_subst.add_ty_subst_id(sig_var_id, concrete);
                         // Also add Phase 4 body TyVarId binding so that body-internal
                         // type references resolve correctly.
@@ -5427,6 +5462,18 @@ fn compile_monomorphized_bodies(
                         }
                     }
 
+                    // Option F Change B (gap 3): forward req.type_bindings into the
+                    // mono body's post-pass so body_tv → concrete rewrites land on
+                    // locals/return_ty even if subst_table's shared bindings are
+                    // stale or missing for impl-generic methods.
+                    let mut mono_type_bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                    for tbi in 0usize..req.type_bindings.len() {
+                        mono_type_bindings.push(common.TypeMonoBinding.new(
+                            req.type_bindings[tbi].ty_var_index,
+                            req.type_bindings[tbi].concrete_ty_id,
+                        ));
+                    }
+
                     mir_lower.lower_body_with_const_info(
                         hir_def.DefId.new(req.specialized_def_id),
                         hir_body,
@@ -5444,6 +5491,7 @@ fn compile_monomorphized_bodies(
                         Vec.new(), // No type_generic_fn_set
                         Vec.new(), // No type_generic_calls
                         driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
+                        mono_type_bindings,
                     )
                 } else {
                     // Const-generic monomorphization
@@ -5469,6 +5517,7 @@ fn compile_monomorphized_bodies(
                         Vec.new(), // No type_generic_fn_set
                         Vec.new(), // No type_generic_calls
                         driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
+                        Vec.new(), // No type_bindings (const-generic path)
                     )
                 };
 

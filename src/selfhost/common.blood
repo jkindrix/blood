@@ -431,6 +431,26 @@ impl TypeGenericCallInfo {
     }
 }
 
+/// Option F: a type-generic call whose fresh_vars were not concrete at the
+/// call-site check. saved_bindings is [body_tv_0, fresh_tv_0, body_tv_1,
+/// fresh_tv_1, ...]. A finalize pass after all bodies are checked re-resolves
+/// fresh_tv_i via the subst_table; if every fresh_tv is concrete at that
+/// point, a TypeGenericCallInfo is emitted for MIR lowering.
+pub struct DeferredTypeGenericCall {
+    /// Byte offset of the call expression span.
+    pub call_span_start: usize,
+    /// DefId.index of the called generic method.
+    pub callee_def_id: u32,
+    /// Flat Vec of (body_tv, fresh_tv) pairs saved at recording time.
+    pub saved_bindings: Vec<u32>,
+}
+
+impl DeferredTypeGenericCall {
+    pub fn new(call_span_start: usize, callee_def_id: u32, saved_bindings: Vec<u32>) -> DeferredTypeGenericCall {
+        DeferredTypeGenericCall { call_span_start, callee_def_id, saved_bindings }
+    }
+}
+
 /// A flat entry for looking up impl methods by self type and name.
 pub struct ImplMethodEntry {
     /// TyId.index of the impl's Self type.

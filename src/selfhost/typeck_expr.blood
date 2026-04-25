@@ -1459,6 +1459,12 @@ fn infer_call(
                             checker.record_type_generic_call(common.TypeGenericCallInfo.new(
                                 span.start, def_idx, bindings,
                             ));
+                        } else {
+                            // Option F: same deferral as infer_method_call — fresh_vars
+                            // may not be concrete until the enclosing let binding or
+                            // literal-default pass propagates a type. finalize_deferred_type_generic_calls
+                            // retries after all bodies have been checked.
+                            checker.defer_type_generic_call(span.start, def_idx, saved_type_param_bindings);
                         }
                     }
                     &Option.None => {}
@@ -1753,6 +1759,20 @@ fn infer_method_call(
                 Option.None => {}
             }
 
+            // Option F Change A: bind impl-level fresh_vars via the receiver so
+            // no-arg methods still get a mono request. For user impls (has_fn_sig),
+            // substitute impl_info.self_ty with the freshened `subst` (rewriting
+            // impl-level body_tv → Infer(fresh_var)) and unify against the
+            // concrete receiver. This binds each impl-level fresh_var to the
+            // receiver's concrete T in checker.subst_table BEFORE the recording
+            // check below. Mirrors the builtin path's extract_type_params_from_self_ty
+            // call at line 1726. Required for getters like fn get_first(&self) -> &T
+            // where args.len() == 0 leaves the fresh_var unresolved otherwise.
+            if impl_info.num_generics > 0 && has_fn_sig {
+                let substituted_self_ty = unify.substitute_type_params_id(impl_info.self_ty, &subst);
+                checker.unify(substituted_self_ty, resolved_receiver, span);
+            }
+
             // Check arity (excluding self parameter)
             if method_info.param_tys.len() != args.len() {
                 let mut note = common.make_string("expected ");
@@ -1805,6 +1825,17 @@ fn infer_method_call(
                     checker.record_type_generic_call(common.TypeGenericCallInfo.new(
                         method.span.start, method_info.def_id.index, bindings,
                     ));
+                } else {
+                    // Option F: fresh_vars not yet resolved (e.g., receiver's
+                    // T depends on let-binding propagation that hasn't run).
+                    // Save body_tv→fresh_tv pairs for a second pass after all
+                    // bodies are checked and try resolving again. See
+                    // finalize_deferred_type_generic_calls in typeck_driver.
+                    checker.defer_type_generic_call(
+                        method.span.start,
+                        method_info.def_id.index,
+                        saved_method_type_param_bindings,
+                    );
                 }
             }
 
