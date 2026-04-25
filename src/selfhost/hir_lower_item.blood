@@ -24,6 +24,7 @@ mod hir_lower_body;
 mod resolve;
 mod type_intern;
 mod derive;
+mod interner;
 
 fn str_equals(s: &String, other: &str) -> bool {
     let bytes = s.as_bytes();
@@ -2127,10 +2128,13 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
                                         // Check if the associated type has a default
                                         let has_default: bool = assoc_type.default_ty.is_some();
                                         if !has_default {
-                                            // Re-intern the trait's assoc type name from its span
-                                            let assoc_name_str = ctx.span_to_string(assoc_type.name.span);
-                                            let assoc_name_r = assoc_name_str.as_str();
-                                            let assoc_name = ctx.intern(assoc_name_r);
+                                            // The trait's assoc-type span belongs to the trait's
+                                            // source file (e.g. stdlib), but ctx.source is the
+                                            // current impl's file. Use the pre-interned symbol
+                                            // (set when the trait was parsed) instead of
+                                            // re-extracting via span_to_string against the
+                                            // wrong source.
+                                            let assoc_name = assoc_type.name.symbol;
                                             let mut found_type: bool = false;
                                             for ai in 0usize..imp.items.len() {
                                                 match &imp.items[ai] {
@@ -2147,9 +2151,13 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
                                                 }
                                             }
                                             if !found_type {
+                                                let assoc_name_str = match interner.resolve(assoc_name) {
+                                                    Option.Some(s) => common.make_string(s.as_str()),
+                                                    Option.None => common.make_string("?"),
+                                                };
                                                 let mut msg = String.new();
                                                 msg.push_str("not all trait items implemented, missing: `type ");
-                                                msg.push_str(assoc_name_r);
+                                                msg.push_str(assoc_name_str.as_str());
                                                 msg.push_str("` from trait");
                                                 ctx.error(hir.DiagnosticCode.E0207, msg, imp.span);
                                             }
