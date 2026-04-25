@@ -3344,11 +3344,15 @@ fn infer_for_iter(
     let interner = type_intern.type_interner();
     let iter_kind = interner.get(resolved_iter_ty);
 
-    // Extract element type based on the iterator kind
+    // Extract element type based on the iterator kind.
+    // S89: use propagate_pattern_types instead of bare unify so tuple/struct
+    // sub-bindings inherit element-of-element types. With bare unify, only
+    // the top-level pattern.ty was tied to the iter element; sub-binding
+    // types (e.g. `(k, v)` over (u64, u64)) defaulted to i32 and produced
+    // store-i64-to-i32-alloca stack corruption at runtime.
     match iter_kind {
         &type_intern.InternedTypeKind.Array { element, size: _ } => {
-            // Unify pattern type with the array element type
-            checker.unify(pattern.ty, element, span);
+            propagate_pattern_types(checker, pattern, element);
         }
         &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             // Handle &[T; N] or &Vec<T> — element type is &T (reference to element)
@@ -3357,7 +3361,7 @@ fn infer_for_iter(
             match inner_kind {
                 &type_intern.InternedTypeKind.Array { element, size: _ } => {
                     let ref_elem = interner.mk_ref(element, false);
-                    checker.unify(pattern.ty, ref_elem, span);
+                    propagate_pattern_types(checker, pattern, ref_elem);
                 }
                 &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
                     // Vec<T> or similar — element type is &T
@@ -3365,14 +3369,14 @@ fn infer_for_iter(
                     if num_args >= 1 {
                         let elem_ty = interner.get_ty_list_element(args, 0);
                         let ref_elem = interner.mk_ref(elem_ty, false);
-                        checker.unify(pattern.ty, ref_elem, span);
+                        propagate_pattern_types(checker, pattern, ref_elem);
                     } else {
                         checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                     }
                 }
                 &type_intern.InternedTypeKind.Slice { element } => {
                     let ref_elem = interner.mk_ref(element, false);
-                    checker.unify(pattern.ty, ref_elem, span);
+                    propagate_pattern_types(checker, pattern, ref_elem);
                 }
                 _ => {
                     // Check for generic iterator (&mut T where T: Iterator)
@@ -3394,7 +3398,7 @@ fn infer_for_iter(
         }
         &type_intern.InternedTypeKind.Slice { element } => {
             let ref_elem = interner.mk_ref(element, false);
-            checker.unify(pattern.ty, ref_elem, span);
+            propagate_pattern_types(checker, pattern, ref_elem);
         }
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let num_args = interner.ty_list_len(args);
@@ -3404,7 +3408,7 @@ fn infer_for_iter(
             let iter_elem = find_iter_element_type_concrete(checker, def_id.index, args);
             let found_iter = match iter_elem {
                 Option.Some(elem_ty) => {
-                    checker.unify(pattern.ty, elem_ty, span);
+                    propagate_pattern_types(checker, pattern, elem_ty);
                     true
                 }
                 Option.None => false,
@@ -3413,7 +3417,7 @@ fn infer_for_iter(
                 // Fall back: Vec<T> or similar — use first type arg
                 if num_args >= 1 {
                     let elem_ty = interner.get_ty_list_element(args, 0);
-                    checker.unify(pattern.ty, elem_ty, span);
+                    propagate_pattern_types(checker, pattern, elem_ty);
                 } else {
                     checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                 }
@@ -3466,28 +3470,6 @@ fn str_equals(s: &String, other: &str) -> bool {
     true
 }
 
-/// Substitutes a Param(n) type with the n-th type arg from an Adt's args list.
-/// Returns the input type unchanged if it's not a Param or the index is out of range.
-fn subst_param_with_adt_args(
-    interner: &mut type_intern.TypeInterner,
-    ty: type_intern.TyId,
-    args: type_intern.TyListId,
-) -> type_intern.TyId {
-    let kind = interner.get(ty);
-    match kind {
-        &type_intern.InternedTypeKind.Param(var_id) => {
-            let idx = var_id.index as usize;
-            let arg_len = interner.ty_list_len(args);
-            if idx < arg_len {
-                interner.get_ty_list_element(args, idx)
-            } else {
-                ty
-            }
-        }
-        _ => ty,
-    }
-}
-
 /// Scans checker.impls for a next(&mut self) -> Option<T> method on the given ADT.
 /// Substitutes generic Param(n) in the element type with concrete types from
 /// the iterator's Adt args. Only matches methods whose runtime name ends with
@@ -3528,8 +3510,20 @@ fn find_iter_element_type_concrete(
                     let num_args = ty_interner.ty_list_len(args);
                     if num_args == 1 {
                         let raw_element_ty = ty_interner.get_ty_list_element(args, 0);
-                        // Substitute Param(n) with concrete type from the iterator's args
-                        let element_ty = subst_param_with_adt_args(ty_interner, raw_element_ty, concrete_args);
+                        // S89: deep substitution. Earlier code used a shallow
+                        // helper that only handled top-level Param(n) — Tuple/Adt
+                        // element types like Option<(Param(0), Param(1))> were
+                        // returned with their inner Params intact, leaving the
+                        // for-iter pattern's sub-bindings to default to i32.
+                        // Now we build a TypeParamSubst from concrete_args and
+                        // walk the type recursively via unify.substitute_type_params_id.
+                        let mut subst = unify.TypeParamSubst.new();
+                        let n_concrete = ty_interner.ty_list_len(concrete_args);
+                        for ci in 0usize..n_concrete {
+                            let concrete_id = ty_interner.get_ty_list_element(concrete_args, ci);
+                            subst.add_id(ci as u32, concrete_id);
+                        }
+                        let element_ty = unify.substitute_type_params_id(raw_element_ty, &subst);
                         return Option.Some(element_ty);
                     }
                 }
@@ -4715,7 +4709,8 @@ fn try_resolve_generic_iter_element(
                                                 let n = interner.ty_list_len(ret_args);
                                                 if n == 1 && ret_did.index != trait_did_fi {
                                                     let elem_ty = interner.get_ty_list_element(ret_args, 0);
-                                                    checker.unify(pattern.ty, elem_ty, span);
+                                                    // S89: propagate to sub-bindings (e.g. tuple element types).
+                                                    propagate_pattern_types(checker, pattern, elem_ty);
                                                     return true;
                                                 }
                                             }
