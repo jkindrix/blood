@@ -1786,6 +1786,20 @@ impl TypeChecker {
                     // Add this supertrait's methods
                     for mi in 0usize..super_info.methods.len() {
                         let tm = &super_info.methods[mi];
+                        // Same DefId reached via two supertrait paths (e.g.,
+                        // C: A + B where B: A) is the same actual method, not
+                        // a conflict — skip the duplicate so the synth dyn
+                        // impl's method list stays unique.
+                        let mut already_present = false;
+                        for ej in 0usize..methods.len() {
+                            if methods[ej].def_id.index == tm.def_id.index {
+                                already_present = true;
+                                break;
+                            }
+                        }
+                        if already_present {
+                            continue;
+                        }
                         let mut ptys: Vec<type_intern.TyId> = Vec.new();
                         for pi in 0usize..tm.param_tys.len() {
                             ptys.push(tm.param_tys[pi]);
