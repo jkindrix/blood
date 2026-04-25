@@ -1,0 +1,200 @@
+// Blood Standard Library - Equality Comparison Traits
+//
+// Traits for comparing values for equality. This module ships only
+// PartialEq and Eq; PartialOrd and Ord are reserved for a follow-up
+// session because they depend on `Option<Ordering>` in their return
+// types, which currently exercises generic-container codegen paths
+// still under investigation (see BUGS_OPEN §A1-P3a residuals).
+//
+// See `stdlib/_rust_prototype/traits/cmp.blood` for the full design
+// including PartialOrd, Ord, Ordering, and min/max/minmax free
+// functions — that file is the source of truth for the eventual
+// ordering story.
+
+/// Trait for partial equality comparisons.
+///
+/// Implementors provide `eq`, which tests two values for equality.
+/// A default `ne` body negates `eq`; every primitive impl below also
+/// provides an explicit `ne` body using the primitive `!=` operator
+/// so the common path compiles to a single LLVM `icmp ne` instead of
+/// an `icmp eq` + `xor`.
+///
+/// PartialEq does NOT require reflexivity. `f32`/`f64` implement
+/// PartialEq but NOT Eq because `NaN != NaN`.
+pub trait PartialEq {
+    /// Returns true if `self` is equal to `other`.
+    fn eq(self: &Self, other: &Self) -> bool / pure;
+
+    /// Returns true if `self` is not equal to `other`.
+    ///
+    /// The default body returns `!self.eq(other)`. Primitive impls
+    /// override this with the direct `!=` operator for efficiency.
+    fn ne(self: &Self, other: &Self) -> bool / pure {
+        !self.eq(other)
+    }
+}
+
+/// Marker trait indicating that equality is reflexive, symmetric,
+/// and transitive.
+///
+/// A type implementing `Eq` promises that `a == a` always holds and
+/// that equality defines an equivalence relation. This is required
+/// for types used as HashMap keys: the runtime relies on reflexivity
+/// to find a value it has just stored.
+///
+/// Floating-point types intentionally do NOT implement Eq because
+/// NaN is unequal to itself.
+pub trait Eq: PartialEq {}
+
+// ============================================================
+// PartialEq impls for primitive types
+//
+// Each body reduces to a single LLVM `icmp` / `fcmp` via the primitive
+// `==` / `!=` operators (see mir_lower_util.blood + codegen_expr.blood:
+// MirBinOp.Eq → icmp eq / fcmp oeq, MirBinOp.Ne → icmp ne / fcmp one).
+// ============================================================
+
+impl PartialEq for bool {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for char {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for i8 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for i16 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for i32 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for i64 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for isize {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for u8 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for u16 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for u32 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for u64 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for usize {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for f32 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+impl PartialEq for f64 {
+    fn eq(self: &Self, other: &Self) -> bool / pure { *self == *other }
+    fn ne(self: &Self, other: &Self) -> bool / pure { *self != *other }
+}
+
+// ============================================================
+// PartialEq impls for string types
+//
+// Byte-level comparison matching rt_hashmap's `hash_string_key`
+// storage model: two strings are equal iff they have the same
+// byte sequence. Avoids the pointer-identity trap of naive `==`
+// on fat references.
+// ============================================================
+
+impl PartialEq for str {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        let lhs = self.as_bytes();
+        let rhs = other.as_bytes();
+        if lhs.len() != rhs.len() {
+            return false;
+        }
+        let mut i: usize = 0;
+        while i < lhs.len() {
+            if lhs[i] != rhs[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    fn ne(self: &Self, other: &Self) -> bool / pure {
+        !self.eq(other)
+    }
+}
+
+impl PartialEq for String {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        let lhs = self.as_bytes();
+        let rhs = other.as_bytes();
+        if lhs.len() != rhs.len() {
+            return false;
+        }
+        let mut i: usize = 0;
+        while i < lhs.len() {
+            if lhs[i] != rhs[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    fn ne(self: &Self, other: &Self) -> bool / pure {
+        !self.eq(other)
+    }
+}
+
+// ============================================================
+// Eq marker-trait impls
+//
+// f32 and f64 are intentionally absent: NaN != NaN violates the
+// reflexivity guarantee Eq requires.
+// ============================================================
+
+impl Eq for bool {}
+impl Eq for char {}
+impl Eq for i8 {}
+impl Eq for i16 {}
+impl Eq for i32 {}
+impl Eq for i64 {}
+impl Eq for isize {}
+impl Eq for u8 {}
+impl Eq for u16 {}
+impl Eq for u32 {}
+impl Eq for u64 {}
+impl Eq for usize {}
+impl Eq for str {}
+impl Eq for String {}
