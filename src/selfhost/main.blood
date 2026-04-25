@@ -2023,6 +2023,15 @@ fn build_codegen_worklist(
             continue;
         }
 
+        // PERF-S78-PARALLEL: type-generic bodies are NOT filtered here.
+        // Generic trait impl vtables reference the type-erased fallback
+        // symbol (e.g., `@__vtable_Clone_X = ... [..., ptr @def_Y_clone]`)
+        // — filtering would dangle vtable refs at link time. The erased
+        // fallback is emitted alongside mono'd specializations. Workers
+        // process these via the heavy MIR path with type_generic_fn_set
+        // populated, so call sites inside generic bodies emit MonoRequests
+        // for type-generic callees just like non-generic bodies do.
+
         // Check if this DefId was already processed (skip duplicates)
         let mut is_duplicate = false;
         let mut di: usize = 0;
@@ -2073,14 +2082,30 @@ fn build_codegen_worklist(
 // ============================================================
 
 // Per-worker packed arg: { ctx_addr, lower_addr, typeck_addr, worklist_addr,
-//                          chunk_start, chunk_end, output_addr }
-// Layout: 7 × i64 at offsets 0, 8, 16, 24, 32, 40, 48.
-// Allocated via alloc(56), populated via ptr_write_i64.
+//                          chunk_start, chunk_end, output_addr,
+//                          mono_requests_addr, type_generic_fn_set_addr,
+//                          mono_def_id_base }
+// Layout: 10 × i64 at offsets 0..72.
+// Allocated via alloc(80), populated via ptr_write_i64.
+//
+// PERF-S78-PARALLEL additions (offsets 56-72):
+// - mono_requests_addr: &mut Vec<MonoRequest> per-worker; collects mono
+//   requests emitted by lower_body_with_const_info when worklist items
+//   call type-generic fns. Merged into all_mono_requests after thread_join.
+// - type_generic_fn_set_addr: &Vec<u32> shared read-only; required by
+//   the heavy MIR path so calls to type-generic fns emit MonoRequests
+//   with specialized DefIds (light path leaves the set empty and would
+//   silently drop type-generic mono).
+// - mono_def_id_base: per-worker base for specialized DefId allocation,
+//   set to next_mono_def_id_in + worker_index * MONO_PARTITION (100000)
+//   so workers don't collide on DefIds.
 fn pack_worker_arg(
     ctx_addr: u64, lower_addr: u64, typeck_addr: u64,
     worklist_addr: u64, start: usize, end: usize, output_addr: u64,
+    mono_requests_addr: u64, type_generic_fn_set_addr: u64,
+    mono_def_id_base: u32,
 ) -> u64 {
-    let buf: u64 = alloc(56);
+    let buf: u64 = alloc(80);
     ptr_write_i64(buf, ctx_addr as i64);
     ptr_write_i64(buf + 8, lower_addr as i64);
     ptr_write_i64(buf + 16, typeck_addr as i64);
@@ -2088,6 +2113,9 @@ fn pack_worker_arg(
     ptr_write_i64(buf + 32, start as i64);
     ptr_write_i64(buf + 40, end as i64);
     ptr_write_i64(buf + 48, output_addr as i64);
+    ptr_write_i64(buf + 56, mono_requests_addr as i64);
+    ptr_write_i64(buf + 64, type_generic_fn_set_addr as i64);
+    ptr_write_i64(buf + 72, mono_def_id_base as i64);
     buf
 }
 
@@ -2100,7 +2128,7 @@ fn pack_worker_arg(
 /// The type-to-LLVM cache is disabled (fn_temp_region=0) which adds minor
 /// overhead but avoids region stack corruption.
 fn codegen_thread_worker(arg: u64) -> u64 {
-    // Unpack args from raw memory: 7 × i64 at offsets 0..48.
+    // Unpack args from raw memory: 10 × i64 at offsets 0..72.
     let ctx_addr: u64 = ptr_read_i64(arg) as u64;
     let lower_addr: u64 = ptr_read_i64(arg + 8) as u64;
     let typeck_addr: u64 = ptr_read_i64(arg + 16) as u64;
@@ -2108,15 +2136,25 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let chunk_start: usize = ptr_read_i64(arg + 32) as usize;
     let chunk_end: usize = ptr_read_i64(arg + 40) as usize;
     let output_addr: u64 = ptr_read_i64(arg + 48) as u64;
+    let mono_requests_addr: u64 = ptr_read_i64(arg + 56) as u64;
+    let type_generic_fn_set_addr: u64 = ptr_read_i64(arg + 64) as u64;
+    let mono_def_id_base: u32 = ptr_read_i64(arg + 72) as u32;
 
     // Safety: these pointers are packed by codegen_pass2 and remain valid until
     // thread_join returns. ctx is per-worker (no aliasing). lower/typeck/wl are
     // shared read-only across workers. output is per-worker (no aliasing).
+    // mono_requests is per-worker (no aliasing). type_generic_fn_set is shared
+    // read-only.
     let ctx: &mut codegen_ctx.CodegenCtx = @unsafe { (ctx_addr as usize as *mut codegen_ctx.CodegenCtx) as &mut codegen_ctx.CodegenCtx };
     let lower: &hir_lower_ctx.LowerResult = @unsafe { (lower_addr as usize as *const hir_lower_ctx.LowerResult) as &hir_lower_ctx.LowerResult };
     let typeck: &typeck_driver.TypeCheckResult = @unsafe { (typeck_addr as usize as *const typeck_driver.TypeCheckResult) as &typeck_driver.TypeCheckResult };
     let wl: &CodegenWorkList = @unsafe { (wl_addr as usize as *const CodegenWorkList) as &CodegenWorkList };
     let output: &mut String = @unsafe { (output_addr as usize as *mut String) as &mut String };
+    let mono_requests: &mut Vec<mir_lower_ctx.MonoRequest> = @unsafe { (mono_requests_addr as usize as *mut Vec<mir_lower_ctx.MonoRequest>) as &mut Vec<mir_lower_ctx.MonoRequest> };
+    let type_generic_fn_set: &Vec<u32> = @unsafe { (type_generic_fn_set_addr as usize as *const Vec<u32>) as &Vec<u32> };
+    // Per-worker monotonically increasing mono def_id counter, partitioned
+    // from sibling workers via mono_def_id_base.
+    let mut worker_next_mono_def_id: u32 = mono_def_id_base;
 
     // No regions: bypass flag ensures all allocations go to heap (thread-safe).
     // fn_temp_region stays at 0 so codegen's temp-region dance in
@@ -2147,7 +2185,14 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         let body_entry = &lower.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        let mut mir_result = mir_lower.lower_body(
+        // PERF-S78-PARALLEL: call the heavy MIR path so type-generic call
+        // sites in this non-generic body emit MonoRequests via
+        // ctx.is_type_generic_fn / ctx.lookup_type_generic_call. The light
+        // path leaves both fields empty and silently drops type-generic
+        // mono. Const-related Vecs are known-empty here because the
+        // parallel gate requires !has_const_generics; type_bindings is
+        // empty because non-mono bodies have no per-call substitutions.
+        let mut mir_result = mir_lower.lower_body_with_const_info(
             work.typeck_def_id,
             hir_body,
             type_intern.TyId.new(work.return_ty.index),
@@ -2156,7 +2201,15 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.method_resolutions,
             &typeck.field_resolutions,
             &typeck.coercion_entries,
+            Vec.new(), // const_bindings
+            Vec.new(), // const_generic_fn_set (empty: !has_const_generics)
+            Vec.new(), // turbofish_const_args
+            Vec.new(), // const_generic_param_counts
+            worker_next_mono_def_id,
+            driver.clone_u32_vec(type_generic_fn_set),
+            driver.clone_type_generic_calls(&typeck.type_generic_calls),
             driver.clone_u32_vec(&lower.frozen_new_def_ids),
+            Vec.new(), // type_bindings (non-mono body)
         );
 
         if mir_result.errors.len() > 0 {
@@ -2165,6 +2218,41 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         if work.def_id.index != work.typeck_def_id.index {
             mir_result.body.def_id = work.def_id;
+        }
+
+        // PERF-S78-PARALLEL: thread next_mono_def_id forward and collect
+        // mono_requests + register specialized def names on the WORKER ctx
+        // so subsequent items in this chunk can resolve `call @mono_name`
+        // emitted by codegen.generate_function_with_ctx. The main ctx
+        // re-registers via compile_monomorphized_bodies post-merge.
+        if mir_result.next_mono_def_id > worker_next_mono_def_id {
+            worker_next_mono_def_id = mir_result.next_mono_def_id;
+        }
+        for ri in 0usize..mir_result.mono_requests.len() {
+            let req_ref = &mir_result.mono_requests[ri];
+            ctx.register_def_name(req_ref.specialized_def_id, common.make_string(req_ref.fn_name.as_str()));
+            if req_ref.is_type_mono {
+                let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                for tbi in 0usize..req_ref.type_bindings.len() {
+                    bindings.push(common.TypeMonoBinding.new(
+                        req_ref.type_bindings[tbi].ty_var_index,
+                        req_ref.type_bindings[tbi].concrete_ty_id,
+                    ));
+                }
+                mono_requests.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                    req_ref.original_def_id,
+                    bindings,
+                    req_ref.specialized_def_id,
+                    common.make_string(req_ref.fn_name.as_str()),
+                ));
+            } else {
+                mono_requests.push(mir_lower_ctx.MonoRequest.new(
+                    req_ref.original_def_id,
+                    driver.clone_u64_vec(&req_ref.const_values),
+                    req_ref.specialized_def_id,
+                    common.make_string(req_ref.fn_name.as_str()),
+                ));
+            }
         }
 
         // Set up call remaps for trait default methods
@@ -2293,10 +2381,24 @@ fn codegen_pass2(
 
     // ================================================================
     // Parallel codegen path: use worker threads for large, non-incremental
-    // builds without const/type generics. Falls through to sequential path
-    // when conditions aren't met.
+    // builds. Workers call the heavy MIR path with the type_generic_fn_set
+    // address so type-generic call sites emit MonoRequests that a
+    // per-worker mono_requests Vec collects, post-merged into
+    // all_mono_requests before compile_monomorphized_bodies runs
+    // sequentially. Type-generic bodies themselves are NOT filtered from
+    // the worklist — vtables for generic trait impls reference the
+    // type-erased fallback symbol, so filtering would dangle vtable refs
+    // at link time. Workers emit the erased fallback alongside any mono'd
+    // specializations, matching pre-S78 behavior.
+    //
+    // Const-generics still gate parallel off because:
+    // - Heavy path needs const_bindings + turbofish_const_args + const_generic
+    //   metadata threaded into MIR lowering, requiring more arg-pack plumbing
+    //   than this fix did, AND
+    // - Const-generic bodies need the worklist body-id filter (see
+    //   const_generic_body_ids in build_codegen_worklist).
     // ================================================================
-    let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
+    let has_generics = has_const_generics;
     // Parallel codegen: enabled for non-incremental clean builds without split-modules.
     let use_parallel = total_items > 200 && !has_generics
         && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
@@ -2430,8 +2532,14 @@ fn codegen_pass2(
 
         // Create per-worker CodegenCtx and output buffers.
         // All allocations go to heap (bypass active, no region on stack).
+        // PERF-S78-PARALLEL: also create per-worker mono_requests Vecs;
+        // each worker writes mono_requests it generates to its own slot so
+        // there's no aliasing across workers. Specialized DefIds are
+        // partitioned via mono_def_id_base = next_mono_def_id_in + w * 100000
+        // to avoid cross-worker collisions on req.specialized_def_id.
         let mut worker_ctxs: Vec<codegen_ctx.CodegenCtx> = Vec.new();
         let mut worker_outputs: Vec<String> = Vec.new();
+        let mut worker_mono_requests: Vec<Vec<mir_lower_ctx.MonoRequest>> = Vec.new();
         for w in 0usize..num_workers {
             let mut wctx = ctx.create_worker_ctx();
             wctx.string_counter = ctx.string_counter + (w as u32 * 100000);
@@ -2440,6 +2548,7 @@ fn codegen_pass2(
             wctx.layout_counter = ctx.layout_counter + (w as u32 * 100000);
             worker_ctxs.push(wctx);
             worker_outputs.push(String.new());
+            worker_mono_requests.push(Vec.new());
         }
 
         // S34 diagnostic: flag the interner so any write from a worker panics
@@ -2450,16 +2559,23 @@ fn codegen_pass2(
 
         // Pack args and spawn worker threads.
         // Worker ctxs and outputs are in Vecs — get element addresses via &mut vec[i].
+        // PERF-S78-PARALLEL: type_generic_fn_set is shared read-only — its
+        // address is constant across workers. mono_def_id_base partitions
+        // the specialized DefId space; 100000 IDs/worker is generous (a
+        // build typically generates O(100) mono'd fns total).
+        let tgfs_addr: u64 = @unsafe { type_generic_fn_set as *const Vec<u32> as usize } as u64;
         let mut handles: Vec<u64> = Vec.new();
         let mut arg_bufs: Vec<u64> = Vec.new();
         for w in 0usize..num_workers {
             let start = w * chunk_size;
             let end = if w == num_workers - 1 { total_items } else { (w + 1) * chunk_size };
             // Safety: per-worker mutable data. Each worker gets exclusive access to
-            // its own ctx[w] and output[w]. No aliasing between workers.
+            // its own ctx[w] and output[w] and mono_requests[w]. No aliasing between workers.
             let ctx_addr: u64 = @unsafe { &mut worker_ctxs[w] as *mut codegen_ctx.CodegenCtx as usize } as u64;
             let out_addr: u64 = @unsafe { &mut worker_outputs[w] as *mut String as usize } as u64;
-            let arg_buf = pack_worker_arg(ctx_addr, lower_addr, typeck_addr, wl_addr, start, end, out_addr);
+            let mr_addr: u64 = @unsafe { &mut worker_mono_requests[w] as *mut Vec<mir_lower_ctx.MonoRequest> as usize } as u64;
+            let mono_base: u32 = next_mono_def_id_in + (w as u32 * 100000u32);
+            let arg_buf = pack_worker_arg(ctx_addr, lower_addr, typeck_addr, wl_addr, start, end, out_addr, mr_addr, tgfs_addr, mono_base);
             arg_bufs.push(arg_buf);
             let fn_ptr: u64 = @unsafe { codegen_thread_worker as u64 };
             let handle = thread_spawn(fn_ptr, arg_buf);
@@ -2659,6 +2775,49 @@ fn codegen_pass2(
                 );
             }
         }
+
+        // PERF-S78-PARALLEL: merge per-worker mono_requests into all_mono_requests.
+        // Workers wrote heap-allocated MonoRequests (bypass active) — clone the
+        // request fields onto fresh main-context allocations so the data is owned
+        // here. compile_monomorphized_bodies later reads from all_mono_requests
+        // to emit specialized IR; spec'd DefIds are partitioned per-worker so
+        // there are no collisions across workers.
+        for w in 0usize..num_workers {
+            let wmr = &worker_mono_requests[w];
+            for ri in 0usize..wmr.len() {
+                let req_ref = &wmr[ri];
+                if req_ref.is_type_mono {
+                    let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                    for tbi in 0usize..req_ref.type_bindings.len() {
+                        bindings.push(common.TypeMonoBinding.new(
+                            req_ref.type_bindings[tbi].ty_var_index,
+                            req_ref.type_bindings[tbi].concrete_ty_id,
+                        ));
+                    }
+                    all_mono_requests.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                        req_ref.original_def_id,
+                        bindings,
+                        req_ref.specialized_def_id,
+                        common.make_string(req_ref.fn_name.as_str()),
+                    ));
+                } else {
+                    all_mono_requests.push(mir_lower_ctx.MonoRequest.new(
+                        req_ref.original_def_id,
+                        driver.clone_u64_vec(&req_ref.const_values),
+                        req_ref.specialized_def_id,
+                        common.make_string(req_ref.fn_name.as_str()),
+                    ));
+                }
+                // Register specialized def_name on main ctx so any sequential
+                // codegen path (e.g., compile_monomorphized_bodies, or items
+                // that fall through to the sequential post-loop) can resolve
+                // the specialized symbol immediately.
+                ctx.register_def_name(req_ref.specialized_def_id, common.make_string(req_ref.fn_name.as_str()));
+            }
+        }
+        // Advance next_mono_def_id past every worker's partition so subsequent
+        // sequential allocations don't collide with worker-allocated DefIds.
+        next_mono_def_id = next_mono_def_id_in + (num_workers as u32 * 100000u32);
 
         // S36: merge complete — now safe to disable bypass and reactivate
         // codegen region for subsequent passes. Any fat ref taken against
