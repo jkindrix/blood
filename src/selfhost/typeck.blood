@@ -431,6 +431,13 @@ pub struct TypeChecker {
     pub deref_target_types: hashmap.HashMapU64U64,
     /// Maps ADT DefId.index → deref method DefId.index for custom Deref impls.
     pub deref_method_ids: hashmap.HashMapU64U64,
+    /// Maps ADT DefId.index → impl_def.self_ty TyId.index for custom Deref impls.
+    /// Lets the unary-deref check site re-read the impl's parametric self_ty
+    /// (e.g. `Adt(Frozen, [Param impl_T])`) and build a positional substitution
+    /// from impl Params → receiver's concrete args before returning Target.
+    /// Without this, `*fi` and `*fb` for `Frozen<i32>`+`Frozen<bool>` both
+    /// return the same Param-T type id and the second use fails to unify.
+    pub deref_impl_self_tys: hashmap.HashMapU64U64,
     /// Whether we are currently inside an @unsafe block.
     /// Used to gate safety-sensitive casts (Ptr↔usize, Ptr→Ref, fn→integer).
     pub in_unsafe_context: bool,
@@ -547,6 +554,7 @@ impl TypeChecker {
             pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
+            deref_impl_self_tys: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
             float_infer_ids: Vec.new(),
@@ -634,6 +642,7 @@ impl TypeChecker {
             pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
+            deref_impl_self_tys: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
             float_infer_ids: Vec.new(),

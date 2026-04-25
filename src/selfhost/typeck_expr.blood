@@ -1229,7 +1229,54 @@ fn infer_unary(
                                     }
                                     Option.None => {}
                                 }
-                                type_intern.TyId.new(target_ty_idx as u32)
+                                // S88: substitute the receiver's concrete args into
+                                // the impl's Target before returning. Without this,
+                                // `impl<T> Deref for Frozen<T> { type Target = T; }`
+                                // returns Param(impl_T) for every `*f`, so `*fi: i32`
+                                // followed by `*fb: bool` fails (same Param-T id binds
+                                // i32 first, then conflicts with bool). Build a
+                                // positional substitution by walking the impl's
+                                // parametric self_ty args against the receiver's
+                                // resolved args. For non-generic impls (e.g.
+                                // `impl Deref for Wrapper { type Target = i32 }`)
+                                // the impl's args list is empty, the loop is a no-op,
+                                // and substitute_type_params_id returns target_ty
+                                // unchanged.
+                                let target_ty = type_intern.TyId.new(target_ty_idx as u32);
+                                match checker.deref_impl_self_tys.get(def_id.index as u64) {
+                                    Option.Some(impl_self_ty_idx) => {
+                                        let impl_self_ty = type_intern.TyId.new(impl_self_ty_idx as u32);
+                                        match interner.get(impl_self_ty) {
+                                            &type_intern.InternedTypeKind.Adt { def_id: _, args: impl_args } => {
+                                                let mut subst = unify.TypeParamSubst.new();
+                                                let n_impl = interner.ty_list_len(impl_args);
+                                                let n_recv = interner.ty_list_len(args);
+                                                let n = if n_impl < n_recv { n_impl } else { n_recv };
+                                                for k in 0usize..n {
+                                                    let impl_arg = interner.get_ty_list_element(impl_args, k);
+                                                    let recv_arg = interner.get_ty_list_element(args, k);
+                                                    // Blood HIR uses Infer for impl-level
+                                                    // type parameters (the TyVarId index
+                                                    // matches subst.lookup_id's key).
+                                                    // Param(_) shows up only in fully-
+                                                    // elaborated forms; handle both.
+                                                    match interner.get(impl_arg) {
+                                                        &type_intern.InternedTypeKind.Param(var_id) => {
+                                                            subst.add_id(var_id.index, recv_arg);
+                                                        }
+                                                        &type_intern.InternedTypeKind.Infer(var_id) => {
+                                                            subst.add_id(var_id.index, recv_arg);
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                unify.substitute_type_params_id(target_ty, &subst)
+                                            }
+                                            _ => target_ty,
+                                        }
+                                    }
+                                    Option.None => target_ty,
+                                }
                             }
                             Option.None => {
                                 let mut note = common.make_string("cannot dereference type ");

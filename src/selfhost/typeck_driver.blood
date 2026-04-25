@@ -1178,6 +1178,13 @@ fn detect_deref_trait(
                                                                         def_id.index as u64,
                                                                         target_ty.index as u64,
                                                                     );
+                                                                    // S88: store the impl's parametric self_ty so the
+                                                                    // unary-deref check can substitute the receiver's
+                                                                    // concrete args into Target before unifying.
+                                                                    checker.deref_impl_self_tys.insert(
+                                                                        def_id.index as u64,
+                                                                        impl_def.self_ty.index as u64,
+                                                                    );
                                                                 }
                                                                 _ => {}
                                                             }
