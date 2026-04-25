@@ -1,15 +1,15 @@
-// Blood Standard Library - Equality Comparison Traits
+// Blood Standard Library - Comparison Traits
 //
-// Traits for comparing values for equality. This module ships only
-// PartialEq and Eq; PartialOrd and Ord are reserved for a follow-up
-// session because they depend on `Option<Ordering>` in their return
-// types, which currently exercises generic-container codegen paths
-// still under investigation (see BUGS_OPEN §A1-P3a residuals).
+// Traits for comparing values for equality and ordering:
+//   - `PartialEq` / `Eq`        (S81)
+//   - `PartialOrd` / `Ord` and `Ordering`  (S82)
 //
-// See `stdlib/_rust_prototype/traits/cmp.blood` for the full design
-// including PartialOrd, Ord, Ordering, and min/max/minmax free
-// functions — that file is the source of truth for the eventual
-// ordering story.
+// The eventual `min` / `max` / `minmax` free functions in the prototype
+// are deferred — they take `T` by value, exercising the consuming-self +
+// value-return calling convention which is currently miscompiled for
+// non-primitive receivers (S78 residual). Users can call `.cmp(...)`
+// directly and dispatch on the returned `Ordering` until that ABI is
+// fixed.
 
 /// Trait for partial equality comparisons.
 ///
@@ -198,3 +198,465 @@ impl Eq for u64 {}
 impl Eq for usize {}
 impl Eq for str {}
 impl Eq for String {}
+
+// ============================================================
+// Ordering enum (S82)
+//
+// Result of an ordering comparison. The three variants describe
+// how `self` relates to `other`: `Less` means `self < other`,
+// `Equal` means `self == other`, `Greater` means `self > other`.
+// ============================================================
+
+/// Result of a comparison between two values.
+pub enum Ordering {
+    /// `self < other`
+    Less,
+    /// `self == other`
+    Equal,
+    /// `self > other`
+    Greater,
+}
+
+impl Ordering {
+    /// Returns true if the ordering is `Less`.
+    pub fn is_lt(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => true,
+            Ordering.Equal => false,
+            Ordering.Greater => false,
+        }
+    }
+
+    /// Returns true if the ordering is `Equal`.
+    pub fn is_eq(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => false,
+            Ordering.Equal => true,
+            Ordering.Greater => false,
+        }
+    }
+
+    /// Returns true if the ordering is `Greater`.
+    pub fn is_gt(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => false,
+            Ordering.Equal => false,
+            Ordering.Greater => true,
+        }
+    }
+
+    /// Returns true if the ordering is `Less` or `Equal`.
+    pub fn is_le(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => true,
+            Ordering.Equal => true,
+            Ordering.Greater => false,
+        }
+    }
+
+    /// Returns true if the ordering is `Greater` or `Equal`.
+    pub fn is_ge(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => false,
+            Ordering.Equal => true,
+            Ordering.Greater => true,
+        }
+    }
+
+    /// Returns true if the ordering is not `Equal`.
+    pub fn is_ne(self: &Self) -> bool / pure {
+        match *self {
+            Ordering.Less => true,
+            Ordering.Equal => false,
+            Ordering.Greater => true,
+        }
+    }
+
+    /// Reverses the ordering: `Less` ↔ `Greater`, `Equal` unchanged.
+    pub fn reverse(self: &Self) -> Ordering / pure {
+        match *self {
+            Ordering.Less => Ordering.Greater,
+            Ordering.Equal => Ordering.Equal,
+            Ordering.Greater => Ordering.Less,
+        }
+    }
+
+    /// Chains two orderings: returns `self` unless `Equal`, in which
+    /// case returns `other`. Used to break ties in lexicographic
+    /// comparison: `a.cmp(&b).then(c.cmp(&d))`.
+    pub fn then(self: &Self, other: Ordering) -> Ordering / pure {
+        match *self {
+            Ordering.Equal => other,
+            Ordering.Less => Ordering.Less,
+            Ordering.Greater => Ordering.Greater,
+        }
+    }
+}
+
+// ============================================================
+// PartialOrd / Ord traits (S82)
+//
+// Mirrors Rust's `core::cmp::{PartialOrd, Ord}` with two adjustments:
+//   - `PartialOrd` does NOT carry a default `Rhs = Self` parameter
+//     (Blood does not yet support default type parameters).
+//   - `Ord` extends both `Eq` and `PartialOrd`. The spec narrowly
+//     requires `Ord: Eq`, but every Ord type is by construction also
+//     PartialOrd, and pinning the supertrait pair here matches the
+//     prototype + Rust convention.
+// ============================================================
+
+/// Trait for partial-ordering comparisons.
+///
+/// `partial_cmp` returns `Some(Ordering::*)` for comparable values
+/// and `None` for incomparable ones (e.g. `f32::NaN`). Default
+/// bodies for `lt` / `le` / `gt` / `ge` derive their result from
+/// `partial_cmp`; primitive impls override them to avoid a tag
+/// branch in the hot path.
+pub trait PartialOrd: PartialEq {
+    /// Returns the ordering of `self` and `other` if comparable.
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure;
+
+    /// Returns true if `self < other`.
+    fn lt(self: &Self, other: &Self) -> bool / pure {
+        match self.partial_cmp(other) {
+            Some(o) => o.is_lt(),
+            None => false,
+        }
+    }
+
+    /// Returns true if `self <= other`.
+    fn le(self: &Self, other: &Self) -> bool / pure {
+        match self.partial_cmp(other) {
+            Some(o) => o.is_le(),
+            None => false,
+        }
+    }
+
+    /// Returns true if `self > other`.
+    fn gt(self: &Self, other: &Self) -> bool / pure {
+        match self.partial_cmp(other) {
+            Some(o) => o.is_gt(),
+            None => false,
+        }
+    }
+
+    /// Returns true if `self >= other`.
+    fn ge(self: &Self, other: &Self) -> bool / pure {
+        match self.partial_cmp(other) {
+            Some(o) => o.is_ge(),
+            None => false,
+        }
+    }
+}
+
+/// Trait for total-ordering comparisons.
+///
+/// Every pair of values yields a definite `Ordering`. The conventional
+/// supertrait set in Rust is `Ord: Eq + PartialOrd`, but Blood's
+/// dispatch ambiguity check currently rejects the resulting diamond
+/// (`Eq` and `PartialOrd` both extend `PartialEq`, so the same `eq` /
+/// `ne` slot is reachable via two paths). We pin `Ord: PartialOrd` —
+/// `PartialEq` is reached transitively through `PartialOrd`, and every
+/// primitive `Ord` impl below also has an `impl Eq` so HashMap-style
+/// `T: Eq` bounds remain satisfiable. Re-add `Eq` as a supertrait
+/// once the diamond compiler bug is fixed.
+pub trait Ord: PartialOrd {
+    /// Returns the ordering of `self` and `other`.
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure;
+}
+
+// ============================================================
+// PartialOrd impls for primitive types
+//
+// Each impl provides direct `<` / `<=` / `>` / `>=` bodies in
+// addition to `partial_cmp`, matching the explicit-eq/ne pattern
+// used by `PartialEq` above.
+// ============================================================
+
+impl PartialOrd for bool {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self == *other {
+            Some(Ordering.Equal)
+        } else if !*self {
+            Some(Ordering.Less)
+        } else {
+            Some(Ordering.Greater)
+        }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { !*self && *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { !*self || *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self && !*other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self || !*other }
+}
+
+impl PartialOrd for char {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other {
+            Some(Ordering.Less)
+        } else if *self > *other {
+            Some(Ordering.Greater)
+        } else {
+            Some(Ordering.Equal)
+        }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for i8 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for i16 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for i32 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for i64 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for isize {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for u8 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for u16 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for u32 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for u64 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for usize {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else { Some(Ordering.Equal) }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+// f32 / f64: NaN-aware partial_cmp returns None when either operand
+// is NaN. lt/le/gt/ge return false in that case (matching IEEE 754
+// behavior of the primitive `<` / `<=` / `>` / `>=` operators).
+impl PartialOrd for f32 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else if *self == *other { Some(Ordering.Equal) }
+        else { None }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+impl PartialOrd for f64 {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<Ordering> / pure {
+        if *self < *other { Some(Ordering.Less) }
+        else if *self > *other { Some(Ordering.Greater) }
+        else if *self == *other { Some(Ordering.Equal) }
+        else { None }
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure { *self < *other }
+    fn le(self: &Self, other: &Self) -> bool / pure { *self <= *other }
+    fn gt(self: &Self, other: &Self) -> bool / pure { *self > *other }
+    fn ge(self: &Self, other: &Self) -> bool / pure { *self >= *other }
+}
+
+// ============================================================
+// Ord impls for primitive types
+//
+// f32 and f64 are intentionally absent: NaN incomparability rules
+// out a total ordering.
+// ============================================================
+
+impl Ord for bool {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self == *other {
+            Ordering.Equal
+        } else if !*self {
+            Ordering.Less
+        } else {
+            Ordering.Greater
+        }
+    }
+}
+
+impl Ord for char {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for i8 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for i16 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for i32 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for i64 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for isize {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for u8 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for u16 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for u32 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for u64 {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
+
+impl Ord for usize {
+    fn cmp(self: &Self, other: &Self) -> Ordering / pure {
+        if *self < *other { Ordering.Less }
+        else if *self > *other { Ordering.Greater }
+        else { Ordering.Equal }
+    }
+}
