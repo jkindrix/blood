@@ -1,0 +1,32 @@
+// Test: chain length > 1 — wrapper-of-wrapper around `Frozen<T>::clone`
+// (S85 / Option G-structural).
+//
+// Verifies cascading mono request emission:
+//   main → copy_outer$T<i32>     (primary, from main)
+//        → copy_inner$T<i32>     (secondary, chained from copy_outer's body)
+//        → Frozen<i32>::clone$T<i32>  (secondary, chained from copy_inner's body)
+//
+// The worklist in compile_monomorphized_bodies processes each level
+// sequentially, with each mono'd body emitting a fresh MonoRequest for
+// the next level's chained call.
+//
+// EXPECT: 7
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.clone.Clone;
+
+fn copy_inner<T: Clone>(a: &Frozen<T>) -> Frozen<T> {
+    a.clone()
+}
+
+fn copy_outer<T: Clone>(a: &Frozen<T>) -> Frozen<T> {
+    copy_inner(a)
+}
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(7);
+    let g: Frozen<i32> = copy_outer(&f);
+    println_int(*g.get());
+    0
+}

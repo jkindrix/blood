@@ -1,0 +1,26 @@
+// Test: generic wrapper around `Frozen<T>::eq` (S85 / Option G-structural).
+//
+// Sibling of t05_frozen_wrapper_clone — see that file's banner for the
+// S84/S85 history. PartialEq variant: the wrapper unifies an arbitrary
+// `T: PartialEq` and dispatches `a.eq(b)` through the chained inner mono.
+//
+// EXPECT: 1
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.PartialEq;
+
+fn same<T: PartialEq>(a: &Frozen<T>, b: &Frozen<T>) -> bool {
+    a.eq(b)
+}
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(42);
+    let f2: Frozen<i32> = Frozen.new(42);
+    if same(&f1, &f2) {
+        println_int(1);
+    } else {
+        println_int(0);
+    }
+    0
+}

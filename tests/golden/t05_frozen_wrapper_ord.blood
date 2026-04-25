@@ -1,0 +1,29 @@
+// Test: generic wrapper around `Frozen<T>::cmp` (S85 / Option G-structural).
+//
+// Sibling of t05_frozen_wrapper_clone — see that file's banner for the
+// S84/S85 history. Ord variant: exercises the S83 supertrait
+// `Ord: Eq + PartialOrd` dedup path through the wrapper. The wrapper's
+// `a.cmp(b)` dispatches to `Frozen<i32>::cmp` via the chained mono.
+//
+// EXPECT: 1
+//
+// (Ordering.Less for 1 < 2 — t05's println_int writes the integer 1.)
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.{Ord, Ordering};
+
+fn cmp_inner<T: Ord>(a: &Frozen<T>, b: &Frozen<T>) -> Ordering {
+    a.cmp(b)
+}
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(1);
+    let f2: Frozen<i32> = Frozen.new(2);
+    match cmp_inner(&f1, &f2) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    0
+}

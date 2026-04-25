@@ -1,0 +1,29 @@
+// Test: generic wrapper around `Frozen<T>::clone` (S85 / Option G-structural).
+//
+// Pre-S84: silently miscompiled — the wrapper's mono'd body called
+// `def<N>_clone` (the type-erased fallback) whose body terminated in
+// `unreachable` mid-function, producing runtime UB (hang in alloc).
+// S84 (F-narrow): made it a clear compile-time E0202 error.
+// S85 (G-structural): the structural fix — `finalize_deferred` records
+// a chained TypeGenericCallInfo for fresh_tvs that resolve to
+// `Infer(outer_body_tv)`; `compile_monomorphized_bodies` resolves the
+// chain via the outer mono's `type_bindings` and emits a secondary
+// MonoRequest so the inner `a.clone()` lowers to the i32-specialized
+// `Frozen<i32>::clone` body.
+//
+// EXPECT: 42
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.clone.Clone;
+
+fn copy_inner<T: Clone>(a: &Frozen<T>) -> Frozen<T> {
+    a.clone()
+}
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(42);
+    let g: Frozen<i32> = copy_inner(&f);
+    println_int(*g.get());
+    0
+}
