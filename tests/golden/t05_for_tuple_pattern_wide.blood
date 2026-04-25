@@ -1,0 +1,22 @@
+// Test: `for (a, b) in vec_of_pairs` with wide K/V types (S89)
+// Verifies the general fix beyond HashMap — Vec<(u64, u64)> direct iteration
+// must propagate the tuple element types into the binding allocas, not
+// default them to i32.
+// EXPECT: 1 100
+// EXPECT: 2 200
+// EXPECT: 3 300
+
+fn main() -> i32 {
+    let mut v: Vec<(u64, u64)> = Vec.new();
+    v.push((1u64, 100u64));
+    v.push((2u64, 200u64));
+    v.push((3u64, 300u64));
+
+    for (a, b) in v {
+        print_int(a as i32);
+        print(" ");
+        println_int(b as i32);
+    }
+
+    0
+}

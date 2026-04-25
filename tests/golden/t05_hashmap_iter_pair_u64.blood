@@ -1,0 +1,32 @@
+// Test: HashMap<u64, u64>.iter() for-tuple destructuring (S89)
+// Verifies that wide K/V types are correctly propagated through the
+// `for (k, v) in m.iter()` tuple pattern. Pre-S89 the sub-bindings
+// defaulted to i32, producing a store-i64-to-i32-alloca corruption.
+// EXPECT: count: 3
+// EXPECT: key_sum: 60
+// EXPECT: val_sum: 600
+
+fn main() -> i32 {
+    let mut m: HashMap<u64, u64> = HashMap.new();
+    m.insert(10u64, 100u64);
+    m.insert(20u64, 200u64);
+    m.insert(30u64, 300u64);
+
+    let mut count: i32 = 0;
+    let mut key_sum: u64 = 0u64;
+    let mut val_sum: u64 = 0u64;
+    for (k, v) in m.iter() {
+        count += 1;
+        key_sum += k;
+        val_sum += v;
+    }
+
+    print("count: ");
+    println_int(count);
+    print("key_sum: ");
+    println_int(key_sum as i32);
+    print("val_sum: ");
+    println_int(val_sum as i32);
+
+    0
+}
