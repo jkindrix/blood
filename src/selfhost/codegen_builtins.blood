@@ -1719,7 +1719,12 @@ fn extract_hashmap_sizes(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
 ) -> HashMapDispatch {
-    let unwrapped = type_intern.unwrap_ref_id(ty_id);
+    // Deep-unwrap to handle wrapper functions where MIR produces &&HashMap<K, V>
+    // (auto-ref of an already-`&HashMap<K, V>` parameter under a `&self` method).
+    // Single-level unwrap leaves `&HashMap<K, V>`, which is not an Adt, so
+    // get_adt_args returns None and the builtin falls back to default sizes
+    // (ks=8, vs=8) — silently miscompiling primitive-keyed HashMaps.
+    let unwrapped = type_intern.unwrap_all_refs_id(ty_id);
     match type_intern.get_adt_args(unwrapped) {
         Option.Some(args) => {
             let interner = type_intern.type_interner();

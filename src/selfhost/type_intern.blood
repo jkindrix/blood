@@ -1580,6 +1580,22 @@ pub fn unwrap_ref_id(id: TyId) -> TyId {
     }
 }
 
+/// Walks through any number of Ref/Ptr layers to find the underlying type.
+/// At codegen call sites, MIR may produce nested Refs — e.g. when a `&self`
+/// method is called on a `&T` parameter, the auto-ref produces `&&T`.
+/// Use this for type extraction at builtin-call sites that operate on the
+/// receiver ADT (e.g. extracting `<K, V>` from a `&HashMap<K, V>` argument
+/// that arrives as `&&HashMap<K, V>` from a wrapper function).
+pub fn unwrap_all_refs_id(id: TyId) -> TyId {
+    let mut current = id;
+    loop {
+        let stripped = unwrap_ref_id(current);
+        if stripped.index == current.index { break; }
+        current = stripped;
+    }
+    current
+}
+
 /// Applies a Deref projection: Ref/Ptr → inner, Adt with 1 arg (Box-like) → arg[0].
 /// Returns None if the type cannot be deref'd. No Type tree reconstruction.
 pub fn deref_id(id: TyId) -> Option<TyId> {
