@@ -294,15 +294,13 @@ impl Ordering {
 }
 
 // ============================================================
-// PartialOrd / Ord traits (S82)
+// PartialOrd / Ord traits (S82, S83 supertrait pair)
 //
-// Mirrors Rust's `core::cmp::{PartialOrd, Ord}` with two adjustments:
-//   - `PartialOrd` does NOT carry a default `Rhs = Self` parameter
-//     (Blood does not yet support default type parameters).
-//   - `Ord` extends both `Eq` and `PartialOrd`. The spec narrowly
-//     requires `Ord: Eq`, but every Ord type is by construction also
-//     PartialOrd, and pinning the supertrait pair here matches the
-//     prototype + Rust convention.
+// Mirrors Rust's `core::cmp::{PartialOrd, Ord}` with one adjustment:
+// `PartialOrd` does NOT carry a default `Rhs = Self` parameter (Blood
+// does not yet support default type parameters). `Ord` extends both
+// `Eq` and `PartialOrd` per Rust convention; the spec narrowly requires
+// `Ord: Eq`, but every Ord type is by construction also PartialOrd.
 // ============================================================
 
 /// Trait for partial-ordering comparisons.
@@ -351,16 +349,11 @@ pub trait PartialOrd: PartialEq {
 
 /// Trait for total-ordering comparisons.
 ///
-/// Every pair of values yields a definite `Ordering`. The conventional
-/// supertrait set in Rust is `Ord: Eq + PartialOrd`, but Blood's
-/// dispatch ambiguity check currently rejects the resulting diamond
-/// (`Eq` and `PartialOrd` both extend `PartialEq`, so the same `eq` /
-/// `ne` slot is reachable via two paths). We pin `Ord: PartialOrd` —
-/// `PartialEq` is reached transitively through `PartialOrd`, and every
-/// primitive `Ord` impl below also has an `impl Eq` so HashMap-style
-/// `T: Eq` bounds remain satisfiable. Re-add `Eq` as a supertrait
-/// once the diamond compiler bug is fixed.
-pub trait Ord: PartialOrd {
+/// Every pair of values yields a definite `Ordering`. `Eq` and
+/// `PartialOrd` both extend `PartialEq`, so the supertrait closure
+/// reaches `PartialEq` via two paths — the dispatch ambiguity check
+/// dedups same-method-via-two-paths, so the diamond is harmless.
+pub trait Ord: Eq + PartialOrd {
     /// Returns the ordering of `self` and `other`.
     fn cmp(self: &Self, other: &Self) -> Ordering / pure;
 }
