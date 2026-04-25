@@ -759,15 +759,18 @@ impl TypeChecker {
     /// Option F: defer a type-generic call record when fresh_vars aren't yet
     /// concrete. finalize_deferred_type_generic_calls retries after all bodies
     /// have been checked — by that time let-binding type annotations have
-    /// propagated through the subst_table chain.
+    /// propagated through the subst_table chain. S84: full span is preserved
+    /// so finalize can emit an error pointing at the original call site when
+    /// bindings stay unresolved (e.g., generic wrapper around a type-generic
+    /// method, which is currently unsupported — see S81-FOLLOWUP-1).
     pub fn defer_type_generic_call(
         self: &mut Self,
-        call_span_start: usize,
+        span: common.Span,
         callee_def_id: u32,
         saved_bindings: Vec<u32>,
     ) {
         self.deferred_type_generic_calls.push(
-            common.DeferredTypeGenericCall.new(call_span_start, callee_def_id, saved_bindings)
+            common.DeferredTypeGenericCall.new(span.start, span, callee_def_id, saved_bindings)
         );
     }
 

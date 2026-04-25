@@ -1,0 +1,27 @@
+// COMPILE_FAIL: generic wrapper around `Frozen<T>::clone` is not yet supported
+// EXPECT: type-generic method dispatch through a generic wrapper is not yet supported
+//
+// S84 / S81-FOLLOWUP-1: previously a silent miscompilation (hang at runtime
+// inside the allocator). The wrapper's `a.clone()` would resolve to the
+// type-erased Frozen<T>::clone fallback whose body terminates in
+// `unreachable` mid-function — UB on entry. F-narrow promoted that silent
+// drop in finalize_deferred_type_generic_calls to a clear typeck error.
+//
+// S85 (Option G structural fix): chained TypeGenericCallInfo will let the
+// wrapper's own monomorphization propagate to the inner call. When that
+// lands, this golden should be migrated to a runtime test that prints `42`.
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.clone.Clone;
+
+fn copy_inner<T: Clone>(a: &Frozen<T>) -> Frozen<T> {
+    a.clone()
+}
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(42);
+    let g: Frozen<i32> = copy_inner(&f);
+    println_int(*g.get());
+    0
+}

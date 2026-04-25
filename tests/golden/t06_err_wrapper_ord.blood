@@ -1,0 +1,28 @@
+// COMPILE_FAIL: generic wrapper around `Frozen<T>::cmp` is not yet supported
+// EXPECT: type-generic method dispatch through a generic wrapper is not yet supported
+//
+// S84 / S81-FOLLOWUP-1: see t06_err_wrapper_clone for context. The Ord
+// variant exercises the new S83 supertrait `Ord: Eq + PartialOrd` dedup
+// path through the wrapper. Pre-fix: segfault at an unsymbolized address
+// after the call. With F-narrow: clear compile-time error.
+//
+// S85 (Option G): migrate to a runtime test that prints `1` (Less).
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.{Ord, Ordering};
+
+fn cmp_inner<T: Ord>(a: &Frozen<T>, b: &Frozen<T>) -> Ordering {
+    a.cmp(b)
+}
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(1);
+    let f2: Frozen<i32> = Frozen.new(2);
+    match cmp_inner(&f1, &f2) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    0
+}

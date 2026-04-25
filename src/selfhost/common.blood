@@ -439,6 +439,12 @@ impl TypeGenericCallInfo {
 pub struct DeferredTypeGenericCall {
     /// Byte offset of the call expression span.
     pub call_span_start: usize,
+    /// Full call span. Preserved so finalize_deferred_type_generic_calls can
+    /// emit an error pointing at the original call site when bindings stay
+    /// unresolved through Phase 3 (S84: catches generic-wrapper-around-
+    /// type-generic-method, which would otherwise silently miscompile to a
+    /// call into a type-erased fallback whose body is `unreachable`).
+    pub span: Span,
     /// DefId.index of the called generic method.
     pub callee_def_id: u32,
     /// Flat Vec of (body_tv, fresh_tv) pairs saved at recording time.
@@ -446,8 +452,8 @@ pub struct DeferredTypeGenericCall {
 }
 
 impl DeferredTypeGenericCall {
-    pub fn new(call_span_start: usize, callee_def_id: u32, saved_bindings: Vec<u32>) -> DeferredTypeGenericCall {
-        DeferredTypeGenericCall { call_span_start, callee_def_id, saved_bindings }
+    pub fn new(call_span_start: usize, span: Span, callee_def_id: u32, saved_bindings: Vec<u32>) -> DeferredTypeGenericCall {
+        DeferredTypeGenericCall { call_span_start, span, callee_def_id, saved_bindings }
     }
 }
 

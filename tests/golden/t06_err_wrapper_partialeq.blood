@@ -1,0 +1,27 @@
+// COMPILE_FAIL: generic wrapper around `Frozen<T>::eq` is not yet supported
+// EXPECT: type-generic method dispatch through a generic wrapper is not yet supported
+//
+// S84 / S81-FOLLOWUP-1: see t06_err_wrapper_clone for context. The
+// PartialEq variant hangs identically at runtime (alloc recursion) before
+// the F-narrow fix; with the fix it compile-fails with a clear note.
+//
+// S85 (Option G): migrate to a runtime test that prints `1`.
+
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.PartialEq;
+
+fn same<T: PartialEq>(a: &Frozen<T>, b: &Frozen<T>) -> bool {
+    a.eq(b)
+}
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(42);
+    let f2: Frozen<i32> = Frozen.new(42);
+    if same(&f1, &f2) {
+        println_int(1);
+    } else {
+        println_int(0);
+    }
+    0
+}
