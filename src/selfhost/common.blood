@@ -447,13 +447,65 @@ pub struct DeferredTypeGenericCall {
     pub span: Span,
     /// DefId.index of the called generic method.
     pub callee_def_id: u32,
+    /// DefId.index of the body that contains this call. S85 / Option G:
+    /// finalize_deferred uses this to scope chained TypeGenericCallInfo
+    /// records to the right outer body so the mono pass can filter.
+    pub outer_body_def_id: u32,
     /// Flat Vec of (body_tv, fresh_tv) pairs saved at recording time.
     pub saved_bindings: Vec<u32>,
 }
 
 impl DeferredTypeGenericCall {
-    pub fn new(call_span_start: usize, span: Span, callee_def_id: u32, saved_bindings: Vec<u32>) -> DeferredTypeGenericCall {
-        DeferredTypeGenericCall { call_span_start, span, callee_def_id, saved_bindings }
+    pub fn new(call_span_start: usize, span: Span, callee_def_id: u32, outer_body_def_id: u32, saved_bindings: Vec<u32>) -> DeferredTypeGenericCall {
+        DeferredTypeGenericCall { call_span_start, span, callee_def_id, outer_body_def_id, saved_bindings }
+    }
+}
+
+/// S85 / Option G-structural: a single binding for a chained type-generic
+/// call. Each binding is either fully concrete (resolved at typeck time) or
+/// chained (resolves at outer-mono time via outer body's mono_subst).
+pub struct ChainedBinding {
+    /// Inner method's body TyVarId.index — what gets monomorphized.
+    pub inner_body_tv: u32,
+    /// When `is_chained == false`: TyId.index of the resolved concrete type.
+    /// When `is_chained == true`: outer body's TyVarId.index that supplies
+    /// the concrete type at outer-mono time.
+    pub data: u32,
+    pub is_chained: bool,
+}
+
+impl ChainedBinding {
+    pub fn new_concrete(inner_body_tv: u32, concrete_ty_id: u32) -> ChainedBinding {
+        ChainedBinding { inner_body_tv, data: concrete_ty_id, is_chained: false }
+    }
+    pub fn new_chained(inner_body_tv: u32, outer_body_tv: u32) -> ChainedBinding {
+        ChainedBinding { inner_body_tv, data: outer_body_tv, is_chained: true }
+    }
+}
+
+/// S85 / Option G-structural: a deferred type-generic call whose bindings
+/// reference an outer fn's body type-param (generic wrapper case). At
+/// typeck-finalize time, every fresh_tv that resolves to `Infer(outer_tv)`
+/// becomes a chained binding; concrete-resolved fresh_tvs become concrete
+/// bindings. The mono pass (compile_monomorphized_bodies) iterates these
+/// records, filters by `outer_body_def_id == req.original_def_id`, resolves
+/// each chained binding via the outer mono's `type_bindings`, and emits a
+/// concrete TypeGenericCallInfo for the mono'd outer body's MIR lowering.
+pub struct ChainedTypeGenericCallInfo {
+    /// DefId.index of the outer body containing the call.
+    pub outer_body_def_id: u32,
+    /// Byte offset of the call expression span (matches TypeGenericCallInfo).
+    pub call_span_start: usize,
+    /// DefId.index of the called generic method (the inner callee).
+    pub callee_def_id: u32,
+    /// Bindings for the inner method's type params. Each is concrete or
+    /// chained-via-outer-body-tv. Order matches the inner method's sig.
+    pub bindings: Vec<ChainedBinding>,
+}
+
+impl ChainedTypeGenericCallInfo {
+    pub fn new(outer_body_def_id: u32, call_span_start: usize, callee_def_id: u32, bindings: Vec<ChainedBinding>) -> ChainedTypeGenericCallInfo {
+        ChainedTypeGenericCallInfo { outer_body_def_id, call_span_start, callee_def_id, bindings }
     }
 }
 

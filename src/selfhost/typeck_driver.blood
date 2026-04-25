@@ -476,6 +476,11 @@ pub struct TypeCheckResult {
     /// Type-generic call info for monomorphization.
     /// Records calls to type-generic functions with resolved concrete type bindings.
     pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// S85 / Option G-structural: chained type-generic call records. Per
+    /// outer body, holds calls whose bindings include a chain through that
+    /// body's own type-param. Resolved at outer-mono time to produce
+    /// concrete TypeGenericCallInfo for the mono'd body's MIR lowering.
+    pub chained_type_generic_calls: Vec<common.ChainedTypeGenericCallInfo>,
     /// Pending method calls that remained unresolved after type checking.
     /// Used to identify which generic functions need monomorphization.
     pub pending_method_calls: Vec<common.PendingMethodCall>,
@@ -494,6 +499,7 @@ impl TypeCheckResult {
         default_method_remaps: Vec<common.DefaultMethodRemap>,
         coercion_entries: Vec<common.CoercionEntry>,
         type_generic_calls: Vec<common.TypeGenericCallInfo>,
+        chained_type_generic_calls: Vec<common.ChainedTypeGenericCallInfo>,
         pending_method_calls: Vec<common.PendingMethodCall>,
         impl_method_table: Vec<common.ImplMethodEntry>,
     ) -> TypeCheckResult {
@@ -507,6 +513,7 @@ impl TypeCheckResult {
             default_method_remaps: default_method_remaps,
             coercion_entries: coercion_entries,
             type_generic_calls: type_generic_calls,
+            chained_type_generic_calls: chained_type_generic_calls,
             pending_method_calls: pending_method_calls,
             impl_method_table: impl_method_table,
         }
@@ -529,6 +536,7 @@ impl TypeCheckResult {
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
             type_generic_calls: Vec.new(),
+            chained_type_generic_calls: Vec.new(),
             pending_method_calls: Vec.new(),
             impl_method_table: Vec.new(),
         }
@@ -593,6 +601,17 @@ pub fn clone_typeck_result_to_heap(src: &TypeCheckResult) -> TypeCheckResult {
         tgc.push(common.TypeGenericCallInfo { call_span_start: e.call_span_start, callee_def_id: e.callee_def_id, type_bindings: bindings });
     }
 
+    // Clone ChainedTypeGenericCallInfo (S85 / Option G-structural)
+    let mut ctgc: Vec<common.ChainedTypeGenericCallInfo> = Vec.with_capacity(src.chained_type_generic_calls.len());
+    for i in 0usize..src.chained_type_generic_calls.len() {
+        let e = &src.chained_type_generic_calls[i];
+        let mut cbs: Vec<common.ChainedBinding> = Vec.with_capacity(e.bindings.len());
+        for j in 0usize..e.bindings.len() {
+            cbs.push(common.ChainedBinding { inner_body_tv: e.bindings[j].inner_body_tv, data: e.bindings[j].data, is_chained: e.bindings[j].is_chained });
+        }
+        ctgc.push(common.ChainedTypeGenericCallInfo { outer_body_def_id: e.outer_body_def_id, call_span_start: e.call_span_start, callee_def_id: e.callee_def_id, bindings: cbs });
+    }
+
     // Clone PendingMethodCall
     let mut pending: Vec<common.PendingMethodCall> = Vec.with_capacity(src.pending_method_calls.len());
     for i in 0usize..src.pending_method_calls.len() {
@@ -624,6 +643,7 @@ pub fn clone_typeck_result_to_heap(src: &TypeCheckResult) -> TypeCheckResult {
         default_method_remaps: remaps,
         coercion_entries: coercions,
         type_generic_calls: tgc,
+        chained_type_generic_calls: ctgc,
         pending_method_calls: pending,
         impl_method_table: impl_methods,
     }
@@ -677,7 +697,7 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
     if checker.has_errors() {
         TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, Vec.new(), Vec.new())
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, checker.chained_type_generic_calls, Vec.new(), Vec.new())
     }
 }
 
@@ -996,7 +1016,7 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     if checker.has_errors() {
         TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, unresolved_pending, impl_method_table)
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, checker.chained_type_generic_calls, unresolved_pending, impl_method_table)
     }
 }
 
@@ -3203,7 +3223,9 @@ fn finalize_deferred_type_generic_calls(checker: &mut typeck.TypeChecker) {
     let mut di: usize = 0;
     while di < checker.deferred_type_generic_calls.len() {
         let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+        let mut chained: Vec<common.ChainedBinding> = Vec.new();
         let mut all_concrete = true;
+        let mut all_resolvable = true;
         {
             let saved_bindings = &checker.deferred_type_generic_calls[di].saved_bindings;
             let mut bpi: usize = 0;
@@ -3213,14 +3235,25 @@ fn finalize_deferred_type_generic_calls(checker: &mut typeck.TypeChecker) {
                 let fresh_infer = interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
                 let concrete = checker.resolve(fresh_infer);
                 match interner.get(concrete) {
-                    &type_intern.InternedTypeKind.Infer(_) => {
+                    &type_intern.InternedTypeKind.Infer(infer_var) => {
                         all_concrete = false;
+                        // S85 / Option G-structural: the fresh_tv resolves to
+                        // an outer body's TyVarId. This is the
+                        // generic-wrapper case — record a chained binding so
+                        // the mono pass can resolve it once the outer body
+                        // is monomorphized with a concrete type for that var.
+                        chained.push(common.ChainedBinding.new_chained(body_tv, infer_var.index));
                     }
                     _ => {
                         bindings.push(common.TypeMonoBinding.new(body_tv, concrete.index));
+                        chained.push(common.ChainedBinding.new_concrete(body_tv, concrete.index));
                     }
                 }
                 bpi += 2;
+            }
+            // We have nothing to record at all if there were no bindings.
+            if chained.len() == 0 {
+                all_resolvable = false;
             }
         }
         if all_concrete && bindings.len() > 0 {
@@ -3229,18 +3262,25 @@ fn finalize_deferred_type_generic_calls(checker: &mut typeck.TypeChecker) {
             checker.type_generic_calls.push(common.TypeGenericCallInfo.new(
                 call_span_start, callee_def_id, bindings,
             ));
+        } else if all_resolvable {
+            // S85 / Option G-structural: at least one fresh_tv resolves to
+            // `Infer(outer_body_tv)` (generic wrapper case). Record a
+            // chained TypeGenericCallInfo so the mono pass can specialize
+            // the inner call once the outer body is monomorphized with a
+            // concrete type. This replaces the S84 typeck error for the
+            // (overwhelmingly common) chainable case while keeping the
+            // error path for genuinely-unresolvable bindings (no chained
+            // and not concrete — should be vanishingly rare in practice).
+            let call_span_start = checker.deferred_type_generic_calls[di].call_span_start;
+            let callee_def_id = checker.deferred_type_generic_calls[di].callee_def_id;
+            let outer_body_def_id = checker.deferred_type_generic_calls[di].outer_body_def_id;
+            checker.chained_type_generic_calls.push(common.ChainedTypeGenericCallInfo.new(
+                outer_body_def_id, call_span_start, callee_def_id, chained,
+            ));
         } else {
-            // S84 / S81-FOLLOWUP-1: a deferred call that does NOT finalize means
-            // its type bindings reference an outer fn's body_tv (typically a
-            // generic wrapper around a type-generic method, e.g.
-            // `fn copy_inner<T: Clone>(a: &Frozen<T>) { a.clone() }`). Without
-            // monomorphization of the inner call propagated through the
-            // wrapper's own mono pass (Option G — slated for S85), MIR
-            // lowering falls through to a direct call to the type-erased
-            // fallback body whose codegen ends in `unreachable` mid-body,
-            // producing runtime UB (hang/segfault) when the wrapper is
-            // invoked. Promote the silent drop to a clear typeck error so
-            // users get a compile-time signal until the structural fix lands.
+            // S84 fallback: deferred call with no bindings AT ALL — should
+            // be vanishingly rare. Keep the typeck error so silent UB stays
+            // impossible if a future codepath records an empty deferred.
             let span = checker.deferred_type_generic_calls[di].span;
             checker.error_with_note(
                 typeck_types.TypeErrorKind.CannotInfer,

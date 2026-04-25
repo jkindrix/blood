@@ -454,6 +454,14 @@ pub struct TypeChecker {
     /// let-binding type annotation that propagates later). finalize_deferred_type_generic_calls
     /// runs after all bodies have been checked and retries resolution.
     pub deferred_type_generic_calls: Vec<common.DeferredTypeGenericCall>,
+    /// S85 / Option G-structural: chained type-generic call records. When a
+    /// deferred entry's fresh_tv resolves to `Infer(outer_body_tv)` rather
+    /// than concrete (the generic-wrapper-around-type-generic-method
+    /// pattern), finalize_deferred records a chained entry here. The mono
+    /// pass walks these per outer-body and resolves each chain via the
+    /// outer's `type_bindings` to produce concrete TypeGenericCallInfo for
+    /// the mono'd body's MIR lowering.
+    pub chained_type_generic_calls: Vec<common.ChainedTypeGenericCallInfo>,
     /// Flat table of impl methods for resolving trait methods during monomorphization.
     /// Each entry maps (self_ty_id, method_name) → method_def_id.
     pub impl_method_table: Vec<common.ImplMethodEntry>,
@@ -546,6 +554,7 @@ impl TypeChecker {
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             deferred_type_generic_calls: Vec.new(),
+            chained_type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
             generic_impl_method_defs: Vec.new(),
             def_names: Vec.new(),
@@ -632,6 +641,7 @@ impl TypeChecker {
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             deferred_type_generic_calls: Vec.new(),
+            chained_type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
             generic_impl_method_defs: Vec.new(),
             def_names: Vec.new(),
@@ -761,8 +771,9 @@ impl TypeChecker {
     /// have been checked — by that time let-binding type annotations have
     /// propagated through the subst_table chain. S84: full span is preserved
     /// so finalize can emit an error pointing at the original call site when
-    /// bindings stay unresolved (e.g., generic wrapper around a type-generic
-    /// method, which is currently unsupported — see S81-FOLLOWUP-1).
+    /// bindings stay unresolved. S85 (Option G-structural): outer_body_def_id
+    /// is captured here so finalize can record chained TypeGenericCallInfo
+    /// scoped to the right outer body for the mono pass.
     pub fn defer_type_generic_call(
         self: &mut Self,
         span: common.Span,
@@ -770,7 +781,7 @@ impl TypeChecker {
         saved_bindings: Vec<u32>,
     ) {
         self.deferred_type_generic_calls.push(
-            common.DeferredTypeGenericCall.new(span.start, span, callee_def_id, saved_bindings)
+            common.DeferredTypeGenericCall.new(span.start, span, callee_def_id, self.current_body_def_id, saved_bindings)
         );
     }
 
