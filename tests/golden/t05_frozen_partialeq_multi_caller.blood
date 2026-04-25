@@ -1,0 +1,43 @@
+// Test: multi-caller `impl<T: PartialEq> PartialEq for Frozen<T>` (S81).
+//
+// Calls `.eq()` and `.ne()` on three different Frozen<T> instantiations
+// (i32, bool, u64) within one program. Pre-S78 this hit
+// BUGS_OPEN §A1-P3a — the shared erased body resolved body_tv to
+// the FIRST caller's T and rejected subsequent callers with E0201.
+// S78's Option F closure (Change A + B + forward-walk + deferred
+// recording) specializes the delegation per-caller so all three
+// dispatch correctly.
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.PartialEq;
+
+fn main() -> i32 {
+    let fi1: Frozen<i32> = Frozen.new(42);
+    let fi2: Frozen<i32> = Frozen.new(42);
+    let fi3: Frozen<i32> = Frozen.new(99);
+
+    let fb1: Frozen<bool> = Frozen.new(true);
+    let fb2: Frozen<bool> = Frozen.new(true);
+    let fb3: Frozen<bool> = Frozen.new(false);
+
+    let fu1: Frozen<u64> = Frozen.new(7u64);
+    let fu2: Frozen<u64> = Frozen.new(7u64);
+    let fu3: Frozen<u64> = Frozen.new(99u64);
+
+    if fi1.eq(&fi2) { println_int(1); } else { println_int(0); }
+    if fi1.ne(&fi3) { println_int(1); } else { println_int(0); }
+
+    if fb1.eq(&fb2) { println_int(1); } else { println_int(0); }
+    if fb1.ne(&fb3) { println_int(1); } else { println_int(0); }
+
+    if fu1.eq(&fu2) { println_int(1); } else { println_int(0); }
+    if fu1.ne(&fu3) { println_int(1); } else { println_int(0); }
+    0
+}

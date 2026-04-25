@@ -1,0 +1,29 @@
+// Test: stdlib `impl<T: PartialEq> PartialEq for Frozen<T>` (S81).
+//
+// Exercises:
+//   - `f.eq(&g)` on `Frozen<i32>` dispatches to the stdlib trait
+//     delegation, which delegates to `i32.eq` (also stdlib) and
+//     returns the field-wise equality result.
+//   - `f.ne(&g)` exercises the explicit `ne` body in the stdlib
+//     impl (not the trait default), proving the delegation forwards
+//     to `i32.ne` rather than negating `eq`.
+//
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 0
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.PartialEq;
+
+fn main() -> i32 {
+    let a: Frozen<i32> = Frozen.new(42);
+    let b: Frozen<i32> = Frozen.new(42);
+    let c: Frozen<i32> = Frozen.new(99);
+
+    if a.eq(&b) { println_int(1); } else { println_int(0); }
+    if a.eq(&c) { println_int(1); } else { println_int(0); }
+    if a.ne(&c) { println_int(1); } else { println_int(0); }
+    if a.ne(&b) { println_int(1); } else { println_int(0); }
+    0
+}

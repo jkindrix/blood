@@ -1,0 +1,39 @@
+// Test: stdlib `impl<T: Eq> Eq for Frozen<T>` marker trait (S81).
+//
+// Eq is a marker trait (no methods). The only observable behavior is
+// that the bound `T: Eq` is satisfiable for types implementing the
+// stdlib Eq. This test proves:
+//   - `i32: Eq` from `stdlib/traits/cmp.blood:impl Eq for i32 {}`
+//   - `Frozen<i32>: Eq` from
+//     `stdlib/core/frozen.blood:impl<T: Eq> Eq for Frozen<T> {}`
+//     (which the compiler must satisfy by checking i32: Eq via the
+//     primitive impl).
+//
+// The empty body of `require_eq` avoids the
+// generic-wrapper-method-dispatch crash documented as a follow-up
+// (§S79 Clone has the same issue with `fn copy_inner<T: Clone>(a:
+// &Frozen<T>) -> Frozen<T> { a.clone() }`).
+//
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 3
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.{PartialEq, Eq};
+
+fn require_eq<T: Eq>(_: &T) / pure {}
+
+fn main() -> i32 {
+    let n: i32 = 42;
+    require_eq(&n);
+    println_int(1);
+
+    let s: u64 = 99u64;
+    require_eq(&s);
+    println_int(2);
+
+    let f: Frozen<i32> = Frozen.new(42);
+    require_eq(&f);
+    println_int(3);
+    0
+}

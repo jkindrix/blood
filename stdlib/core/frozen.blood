@@ -101,6 +101,17 @@ impl<T: std.traits.hash.Hash> std.traits.hash.Hash for Frozen<T> {
     }
 }
 
+impl<T: std.traits.cmp.PartialEq> std.traits.cmp.PartialEq for Frozen<T> {
+    fn eq(self: &Self, other: &Self) -> bool / pure {
+        self.value.eq(&other.value)
+    }
+    fn ne(self: &Self, other: &Self) -> bool / pure {
+        self.value.ne(&other.value)
+    }
+}
+
+impl<T: std.traits.cmp.Eq> std.traits.cmp.Eq for Frozen<T> {}
+
 // NOTE: `impl<T: Default> Default for Frozen<T>` is intentionally
 // NOT provided. Blood's HIR lowering does not yet resolve qualified
 // paths through generic type parameters (`T.default()` →
