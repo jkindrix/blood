@@ -1,0 +1,31 @@
+// Test: stdlib `impl Ord for i64` (S82). `.cmp(...)` returns
+// `Ordering.Less / .Equal / .Greater` for ordered values.
+mod std;
+use std.traits.cmp.{Ord, Ordering};
+
+fn main() -> i32 {
+    let a: i64 = 100i64;
+    let b: i64 = 200i64;
+    let c: i64 = 100i64;
+
+    match a.cmp(&b) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    match a.cmp(&c) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    match b.cmp(&a) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 2

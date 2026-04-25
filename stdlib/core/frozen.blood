@@ -112,6 +112,30 @@ impl<T: std.traits.cmp.PartialEq> std.traits.cmp.PartialEq for Frozen<T> {
 
 impl<T: std.traits.cmp.Eq> std.traits.cmp.Eq for Frozen<T> {}
 
+impl<T: std.traits.cmp.PartialOrd> std.traits.cmp.PartialOrd for Frozen<T> {
+    fn partial_cmp(self: &Self, other: &Self) -> Option<std.traits.cmp.Ordering> / pure {
+        self.value.partial_cmp(&other.value)
+    }
+    fn lt(self: &Self, other: &Self) -> bool / pure {
+        self.value.lt(&other.value)
+    }
+    fn le(self: &Self, other: &Self) -> bool / pure {
+        self.value.le(&other.value)
+    }
+    fn gt(self: &Self, other: &Self) -> bool / pure {
+        self.value.gt(&other.value)
+    }
+    fn ge(self: &Self, other: &Self) -> bool / pure {
+        self.value.ge(&other.value)
+    }
+}
+
+impl<T: std.traits.cmp.Ord> std.traits.cmp.Ord for Frozen<T> {
+    fn cmp(self: &Self, other: &Self) -> std.traits.cmp.Ordering / pure {
+        self.value.cmp(&other.value)
+    }
+}
+
 // NOTE: `impl<T: Default> Default for Frozen<T>` is intentionally
 // NOT provided. Blood's HIR lowering does not yet resolve qualified
 // paths through generic type parameters (`T.default()` →

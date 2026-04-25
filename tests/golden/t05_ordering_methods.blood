@@ -1,0 +1,43 @@
+// Test: stdlib `impl Ordering` (S82). Probe the helper methods —
+// is_lt / is_eq / is_gt / is_le / is_ge / is_ne / reverse / then.
+mod std;
+use std.traits.cmp.{Ord, Ordering};
+
+fn main() -> i32 {
+    let lt = (1i32).cmp(&2i32);   // Less
+    let eq = (2i32).cmp(&2i32);   // Equal
+    let gt = (3i32).cmp(&2i32);   // Greater
+
+    if lt.is_lt() { println_int(1); } else { println_int(0); }
+    if eq.is_eq() { println_int(1); } else { println_int(0); }
+    if gt.is_gt() { println_int(1); } else { println_int(0); }
+    if lt.is_le() { println_int(1); } else { println_int(0); }
+    if eq.is_le() { println_int(1); } else { println_int(0); }
+    if gt.is_ge() { println_int(1); } else { println_int(0); }
+    if eq.is_ne() { println_int(0); } else { println_int(1); }
+
+    // reverse
+    let rev = lt.reverse();
+    if rev.is_gt() { println_int(1); } else { println_int(0); }
+    let rev2 = eq.reverse();
+    if rev2.is_eq() { println_int(1); } else { println_int(0); }
+
+    // then: Less.then(Greater) = Less, Equal.then(Less) = Less
+    let chain1 = lt.then(Ordering.Greater);
+    if chain1.is_lt() { println_int(1); } else { println_int(0); }
+    let chain2 = eq.then(Ordering.Less);
+    if chain2.is_lt() { println_int(1); } else { println_int(0); }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1

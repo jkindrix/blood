@@ -1,0 +1,39 @@
+// Test: Option F (S78) per-caller specialization for stdlib `impl<T:
+// Ord> Ord for Frozen<T>` (S82). Calls `.cmp(...)` on Frozen<i32>,
+// Frozen<u64>, and Frozen<char> from the same `main`. Each call site
+// must monomorphize the delegation body to dispatch to the inner
+// primitive `Ord` impl for that T.
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.{Ord, Ordering};
+
+fn main() -> i32 {
+    let a32: Frozen<i32> = Frozen.new(1i32);
+    let b32: Frozen<i32> = Frozen.new(2i32);
+    match a32.cmp(&b32) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+
+    let au64: Frozen<u64> = Frozen.new(100u64);
+    let bu64: Frozen<u64> = Frozen.new(50u64);
+    match au64.cmp(&bu64) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+
+    let ac: Frozen<char> = Frozen.new('a');
+    let bc: Frozen<char> = Frozen.new('a');
+    match ac.cmp(&bc) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 0

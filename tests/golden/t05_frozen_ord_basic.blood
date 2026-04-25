@@ -1,0 +1,55 @@
+// Test: stdlib `impl<T: Ord> Ord for Frozen<T>` + `impl<T: PartialOrd>
+// PartialOrd for Frozen<T>` (S82). Frozen<i32> delegates `.cmp(...)`
+// and `.partial_cmp(...)` to the inner i32 impls.
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.cmp.{Ord, PartialOrd, Ordering};
+
+fn main() -> i32 {
+    let a: Frozen<i32> = Frozen.new(1);
+    let b: Frozen<i32> = Frozen.new(2);
+    let c: Frozen<i32> = Frozen.new(1);
+
+    // Frozen.cmp via Ord delegation
+    match a.cmp(&b) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    match a.cmp(&c) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+    match b.cmp(&a) {
+        Ordering.Less => println_int(1),
+        Ordering.Equal => println_int(0),
+        Ordering.Greater => println_int(2),
+    }
+
+    // Frozen.partial_cmp via PartialOrd delegation
+    match a.partial_cmp(&b) {
+        Some(o) => match o {
+            Ordering.Less => println_int(1),
+            Ordering.Equal => println_int(0),
+            Ordering.Greater => println_int(2),
+        },
+        None => println_int(99),
+    }
+
+    // Frozen.lt / .le / .gt / .ge
+    if a.lt(&b) { println_int(1); } else { println_int(0); }
+    if a.le(&c) { println_int(1); } else { println_int(0); }
+    if b.gt(&a) { println_int(1); } else { println_int(0); }
+    if c.ge(&a) { println_int(1); } else { println_int(0); }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1

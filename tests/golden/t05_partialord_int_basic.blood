@@ -1,0 +1,52 @@
+// Test: stdlib `impl PartialOrd for i32` (S82). Basic dispatch of
+// `partial_cmp`, `lt`, `le`, `gt`, `ge` returns the expected results
+// for ordered integer values.
+mod std;
+use std.traits.cmp.{PartialOrd, Ordering};
+
+fn main() -> i32 {
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let c: i32 = 1;
+
+    // partial_cmp returns Some(Less / Equal / Greater)
+    match a.partial_cmp(&b) {
+        Some(o) => match o {
+            Ordering.Less => println_int(1),
+            Ordering.Equal => println_int(0),
+            Ordering.Greater => println_int(2),
+        },
+        None => println_int(99),
+    }
+    match a.partial_cmp(&c) {
+        Some(o) => match o {
+            Ordering.Less => println_int(1),
+            Ordering.Equal => println_int(0),
+            Ordering.Greater => println_int(2),
+        },
+        None => println_int(99),
+    }
+    match b.partial_cmp(&a) {
+        Some(o) => match o {
+            Ordering.Less => println_int(1),
+            Ordering.Equal => println_int(0),
+            Ordering.Greater => println_int(2),
+        },
+        None => println_int(99),
+    }
+
+    // lt / le / gt / ge
+    if a.lt(&b) { println_int(1); } else { println_int(0); }
+    if a.le(&c) { println_int(1); } else { println_int(0); }
+    if b.gt(&a) { println_int(1); } else { println_int(0); }
+    if c.ge(&a) { println_int(1); } else { println_int(0); }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
