@@ -1,0 +1,29 @@
+// Test: multi-caller `impl<T> AsRef<T> for Frozen<T>` from stdlib (S87).
+//
+// Three different Frozen<T> instantiations (i32, bool, u64) all
+// dispatch through the same delegation; per-T specialization picks
+// the correct &T return type per call site.
+//
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 99
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.asref.AsRef;
+
+fn main() -> i32 {
+    let fi: Frozen<i32> = Frozen.new(42);
+    let fb: Frozen<bool> = Frozen.new(true);
+    let fu: Frozen<u64> = Frozen.new(99u64);
+
+    let ri: &i32 = fi.as_ref();
+    let rb: &bool = fb.as_ref();
+    let ru: &u64 = fu.as_ref();
+
+    println_int(*ri);
+    if *rb { println_int(1); } else { println_int(0); }
+    let u: u64 = *ru;
+    println_int(u as i32);
+
+    0
+}

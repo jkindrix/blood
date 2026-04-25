@@ -145,3 +145,52 @@ impl<T: std.traits.cmp.Ord> std.traits.cmp.Ord for Frozen<T> {
 // bounds into expression-path resolution for generic Params, or
 // (b) a function-pointer-based workaround (e.g. taking a `default
 // fn` arg). Tracked as S79 follow-up — see `.tmp/NEXT_SESSION.md`.
+
+// ============================================================
+// Reference-style delegations (S87)
+//
+// These delegations don't require a trait bound on T because
+// they only hand out `&self.value` — no method on T is invoked.
+// The unbounded `impl<T>` form is sound because the caller can
+// only construct a `Frozen<T>` via `Frozen.new(value)` which
+// requires `T: Freeze`; if a `&Frozen<T>` exists, T was Freeze
+// at construction time.
+//
+// `*frozen` auto-coerces to `&T` via the Deref impl (the
+// compiler's name-based Deref detection registers Frozen's
+// Target = T mapping in `typeck_driver.detect_deref_trait`).
+// `frozen.as_ref()` and `frozen.borrow()` provide the same
+// access via explicit trait dispatch, useful for generic code
+// bounded on `AsRef<U>` or `Borrow<U>`.
+//
+// AUTO-DEREF MULTI-CALLER LIMITATION: `*f` for `f: Frozen<T>`
+// uses the compiler's `deref_target_types` map keyed by Frozen's
+// DefId; it stores the impl's Target type as-is (a Param T in
+// our case). The unary `*` operator does not substitute the
+// receiver's concrete type args into Target before unifying
+// with the surrounding context, so `*fi` (T=i32) followed by
+// `*fb` (T=bool) tries to bind the same body_tv twice and the
+// second binding fails. Use `frozen.deref()` (explicit method
+// call — dispatches through the standard trait machinery, which
+// DOES specialize per-T via S78/S85) for multi-caller code. The
+// auto-deref path is sufficient for single-T contexts.
+// ============================================================
+
+impl<T> std.ops.deref.Deref for Frozen<T> {
+    type Target = T;
+    fn deref(self: &Self) -> &Self.Target / pure {
+        &self.value
+    }
+}
+
+impl<T> std.traits.asref.AsRef<T> for Frozen<T> {
+    fn as_ref(self: &Self) -> &T / pure {
+        &self.value
+    }
+}
+
+impl<T> std.traits.borrow.Borrow<T> for Frozen<T> {
+    fn borrow(self: &Self) -> &T / pure {
+        &self.value
+    }
+}

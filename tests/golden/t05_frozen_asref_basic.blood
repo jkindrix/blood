@@ -1,0 +1,17 @@
+// Test: stdlib `impl<T> AsRef<T> for Frozen<T>` (S87).
+//
+// `f.as_ref()` on `f: Frozen<i32>` dispatches to the AsRef trait
+// delegation, which returns `&self.value` (i.e. `&i32`).
+//
+// EXPECT: 42
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.asref.AsRef;
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(42);
+    let r: &i32 = f.as_ref();
+    println_int(*r);
+
+    0
+}

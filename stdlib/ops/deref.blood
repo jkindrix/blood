@@ -1,0 +1,25 @@
+// Blood Standard Library - Deref Trait
+//
+// The Deref trait overloads the unary `*` operator. A type that
+// implements `Deref<Target = U>` becomes "transparent" for shared
+// access: `*x` on `x: T` evaluates to `&U` and the compiler may emit
+// auto-coercion from `&T` to `&U` at method-call sites.
+//
+// The compiler recognizes `Deref` by name in
+// `typeck_driver.detect_deref_trait` (registers `deref_trait_def_id`,
+// `deref_target_types`, and `deref_method_ids`). The unary `*`
+// operator (`typeck_expr.blood:1218`) consults these maps to find
+// the impl's Target type and emits a call to the impl's `deref`
+// method instead of a raw `PlaceElem.Deref`.
+
+/// Dereference operator for shared access.
+///
+/// A type `T` implementing `Deref<Target = U>` lets `&T` be used
+/// where `&U` is expected (auto-coercion) and `*x` produce `&U`.
+pub trait Deref {
+    /// The type being dereferenced to.
+    type Target;
+
+    /// Returns a shared reference to the dereferenced value.
+    fn deref(self: &Self) -> &Self.Target / pure;
+}

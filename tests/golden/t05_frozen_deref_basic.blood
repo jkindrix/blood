@@ -1,0 +1,20 @@
+// Test: stdlib `impl<T> Deref for Frozen<T>` (S87).
+//
+// `*f` on `f: Frozen<i32>` invokes the Deref impl and returns
+// `&i32`. The auto-deref machinery (typeck_expr.blood:1218-1241,
+// driven by `deref_target_types` + `deref_method_ids` populated
+// by `typeck_driver.detect_deref_trait`) recognizes the stdlib
+// Deref impl on Frozen and lowers `*f` to a method call.
+//
+// EXPECT: 42
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.ops.deref.Deref;
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(42);
+    let v: i32 = *f;
+    println_int(v);
+
+    0
+}

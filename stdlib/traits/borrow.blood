@@ -1,0 +1,17 @@
+// Blood Standard Library - Borrow Trait
+//
+// `Borrow<U>` is a stronger sibling of `AsRef<U>`: in addition to
+// the cheap `&T -> &U` conversion, it asserts that the borrowed
+// form (`U`) hashes and compares the same as the owned form (`T`).
+// This invariant is what lets keyed collections (HashMap, BTreeMap)
+// look up an owned key (`String`) by a borrowed view (`&str`).
+
+/// Owned/borrowed-form duality for keyed collections.
+///
+/// `T: Borrow<U>` asserts both that `&T` can be cheaply converted
+/// to `&U` AND that the borrowed form hashes and compares the
+/// same as the owned form.
+pub trait Borrow<T> {
+    /// Returns a shared reference to the borrowed view.
+    fn borrow(self: &Self) -> &T / pure;
+}
