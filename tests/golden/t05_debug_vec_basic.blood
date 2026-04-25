@@ -1,0 +1,23 @@
+// Test: stdlib `impl<T: Debug> Debug for Vec<T>` (S86) — basic case.
+//
+// Exercises:
+//   - `v.fmt()` on `Vec<i32>::[1, 2, 3]` dispatches to the stdlib
+//     trait delegation, which iterates self, formats each element
+//     via the inner T's Debug impl, joins with ", ", and wraps in
+//     square brackets.
+//   - Each `self[i].fmt()` resolves through S85's chained mono path
+//     to the i32 specialization at this call site.
+//
+// EXPECT: [1, 2, 3]
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    let s: String = v.fmt();
+    println_str(s.as_str());
+    0
+}

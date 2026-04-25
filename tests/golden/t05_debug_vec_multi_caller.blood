@@ -1,0 +1,37 @@
+// Test: multi-caller `impl<T: Debug> Debug for Vec<T>` (S86).
+//
+// Calls `.fmt()` on three different Vec<T> instantiations
+// (i32, bool, String) within one program. S85's chained
+// TypeGenericCallInfo + cascading mono worklist specializes the
+// generic body per concrete T at each call site, so the inner
+// `self[i].fmt()` dispatch resolves to the correct primitive Debug
+// impl.
+//
+// String's `impl Debug for String` wraps the contents in quotes, so
+// `vec!["a", "b"].fmt()` formats as `["a", "b"]`.
+//
+// EXPECT: [1, 2, 3]
+// EXPECT: [true, false]
+// EXPECT: ["a", "b"]
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let mut vi: Vec<i32> = Vec.new();
+    vi.push(1);
+    vi.push(2);
+    vi.push(3);
+    println_str(vi.fmt().as_str());
+
+    let mut vb: Vec<bool> = Vec.new();
+    vb.push(true);
+    vb.push(false);
+    println_str(vb.fmt().as_str());
+
+    let mut vs: Vec<String> = Vec.new();
+    vs.push(String.from("a"));
+    vs.push(String.from("b"));
+    println_str(vs.fmt().as_str());
+
+    0
+}

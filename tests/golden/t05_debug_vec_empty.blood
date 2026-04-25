@@ -1,0 +1,18 @@
+// Test: stdlib `impl<T: Debug> Debug for Vec<T>` (S86) — empty case.
+//
+// Exercises the empty-vector branch of the Vec<T> Debug delegation.
+// The `while i < n` loop body is never entered, so the inner
+// `T.fmt()` is never invoked. This case must not depend on T's
+// Debug impl beyond the impl-level bound; the result is the literal
+// `[]`.
+//
+// EXPECT: []
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let v: Vec<i32> = Vec.new();
+    let s: String = v.fmt();
+    println_str(s.as_str());
+    0
+}
