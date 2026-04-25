@@ -1475,13 +1475,27 @@ fn ty_has_heap_owning_parts_depth(
 /// globals carry real field entries. The loop re-reads the table length each
 /// iteration so newly-added inner-type descriptors (discovered while walking
 /// user structs) are picked up in the same pass.
+///
+/// PERF-S78-PARALLEL: parallel codegen workers add per-worker layout
+/// descriptors with offset labels (e.g., @blood_layout.200000) but the merge
+/// pushes them to ctx.layout_table without updating ctx.layout_by_ty_id. A
+/// ty_id_idx lookup-based populate would skip those entries (they aren't
+/// reachable via the hashmap on main ctx). Iterating by INDEX populates each
+/// descriptor in place; recursive populate_layout_entries calls during field
+/// traversal still use layout_by_ty_id — those map to the FIRST-registered
+/// descriptor for cycle protection, which is sufficient.
 pub fn populate_all_layouts(ctx: &mut codegen_ctx.CodegenCtx) {
     let mut cursor: usize = 0;
     loop {
         let len = ctx.layout_table.len();
         if cursor >= len { break; }
-        let ty_id_idx = ctx.layout_table[cursor].ty_id_idx;
-        populate_layout_entries(ctx, ty_id_idx);
+        if !ctx.layout_table[cursor].populated {
+            let ty_id_idx = ctx.layout_table[cursor].ty_id_idx;
+            ctx.layout_table[cursor].populated = true;
+            let entries = compute_layout_entries(ctx, ty_id_idx);
+            ctx.layout_table[cursor].num_entries = entries.len() as u32;
+            ctx.layout_table[cursor].entries = entries;
+        }
         cursor = cursor + 1;
     }
 }
