@@ -1,0 +1,33 @@
+// Test: multi-caller `impl<T: Debug> Debug for Option<T>` (S86).
+//
+// Calls `.fmt()` on three different Option<T> instantiations
+// (i32, bool, String) within one program. S85's chained
+// TypeGenericCallInfo + cascading mono worklist specializes the
+// generic body per concrete T at each call site, so the inner
+// `v.fmt()` dispatch resolves to the correct primitive Debug impl.
+//
+// String's `impl Debug for String` wraps the contents in quotes, so
+// `Some(String("hi"))` formats as `Some("hi")`.
+//
+// EXPECT: Some(42)
+// EXPECT: Some(true)
+// EXPECT: Some("hi")
+// EXPECT: None
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let vi: Option<i32> = Option.Some(42);
+    println_str(vi.fmt().as_str());
+
+    let vb: Option<bool> = Option.Some(true);
+    println_str(vb.fmt().as_str());
+
+    let vs: Option<String> = Option.Some(String.from("hi"));
+    println_str(vs.fmt().as_str());
+
+    let n: Option<i32> = Option.None;
+    println_str(n.fmt().as_str());
+
+    0
+}

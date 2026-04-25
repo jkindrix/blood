@@ -150,3 +150,33 @@ impl Debug for String {
         s
     }
 }
+
+// ============================================================
+// Debug impls for generic builtin containers
+//
+// Option<T> / Vec<T> / HashMap<K, V> are compiler builtins (registered
+// in hir_lower_builtin.blood), not stdlib types. Generic impls on them
+// follow the same pattern as `impl<T: Clone> Clone for Vec<T>` in
+// common.blood.
+//
+// S85's chained TypeGenericCallInfo + cascading mono worklist (Option G)
+// makes per-T specialization fire correctly: when `v: &T` calls
+// `v.fmt()` inside the wrapper body, mono resolves the chain via
+// the outer body's substitutions and emits a secondary MonoRequest
+// for `<concrete T>::fmt`. Without S85 this would silently dispatch
+// to the type-erased fallback and miscompile.
+// ============================================================
+
+impl<T: Debug> Debug for Option<T> {
+    fn fmt(self: &Self) -> String {
+        match self {
+            &Option.Some(ref v) => {
+                let mut s = String.from("Some(");
+                s.push_str(v.fmt().as_str());
+                s.push_str(")");
+                s
+            }
+            &Option.None => String.from("None"),
+        }
+    }
+}

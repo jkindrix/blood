@@ -1,0 +1,21 @@
+// Test: stdlib `impl<T: Debug> Debug for Option<T>` (S86).
+//
+// Exercises:
+//   - `v.fmt()` on `Option<i32>::Some(42)` dispatches to the stdlib
+//     trait delegation, which formats `Some(<inner>)` by composing
+//     `String.from("Some(") + v.fmt() + ")"`.
+//   - The inner i32's `impl Debug for i32` produces "42" via
+//     `int_to_string`; the wrapper composes "Some(42)".
+//   - S85's chained mono path resolves the `v.fmt()` call inside the
+//     wrapper body to the i32 specialization at this call site.
+//
+// EXPECT: Some(42)
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let v: Option<i32> = Option.Some(42);
+    let s: String = v.fmt();
+    println_str(s.as_str());
+    0
+}

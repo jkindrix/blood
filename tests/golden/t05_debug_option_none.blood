@@ -1,0 +1,17 @@
+// Test: stdlib `impl<T: Debug> Debug for Option<T>` (S86) — None arm.
+//
+// Exercises the `None` match arm of the Option<T> Debug delegation.
+// The arm returns the static literal `String.from("None")`; no inner
+// `T.fmt()` is invoked, so this case must not depend on T's Debug
+// impl beyond the impl-level bound.
+//
+// EXPECT: None
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let n: Option<i32> = Option.None;
+    let s: String = n.fmt();
+    println_str(s.as_str());
+    0
+}
