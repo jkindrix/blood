@@ -1,0 +1,41 @@
+// Test: Vec.contains inline in main. Closes S92. Verifies hit, miss, and
+// empty-vec cases. Empty-vec is a particularly important edge case because
+// the byte-wise comparison loop must not run when len==0; pre-S92 the
+// missing elem_size garbage could cause the runtime to compute a non-zero
+// loop bound and segfault on empty Vecs too.
+// EXPECT: hit: true
+// EXPECT: miss: false
+// EXPECT: empty: false
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    let n1: i32 = 20;
+    print("hit: ");
+    if v.contains(&n1) {
+        println("true");
+    } else {
+        println("false");
+    }
+
+    let n2: i32 = 99;
+    print("miss: ");
+    if v.contains(&n2) {
+        println("true");
+    } else {
+        println("false");
+    }
+
+    let empty: Vec<i32> = Vec.new();
+    let n3: i32 = 0;
+    print("empty: ");
+    if empty.contains(&n3) {
+        println("true");
+    } else {
+        println("false");
+    }
+    0
+}

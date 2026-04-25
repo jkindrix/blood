@@ -1,0 +1,36 @@
+// Test: Vec.last through a non-generic wrapper function. Closes S92.
+// Pre-S92 there was no `emit_vec_last_call` builtin — Vec.last fell through
+// the generic call dispatch path, emitting a call shape that didn't match
+// the runtime declaration `void @vec_last(ptr, i64, ptr)`. Both inline and
+// wrapper shapes segfaulted on `Option.Some(x) => *x`. S92 adds a dedicated
+// emitter that uses `vec_len` + `vec_get_ptr` (not `@vec_last` directly,
+// whose `void` return can't distinguish empty from non-empty), and builds
+// a properly-typed `Option<&T>` with `blood_lazy_register_gen`.
+// EXPECT: len: 3
+// EXPECT: tail: 33
+// EXPECT: empty_tail: -1
+
+fn vec_tail(v: &Vec<i32>) -> i32 / pure {
+    match v.last() {
+        Option.Some(x) => *x,
+        Option.None => -1,
+    }
+}
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(11);
+    v.push(22);
+    v.push(33);
+
+    print("len: ");
+    println_int(v.len() as i32);
+
+    print("tail: ");
+    println_int(vec_tail(&v));
+
+    let empty: Vec<i32> = Vec.new();
+    print("empty_tail: ");
+    println_int(vec_tail(&empty));
+    0
+}

@@ -1,0 +1,36 @@
+// Test: Vec.last with a multi-field struct element type. The returned
+// `&Point` payload's gen comes from `blood_lazy_register_gen` on the Vec's
+// data buffer; field access through the ref must read from the in-place
+// element (not a copy), so `p.x` and `p.y` reflect the values stored at
+// push time. Also verifies elem_size is computed correctly for non-default
+// sizes (struct Point is 8 bytes, two i32 fields).
+// EXPECT: x: 30
+// EXPECT: y: 40
+// EXPECT: empty_x: -1
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn tail_xy(v: &Vec<Point>) -> (i32, i32) / pure {
+    match v.last() {
+        Option.Some(p) => (p.x, p.y),
+        Option.None => (-1, -1),
+    }
+}
+
+fn main() -> i32 {
+    let mut v: Vec<Point> = Vec.new();
+    v.push(Point { x: 10, y: 20 });
+    v.push(Point { x: 30, y: 40 });
+
+    let (x, y) = tail_xy(&v);
+    print("x: "); println_int(x);
+    print("y: "); println_int(y);
+
+    let empty: Vec<Point> = Vec.new();
+    let (ex, _ey) = tail_xy(&empty);
+    print("empty_x: "); println_int(ex);
+    0
+}

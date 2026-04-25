@@ -1,0 +1,44 @@
+// Test: Vec.last inline in main. Closes S92 — pre-S92 the inline call site
+// had the same ABI mismatch as wrapper calls (no dedicated emitter). S92's
+// emitter routes Vec.last through `vec_len` + `vec_get_ptr` and builds a
+// properly-typed `Option<&T>` regardless of call shape. The `after_realloc`
+// case forces several pushes to trigger a buffer realloc; the gen registry
+// follows the new buffer base so `last()` after realloc still returns the
+// real last element.
+// EXPECT: a: 300
+// EXPECT: empty: NONE
+// EXPECT: after_realloc: 800
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(100);
+    v.push(200);
+    v.push(300);
+
+    print("a: ");
+    match v.last() {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+
+    let empty: Vec<i32> = Vec.new();
+    print("empty: ");
+    match empty.last() {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+
+    // Trigger pushes to force a realloc; `last()` should now reflect the
+    // freshly-pushed value (800) read from the new buffer.
+    v.push(400);
+    v.push(500);
+    v.push(600);
+    v.push(700);
+    v.push(800);
+    print("after_realloc: ");
+    match v.last() {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    0
+}

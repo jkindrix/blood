@@ -1,0 +1,39 @@
+// Test: Vec.contains through a non-generic wrapper function. Closes S92.
+// Pre-S92 there was no `emit_vec_contains_call` builtin. The generic
+// dispatch path emitted `call i1 @vec_contains({ ptr, i32 }, { ptr, i32 })`
+// — only 2 args, missing elem_size, with `{ ptr, i32 }` shapes where the
+// runtime declaration `i32 @vec_contains(ptr, ptr, i64)` expects bare ptrs
+// and an explicit elem_size. The runtime read garbage for elem_size and
+// ran a byte-wise compare past the elements, segfaulting. S92 adds a
+// dedicated emitter that strips both fat refs and passes elem_size from
+// the receiver type.
+// EXPECT: hit: true
+// EXPECT: miss: false
+
+fn vec_has(v: &Vec<i32>, needle: &i32) -> bool / pure {
+    v.contains(needle)
+}
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    let needle1: i32 = 20;
+    print("hit: ");
+    if vec_has(&v, &needle1) {
+        println("true");
+    } else {
+        println("false");
+    }
+
+    let needle2: i32 = 99;
+    print("miss: ");
+    if vec_has(&v, &needle2) {
+        println("true");
+    } else {
+        println("false");
+    }
+    0
+}

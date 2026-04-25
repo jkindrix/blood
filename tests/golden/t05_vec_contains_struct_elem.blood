@@ -1,0 +1,36 @@
+// Test: Vec.contains with a multi-field struct element. The runtime
+// implements byte-wise equality, which works for plain structs whose
+// fields are all primitive types and have no padding (Point's two i32s
+// pack to exactly 8 bytes). This exercises elem_size correctness — pre-S92
+// the missing elem_size in the call site caused garbage byte counts.
+// EXPECT: hit: true
+// EXPECT: miss: false
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mut v: Vec<Point> = Vec.new();
+    v.push(Point { x: 1, y: 2 });
+    v.push(Point { x: 3, y: 4 });
+    v.push(Point { x: 5, y: 6 });
+
+    let needle_hit: Point = Point { x: 3, y: 4 };
+    print("hit: ");
+    if v.contains(&needle_hit) {
+        println("true");
+    } else {
+        println("false");
+    }
+
+    let needle_miss: Point = Point { x: 7, y: 8 };
+    print("miss: ");
+    if v.contains(&needle_miss) {
+        println("true");
+    } else {
+        println("false");
+    }
+    0
+}
