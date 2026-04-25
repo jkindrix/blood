@@ -1,0 +1,19 @@
+// Test: stdlib `impl<K: Debug, V: Debug> Debug for HashMap<K, V>` (S86)
+// — empty case.
+//
+// Exercises the empty-map branch of the HashMap<K, V> Debug
+// delegation. The `iter.next()` Option.None arm fires immediately,
+// so `pair.0.fmt()` and `pair.1.fmt()` are never invoked. This case
+// must not depend on K or V's Debug impls beyond the impl-level
+// bound; the result is the literal `{}`.
+//
+// EXPECT: {}
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let m: HashMap<i32, i32> = HashMap.new();
+    let s: String = m.fmt();
+    println_str(s.as_str());
+    0
+}

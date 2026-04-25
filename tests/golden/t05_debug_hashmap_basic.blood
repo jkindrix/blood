@@ -1,0 +1,24 @@
+// Test: stdlib `impl<K: Debug, V: Debug> Debug for HashMap<K, V>` (S86)
+// — single-entry case (deterministic).
+//
+// Exercises:
+//   - `m.fmt()` on `HashMap<i32, i32>::{42 => 100}` dispatches to the
+//     stdlib trait delegation, which iterates `self.iter()`, formats
+//     each `(K, V)` pair, joins with ", ", wraps in braces.
+//   - Each `pair.0.fmt()` / `pair.1.fmt()` resolves through S85's
+//     chained mono path to the i32 specialization at this call site.
+//
+// HashMap iteration order is non-deterministic; this test is
+// deterministic because there is exactly one entry.
+//
+// EXPECT: {42: 100}
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let mut m: HashMap<i32, i32> = HashMap.new();
+    m.insert(42, 100);
+    let s: String = m.fmt();
+    println_str(s.as_str());
+    0
+}

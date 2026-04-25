@@ -1,0 +1,40 @@
+// Test: multi-caller `impl<K: Debug, V: Debug> Debug for HashMap<K, V>`
+// (S86).
+//
+// Calls `.fmt()` on three different HashMap<K, V> instantiations
+// within one program. Each map has exactly one entry to keep
+// iteration order deterministic.
+//
+// S85's chained TypeGenericCallInfo + cascading mono worklist
+// specializes the generic body per concrete (K, V) at each call
+// site, so the inner `pair.0.fmt()` and `pair.1.fmt()` dispatches
+// resolve to the correct primitive Debug impls.
+//
+// SCOPE: this test uses only small (≤32-bit) primitive K and V
+// because HashMap<K, V>.iter() currently mishandles wider K or V
+// (HashMap<u64, *>, HashMap<*, u64>, HashMap<String, *>, etc.
+// segfault inside hashmap_iter_next). The Debug impl itself is
+// type-parametric; the test boundary reflects the iter limitation
+// rather than a bound on the Debug delegation.
+//
+// EXPECT: {1: 10}
+// EXPECT: {7: 11}
+// EXPECT: {42: true}
+mod std;
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let mut mi: HashMap<i32, i32> = HashMap.new();
+    mi.insert(1, 10);
+    println_str(mi.fmt().as_str());
+
+    let mut mu: HashMap<u32, u32> = HashMap.new();
+    mu.insert(7u32, 11u32);
+    println_str(mu.fmt().as_str());
+
+    let mut mb: HashMap<i32, bool> = HashMap.new();
+    mb.insert(42, true);
+    println_str(mb.fmt().as_str());
+
+    0
+}

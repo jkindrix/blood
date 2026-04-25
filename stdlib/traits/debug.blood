@@ -197,3 +197,43 @@ impl<T: Debug> Debug for Vec<T> {
         s
     }
 }
+
+// HashMap iteration order is non-deterministic. Goldens for this impl
+// must use a single-entry map (deterministic) or a multi-entry map
+// where the test sorts by key before printing.
+//
+// Uses self.iter() (which yields Option<(K, V)>) rather than
+// self.keys() + self.get(&k); the latter would route K's Hash impl
+// through the HashMap-codegen per-K wrapper, which currently does
+// not fire correctly from inside a generic body where K is a Param
+// (probe: `m.get(&k)` returns Option.None for the same key the
+// caller just inserted).
+//
+// LIMITATION: HashMap.iter() inside this generic body currently only
+// works for small (≤32-bit) K and V — wider types (u64, String,
+// composite values) segfault inside hashmap_iter_next. Adding Debug
+// support for those will require a HashMap-codegen change separate
+// from this impl.
+impl<K: Debug, V: Debug> Debug for HashMap<K, V> {
+    fn fmt(self: &Self) -> String {
+        let mut s = String.from("{");
+        let mut first: bool = true;
+        let mut iter = self.iter();
+        loop {
+            match iter.next() {
+                Option.Some(pair) => {
+                    if !first {
+                        s.push_str(", ");
+                    }
+                    first = false;
+                    s.push_str(pair.0.fmt().as_str());
+                    s.push_str(": ");
+                    s.push_str(pair.1.fmt().as_str());
+                }
+                Option.None => { break; }
+            }
+        }
+        s.push_str("}");
+        s
+    }
+}
