@@ -1,0 +1,61 @@
+// Test: `impl<T: Trait> Trait for Container<T>` (Frozen-style trait delegation).
+// Prior to Option F (S78), the generic container's trait impl shared a body_tv
+// with all callers; a single call site worked, but multiple different-T
+// call sites hit §A1-P3a with silent wrong results. Post-S78 the
+// receiver-based binding + forward-walk + deferred recording let each
+// concrete container instantiation mono its own delegated body.
+//
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: 1
+// EXPECT: 0
+
+trait Scoreable {
+    fn score(self: &Self) -> i32;
+}
+
+struct Score {
+    n: i32,
+}
+
+impl Scoreable for Score {
+    fn score(self: &Self) -> i32 {
+        self.n
+    }
+}
+
+struct Flag {
+    on: bool,
+}
+
+impl Scoreable for Flag {
+    fn score(self: &Self) -> i32 {
+        if self.on {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T: Scoreable> Scoreable for Wrapper<T> {
+    fn score(self: &Self) -> i32 {
+        self.inner.score()
+    }
+}
+
+fn main() -> i32 {
+    let w100: Wrapper<Score> = Wrapper { inner: Score { n: 100 } };
+    let w200: Wrapper<Score> = Wrapper { inner: Score { n: 200 } };
+    let wtrue: Wrapper<Flag> = Wrapper { inner: Flag { on: true } };
+    let wfalse: Wrapper<Flag> = Wrapper { inner: Flag { on: false } };
+    println_int(w100.score());
+    println_int(w200.score());
+    println_int(wtrue.score());
+    println_int(wfalse.score());
+    0
+}

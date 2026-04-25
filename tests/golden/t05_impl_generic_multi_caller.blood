@@ -1,0 +1,35 @@
+// Test: multi-caller impl-generic method with different concrete T values,
+// value-return via &self. Prior to Option F (S78), the typeck's shared
+// body_tv in subst_table was overwritten by each caller, producing
+// E0201 "expected i32, found bool" at the second call site or silent
+// layout mismatches. Post-S78 (Change A + Change B + deferred recording)
+// each call site gets its own mono with correctly substituted locals.
+//
+// EXPECT: 42
+// EXPECT: 5
+// EXPECT: 7
+
+struct Holder<T> {
+    value: T,
+    tag: i32,
+}
+
+impl<T> Holder<T> {
+    fn new(v: T, tag: i32) -> Holder<T> {
+        Holder { value: v, tag: tag }
+    }
+
+    fn get_tag(self: &Self) -> i32 {
+        self.tag
+    }
+}
+
+fn main() -> i32 {
+    let hi: Holder<i32> = Holder.new(100, 42);
+    let hb: Holder<bool> = Holder.new(true, 5);
+    let hs: Holder<u64> = Holder.new(999u64, 7);
+    println_int(hi.get_tag());
+    println_int(hb.get_tag());
+    println_int(hs.get_tag());
+    0
+}

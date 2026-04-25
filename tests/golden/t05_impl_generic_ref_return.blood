@@ -1,0 +1,38 @@
+// Test: multi-caller impl-generic method returning &T, three distinct Ts.
+// Verifies Option F handles ref-return mono bodies: the mono body's locals
+// resolve body_tv → concrete so the GEP to field 0 uses the specialized
+// layout instead of the erased-to-i64 fallback that would read past the
+// end of narrow primitives like bool.
+//
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 99
+
+struct Holder<T> {
+    value: T,
+}
+
+impl<T> Holder<T> {
+    fn wrap(v: T) -> Holder<T> {
+        Holder { value: v }
+    }
+
+    fn peek(self: &Self) -> &T {
+        &self.value
+    }
+}
+
+fn main() -> i32 {
+    let hi: Holder<i32> = Holder.wrap(42);
+    let hb: Holder<bool> = Holder.wrap(true);
+    let hu: Holder<u64> = Holder.wrap(99u64);
+    println_int(*hi.peek());
+    if *hb.peek() {
+        println_int(1);
+    } else {
+        println_int(0);
+    }
+    let u: u64 = *hu.peek();
+    println_int(u as i32);
+    0
+}
