@@ -116,6 +116,11 @@ pub fn is_vec_clear(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_clear")
 }
 
+/// Checks if the function name is @vec_get.
+pub fn is_vec_get(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_get")
+}
+
 /// Checks if the function name is @vec_with_capacity.
 pub fn is_vec_with_capacity(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_with_capacity")
@@ -165,9 +170,12 @@ pub fn emit_vec_with_capacity_call(
     }
 }
 
-/// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
+/// Extracts element size from a Vec<T> / &Vec<T> / &&Vec<T> TyId (via interner,
+/// no Type tree). Peels all `&` layers so receiver types from wrapper functions
+/// — where MIR auto-refs an already-ref parameter into `&&Vec<T>` — resolve to
+/// the correct element size. Symmetric to S90's `extract_hashmap_sizes` fix.
 pub fn extract_vec_element_size_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
-    let unwrapped = type_intern.unwrap_ref_id(ty_id);
+    let unwrapped = type_intern.unwrap_all_refs_id(ty_id);
     match type_intern.get_adt_args(unwrapped) {
         Option.Some(args) => {
             let interner = type_intern.type_interner();
@@ -495,6 +503,155 @@ pub fn emit_vec_clear_call(
         &Option.None => {
             ctx.emit_unreachable();
         }
+    }
+}
+
+/// Emits a vec_get call with correct calling convention. The Blood method
+/// `Vec.get(&self, index: usize) -> Option<&T>` is dispatched via the runtime
+/// `vec_get_ptr(ptr vec, i64 index, i64 elem_size) -> ptr` which returns a
+/// pointer to the in-place element (or null on OOB). The result is wrapped in
+/// `Option<&T>` with a generationally-tracked fat ref `{ ptr, i32 }` whose gen
+/// comes from `blood_lazy_register_gen` on the buffer base — matching the
+/// pattern used by `emit_string_as_str_call` (S51, A3 Step 4b) so that freeing
+/// the buffer (e.g. via vec_ensure_cap's realloc) bumps the gen and stale `&T`
+/// refs trip on deref.
+///
+/// Without this dedicated emitter, Vec.get falls through the generic dispatch
+/// path and emits a call site that doesn't match the runtime ABI (S91).
+pub fn emit_vec_get_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] = &Vec<T> (or &&Vec<T> in wrappers, due to MIR auto-ref of an
+    // already-ref param); args[1] = usize index.
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get vec pointer - strip gen ref if present (FFI expects bare ptr).
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
+
+    // Element size from the receiver type. extract_vec_element_size_id peels
+    // all ref layers, so wrapper-call shapes (&&Vec<T>) resolve correctly.
+    let elem_size: u64 = match get_arg_type(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
+    };
+    let elem_size_str = codegen_types.format_u64(elem_size);
+
+    // Index value (usize -> i64 in Blood lowering).
+    let idx_val = codegen_expr.emit_operand(ctx, &args[1]);
+
+    // Call: %elem_ptr = call ptr @vec_get_ptr(ptr vec, i64 idx, i64 elem_size)
+    let elem_ptr = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&elem_ptr), "ptr", "@vec_get_ptr");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.call_arg_str(false, "i64", idx_val.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.end_call();
+
+    // Read data buffer base address (Vec layout: { data: i64, len, cap } at
+    // offset 0). Used for lazy gen registration so the returned &T's gen is
+    // tied to the buffer's lifetime.
+    let data_addr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&data_addr);
+    ctx.write(" = load i64, ptr ");
+    ctx.write_string(&vec_ptr);
+    ctx.write(", align 8\n");
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    // Branch on null elem_ptr: null -> Option.None, non-null -> Option.Some.
+    let is_null = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&is_null);
+    ctx.write(" = icmp eq ptr ");
+    ctx.write_cgname(&elem_ptr);
+    ctx.write(", null\n");
+
+    let some_label = ctx.fresh_label_cg();
+    let none_label = ctx.fresh_label_cg();
+    let end_label = ctx.fresh_label_cg();
+
+    ctx.emit_cond_br_cg(&is_null, &none_label, &some_label);
+
+    // Some path: register gen on buffer, build { ptr, i32 } fat ref, store
+    // discriminant=1 + payload at dest+8.
+    ctx.emit_label_cg(&some_label);
+    let gen_val = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&gen_val), "i32", "@blood_lazy_register_gen");
+    ctx.call_arg_cg(true, "i64", &data_addr);
+    ctx.end_call();
+
+    let ref0 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&ref0);
+    ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
+    ctx.write_cgname(&elem_ptr);
+    ctx.write(", 0\n");
+    let fat_ref = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&fat_ref);
+    ctx.write(" = insertvalue { ptr, i32 } ");
+    ctx.write_cgname(&ref0);
+    ctx.write(", i32 ");
+    ctx.write_cgname(&gen_val);
+    ctx.write(", 1\n");
+
+    ctx.write_indent();
+    ctx.write("store i32 1, ptr ");
+    ctx.write_string(&dest_ptr);
+    ctx.write(", align 8\n");
+    let payload_off = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&payload_off);
+    ctx.write(" = getelementptr i8, ptr ");
+    ctx.write_string(&dest_ptr);
+    ctx.write(", i64 8\n");
+    ctx.write_indent();
+    ctx.write("store { ptr, i32 } ");
+    ctx.write_cgname(&fat_ref);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&payload_off);
+    ctx.write(", align 8\n");
+    ctx.emit_br_cg(&end_label);
+
+    // None path: just write discriminant=0; payload bits irrelevant.
+    ctx.emit_label_cg(&none_label);
+    ctx.write_indent();
+    ctx.write("store i32 0, ptr ");
+    ctx.write_string(&dest_ptr);
+    ctx.write(", align 8\n");
+    ctx.emit_br_cg(&end_label);
+
+    ctx.emit_label_cg(&end_label);
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Returns the HIR type of an Operand. Used by builtin emitters that need to
+/// inspect the receiver/arg type for size or generic parameter extraction.
+fn get_arg_type(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    arg: &mir_types.Operand,
+) -> Option<type_intern.TyId> {
+    match arg {
+        &mir_types.Operand.Copy(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Move(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Constant(ref c) => Option.Some(c.ty),
     }
 }
 
