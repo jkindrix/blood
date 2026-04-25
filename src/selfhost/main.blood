@@ -4285,7 +4285,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 2b: Monomorphization — generate specialized copies of const-generic and type-generic functions.
     if pass2_result.mono_requests.len() > 0 {
-        compile_monomorphized_bodies(&mut ctx, &pass2_result, &lower_result, &typeck_result, args, output_path, mod_count);
+        compile_monomorphized_bodies(&mut ctx, &pass2_result, &lower_result, &typeck_result, args, output_path, mod_count, &generics.type_generic_fn_set);
     }
 
     mem_profile_at(args, "After codegen pass2", 0 as u64, hir_region, codegen_region);
@@ -5479,6 +5479,54 @@ fn register_codegen_names(
     }
 }
 
+/// S85 / Option G-structural: resolves chained TypeGenericCallInfo for a
+/// given outer body's mono. Walks `all_chained` for entries whose
+/// `outer_body_def_id` matches `outer_body_def_id`, follows each chained
+/// binding through `mono_subst` to a concrete TyId, and emits a concrete
+/// TypeGenericCallInfo for MIR lowering. Entries whose chain still leads
+/// to an Infer (no concrete reachable) are dropped — the inner call falls
+/// back to the type-erased body, which the S84 typeck error will catch on
+/// re-typecheck if any deferred entry stays un-finalized for that mono.
+fn resolve_chained_calls_for_outer(
+    all_chained: &Vec<common.ChainedTypeGenericCallInfo>,
+    outer_body_def_id: u32,
+    mono_subst: &unify.SubstTable,
+) -> Vec<common.TypeGenericCallInfo> {
+    let mut result: Vec<common.TypeGenericCallInfo> = Vec.new();
+    let interner = type_intern.type_interner();
+    for ci in 0usize..all_chained.len() {
+        let entry = &all_chained[ci];
+        if entry.outer_body_def_id != outer_body_def_id {
+            continue;
+        }
+        let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+        let mut all_resolved = true;
+        for bi in 0usize..entry.bindings.len() {
+            let cb = &entry.bindings[bi];
+            if cb.is_chained {
+                let outer_tv_infer = interner.mk_infer(hir_def.TyVarId.new(cb.data));
+                let resolved = unify.apply_substs_id(mono_subst, outer_tv_infer);
+                match interner.get(resolved) {
+                    &type_intern.InternedTypeKind.Infer(_) => {
+                        all_resolved = false;
+                    }
+                    _ => {
+                        bindings.push(common.TypeMonoBinding.new(cb.inner_body_tv, resolved.index));
+                    }
+                }
+            } else {
+                bindings.push(common.TypeMonoBinding.new(cb.inner_body_tv, cb.data));
+            }
+        }
+        if all_resolved && bindings.len() > 0 {
+            result.push(common.TypeGenericCallInfo.new(
+                entry.call_span_start, entry.callee_def_id, bindings,
+            ));
+        }
+    }
+    result
+}
+
 /// Compiles monomorphized (specialized) copies of const-generic and type-generic functions.
 /// Creates its own MIR region, processes all MonoRequests, and emits specialized IR.
 fn compile_monomorphized_bodies(
@@ -5489,6 +5537,9 @@ fn compile_monomorphized_bodies(
     args: &Args,
     output_path: &str,
     mod_count: u32,
+    // S85: type-generic fn set so the mono'd body's MIR lowering recognizes
+    // the inner type-generic callee and emits a MonoRequest for it.
+    type_generic_fn_set: &Vec<u32>,
 ) {
     common.eprint_wrap_usize("[mono:", pass2_result.mono_requests.len(), "]");
 
@@ -5500,8 +5551,42 @@ fn compile_monomorphized_bodies(
     // we compile the first and register aliases for the rest.
     let mut compiled_mono_names: Vec<String> = Vec.new();
 
-    for mono_i in 0usize..pass2_result.mono_requests.len() {
-        let req = &pass2_result.mono_requests[mono_i];
+    // S85: worklist + mutable next_mono_def_id so secondary mono requests
+    // emitted by the inner call site (chained TypeGenericCallInfo path) get
+    // picked up in subsequent iterations. Wrapper-of-wrapper produces a
+    // chain link per level; the worklist naturally terminates when no more
+    // chained entries match the active outer body.
+    let mut work: Vec<mir_lower_ctx.MonoRequest> = Vec.new();
+    for ri in 0usize..pass2_result.mono_requests.len() {
+        let src = &pass2_result.mono_requests[ri];
+        if src.is_type_mono {
+            let mut tb: Vec<common.TypeMonoBinding> = Vec.new();
+            for tbi in 0usize..src.type_bindings.len() {
+                tb.push(common.TypeMonoBinding.new(
+                    src.type_bindings[tbi].ty_var_index,
+                    src.type_bindings[tbi].concrete_ty_id,
+                ));
+            }
+            work.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                src.original_def_id,
+                tb,
+                src.specialized_def_id,
+                common.make_string(src.fn_name.as_str()),
+            ));
+        } else {
+            work.push(mir_lower_ctx.MonoRequest.new(
+                src.original_def_id,
+                driver.clone_u64_vec(&src.const_values),
+                src.specialized_def_id,
+                common.make_string(src.fn_name.as_str()),
+            ));
+        }
+    }
+    let mut next_mono_def_id = pass2_result.next_mono_def_id;
+
+    let mut mono_i: usize = 0;
+    while mono_i < work.len() {
+        let req = &work[mono_i];
 
         // Find the original function's body
         let body_info = driver.find_body_for_def_id(
@@ -5633,6 +5718,18 @@ fn compile_monomorphized_bodies(
                         ));
                     }
 
+                    // S85: resolve chained TypeGenericCallInfo entries for
+                    // call sites IN this outer body. Each chained binding's
+                    // outer_body_tv is looked up via mono_subst (now
+                    // populated by the forward-walk above), producing
+                    // concrete bindings the existing MIR lowering path
+                    // (mir_lower_expr.blood:1218) consumes to emit
+                    // secondary MonoRequests for the inner calls.
+                    let resolved_chained = resolve_chained_calls_for_outer(
+                        &typeck_result.chained_type_generic_calls,
+                        req.original_def_id,
+                        &mono_subst,
+                    );
                     mir_lower.lower_body_with_const_info(
                         hir_def.DefId.new(req.specialized_def_id),
                         hir_body,
@@ -5646,9 +5743,9 @@ fn compile_monomorphized_bodies(
                         Vec.new(), // No const_generic_fn_set
                         Vec.new(), // No turbofish
                         Vec.new(), // No param counts
-                        pass2_result.next_mono_def_id,
-                        Vec.new(), // No type_generic_fn_set
-                        Vec.new(), // No type_generic_calls
+                        next_mono_def_id,
+                        driver.clone_u32_vec(type_generic_fn_set),
+                        resolved_chained,
                         driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
                         mono_type_bindings,
                     )
@@ -5672,7 +5769,7 @@ fn compile_monomorphized_bodies(
                         Vec.new(), // No further const-generic interception
                         Vec.new(), // No turbofish
                         Vec.new(), // No param counts
-                        pass2_result.next_mono_def_id,
+                        next_mono_def_id,
                         Vec.new(), // No type_generic_fn_set
                         Vec.new(), // No type_generic_calls
                         driver.clone_u32_vec(&lower_result.frozen_new_def_ids),
@@ -5681,6 +5778,24 @@ fn compile_monomorphized_bodies(
                 };
 
                 region_deactivate();
+
+                // S85 phase 1: register specialized names on `ctx` so the
+                // outer body's codegen below can resolve `call @<mono_name>`
+                // for any inner-chain MonoRequest emitted during lower_body.
+                // The actual append-to-worklist happens in phase 2 (below
+                // codegen) — pushing to `work` here would invalidate the
+                // &work[mono_i] borrow held by `req`.
+                for sri in 0usize..mono_mir.mono_requests.len() {
+                    let sec = &mono_mir.mono_requests[sri];
+                    ctx.register_def_name(sec.specialized_def_id, common.make_string(sec.fn_name.as_str()));
+                }
+                // S85: bump next_mono_def_id past the new allocations so
+                // subsequent iterations' lower_body starts past every DefId
+                // emitted so far. Sequential — compile_monomorphized_bodies
+                // is single-threaded by design (workers ran in pass2).
+                if mono_mir.next_mono_def_id > next_mono_def_id {
+                    next_mono_def_id = mono_mir.next_mono_def_id;
+                }
 
                 // Dump mono MIR if requested
                 if args.dump_mir {
@@ -5728,6 +5843,39 @@ fn compile_monomorphized_bodies(
                     mcli += 1;
                 }
 
+                // S85 phase 2: clone secondary MonoRequests onto the
+                // worklist so subsequent iterations process them. Done now
+                // (after codegen completes — the last use of `req`) because
+                // pushing to `work` may reallocate its backing array, which
+                // would invalidate the `&work[mono_i]` borrow held by `req`.
+                // Read from mono_mir.mono_requests BEFORE region_reset
+                // (below) frees the mir_region the Vec lives in.
+                for sri in 0usize..mono_mir.mono_requests.len() {
+                    let sec = &mono_mir.mono_requests[sri];
+                    if sec.is_type_mono {
+                        let mut tb: Vec<common.TypeMonoBinding> = Vec.new();
+                        for tbi in 0usize..sec.type_bindings.len() {
+                            tb.push(common.TypeMonoBinding.new(
+                                sec.type_bindings[tbi].ty_var_index,
+                                sec.type_bindings[tbi].concrete_ty_id,
+                            ));
+                        }
+                        work.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                            sec.original_def_id,
+                            tb,
+                            sec.specialized_def_id,
+                            common.make_string(sec.fn_name.as_str()),
+                        ));
+                    } else {
+                        work.push(mir_lower_ctx.MonoRequest.new(
+                            sec.original_def_id,
+                            driver.clone_u64_vec(&sec.const_values),
+                            sec.specialized_def_id,
+                            common.make_string(sec.fn_name.as_str()),
+                        ));
+                    }
+                }
+
                 // Reset MIR region for next mono function
                 region_reset(mono_mir_region);
                 } // end else (not already_compiled)
@@ -5737,6 +5885,7 @@ fn compile_monomorphized_bodies(
             }
         }
 
+        mono_i += 1;
     }
 
     // Destroy mono MIR region after all mono functions processed
