@@ -1,0 +1,33 @@
+// Test: multi-caller `impl<T: Clone> Clone for Frozen<T>` from stdlib (S79).
+//
+// Calls `.clone()` on three different Frozen<T> instantiations
+// (i32, bool, u64) within one program. Pre-S78 this hit
+// BUGS_OPEN §A1-P3a — the shared erased body resolved body_tv to
+// the FIRST caller's T and rejected subsequent callers with E0201.
+// S78's Option F closure (Change A + B + forward-walk + deferred
+// recording) specializes the delegation per-caller so all three
+// dispatch correctly.
+//
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 99
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.clone.Clone;
+
+fn main() -> i32 {
+    let fi: Frozen<i32> = Frozen.new(42);
+    let fb: Frozen<bool> = Frozen.new(true);
+    let fu: Frozen<u64> = Frozen.new(99u64);
+
+    let ci: Frozen<i32> = fi.clone();
+    let cb: Frozen<bool> = fb.clone();
+    let cu: Frozen<u64> = fu.clone();
+
+    println_int(*ci.get());
+    if *cb.get() { println_int(1); } else { println_int(0); }
+    let u: u64 = *cu.get();
+    println_int(u as i32);
+
+    0
+}

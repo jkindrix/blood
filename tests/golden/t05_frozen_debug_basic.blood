@@ -1,0 +1,20 @@
+// Test: stdlib `impl<T: Debug> Debug for Frozen<T>` (S79).
+//
+// Exercises:
+//   - `f.fmt()` on `Frozen<i32>` dispatches to the stdlib trait
+//     delegation, which formats `Frozen(<inner>)` by composing
+//     `String.from("Frozen(") + self.value.fmt() + ")"`.
+//   - The inner i32's `impl Debug for i32` produces "42" via
+//     `int_to_string`; the wrapper composes "Frozen(42)".
+//
+// EXPECT: Frozen(42)
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.debug.Debug;
+
+fn main() -> i32 {
+    let f: Frozen<i32> = Frozen.new(42);
+    let s: String = f.fmt();
+    println_str(s.as_str());
+    0
+}

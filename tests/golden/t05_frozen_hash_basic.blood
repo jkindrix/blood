@@ -1,0 +1,43 @@
+// Test: stdlib `impl<T: Hash> Hash for Frozen<T>` (S79).
+//
+// The Frozen<T> Hash delegation folds the inner T's bytes into the
+// caller's FNV-1a accumulator with no wrapper-specific bytes — so
+// `Frozen<i32>(42).hash(state)` and `(42i32).hash(state)` produce
+// the same accumulator value. Verifies determinism + delegation
+// transparency.
+//
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 1
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.hash.{Hash, FNV_OFFSET_BASIS};
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(42);
+    let f2: Frozen<i32> = Frozen.new(42);
+    let f3: Frozen<i32> = Frozen.new(99);
+
+    let mut s1: u64 = FNV_OFFSET_BASIS();
+    let mut s2: u64 = FNV_OFFSET_BASIS();
+    let mut s3: u64 = FNV_OFFSET_BASIS();
+    let mut s_bare: u64 = FNV_OFFSET_BASIS();
+
+    f1.hash(&mut s1);
+    f2.hash(&mut s2);
+    f3.hash(&mut s3);
+
+    let v: i32 = 42;
+    v.hash(&mut s_bare);
+
+    // Determinism: same Frozen<i32> values hash equal.
+    if s1 == s2 { println_int(1); } else { println_int(0); }
+
+    // Delegation transparency: Frozen<i32>(42) hashes equal to bare i32 42.
+    if s1 == s_bare { println_int(1); } else { println_int(0); }
+
+    // Distinction: different inner values produce different hashes.
+    if s1 != s3 { println_int(1); } else { println_int(0); }
+
+    0
+}

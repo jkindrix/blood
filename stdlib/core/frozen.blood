@@ -8,11 +8,12 @@
 // intrinsic dispatch + S61 kind=5 variant walker + S62 T: Freeze bound
 // all resolve to the stdlib DefId.
 //
-// This is a deliberately MINIMAL API. Trait delegations
-// (impl<T: Clone> Clone for Frozen<T>, etc.) are NOT provided because
-// they hit the multi-caller generic-impl bug (BUGS_OPEN §A1-P3a). The
-// prototype in stdlib/_rust_prototype/core/frozen.blood retains the full
-// design for when that bug is fixed (Option F).
+// S79 (2026-04-25): adds `impl<T: Trait> Trait for Frozen<T>` trait
+// delegations for Clone, Debug, and Hash. Option F (S78) specializes
+// the generic body per concrete T at each call site, so these
+// delegations correctly dispatch to the inner T's trait method
+// instead of the erased body that miscompiled prior to S78.
+
 
 /// Marker trait for types with no interior mutability.
 ///
@@ -56,3 +57,56 @@ impl<T: Freeze> Frozen<T> {
         &self.value
     }
 }
+
+// ============================================================
+// Trait delegations
+//
+// Blood's Option F (S78) specializes the generic body per concrete T
+// at each call site, so `self.value.method()` below dispatches to the
+// correct `impl Trait for <concrete T>` instead of the shared erased
+// body that misfired prior to S78 (BUGS_OPEN §A1-P3a).
+//
+// IMPLEMENTATION NOTE: trait names are referenced via fully qualified
+// paths (`std.traits.clone.Clone` etc.) rather than via `use`
+// statements because cross-module trait imports in stdlib-internal
+// code are not yet resolved correctly by Blood's HIR lowering.
+//
+// IMPLEMENTATION NOTE: the Clone delegation uses an inline struct
+// literal `Frozen { value: ... }` instead of `Frozen.new(...)` to
+// avoid `type_is_freeze` failing on generic `Param(T)`. Blood's
+// `type_is_freeze` does not yet propagate `T: Freeze` from the impl's
+// bound list — it returns `false` for any unresolved Param. The
+// caller's Freeze guarantee is preserved because `self: &Frozen<T>`
+// can only exist if T was already Freeze at construction time.
+// ============================================================
+
+impl<T: std.traits.clone.Clone> std.traits.clone.Clone for Frozen<T> {
+    fn clone(self: &Self) -> Self / pure {
+        Frozen { value: self.value.clone() }
+    }
+}
+
+impl<T: std.traits.debug.Debug> std.traits.debug.Debug for Frozen<T> {
+    fn fmt(self: &Self) -> String {
+        let mut s = String.from("Frozen(");
+        s.push_str(self.value.fmt().as_str());
+        s.push_str(")");
+        s
+    }
+}
+
+impl<T: std.traits.hash.Hash> std.traits.hash.Hash for Frozen<T> {
+    fn hash(self: &Self, state: &mut u64) / pure {
+        self.value.hash(state);
+    }
+}
+
+// NOTE: `impl<T: Default> Default for Frozen<T>` is intentionally
+// NOT provided. Blood's HIR lowering does not yet resolve qualified
+// paths through generic type parameters (`T.default()` →
+// E0229: undefined qualified path), so the natural delegation body
+// `Frozen { value: T.default() }` does not compile. Adding this
+// delegation requires either (a) a compiler change to thread trait
+// bounds into expression-path resolution for generic Params, or
+// (b) a function-pointer-based workaround (e.g. taking a `default
+// fn` arg). Tracked as S79 follow-up — see `.tmp/NEXT_SESSION.md`.

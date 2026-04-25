@@ -1,0 +1,28 @@
+// Test: stdlib `impl<T: Clone> Clone for Frozen<T>` (S79).
+//
+// Exercises:
+//   - `f.clone()` on `Frozen<i32>` dispatches to the stdlib trait
+//     delegation, which delegates to `i32.clone()` and rewraps in
+//     a fresh Frozen via inline struct literal.
+//   - The clone is independent of the source: mutating the source's
+//     wrapper API surface (there is none — Frozen is immutable) is
+//     irrelevant; the clone simply reads and returns a value-equal
+//     copy.
+//
+// EXPECT: 42
+// EXPECT: 100
+mod std;
+use std.core.frozen.{Frozen, Freeze};
+use std.traits.clone.Clone;
+
+fn main() -> i32 {
+    let f1: Frozen<i32> = Frozen.new(42);
+    let c1: Frozen<i32> = f1.clone();
+    println_int(*c1.get());
+
+    let f2: Frozen<i32> = Frozen.new(100);
+    let c2: Frozen<i32> = f2.clone();
+    println_int(*c2.get());
+
+    0
+}
