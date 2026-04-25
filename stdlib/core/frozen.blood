@@ -163,17 +163,12 @@ impl<T: std.traits.cmp.Ord> std.traits.cmp.Ord for Frozen<T> {
 // access via explicit trait dispatch, useful for generic code
 // bounded on `AsRef<U>` or `Borrow<U>`.
 //
-// AUTO-DEREF MULTI-CALLER LIMITATION: `*f` for `f: Frozen<T>`
-// uses the compiler's `deref_target_types` map keyed by Frozen's
-// DefId; it stores the impl's Target type as-is (a Param T in
-// our case). The unary `*` operator does not substitute the
-// receiver's concrete type args into Target before unifying
-// with the surrounding context, so `*fi` (T=i32) followed by
-// `*fb` (T=bool) tries to bind the same body_tv twice and the
-// second binding fails. Use `frozen.deref()` (explicit method
-// call — dispatches through the standard trait machinery, which
-// DOES specialize per-T via S78/S85) for multi-caller code. The
-// auto-deref path is sufficient for single-T contexts.
+// AUTO-DEREF MULTI-CALLER (fixed in S88): `*f` for
+// `f: Frozen<T>` substitutes the receiver's concrete T into
+// the impl's Target before returning, so `*fi` (T=i32) and
+// `*fb` (T=bool) each get the right concrete type. The unary
+// `*` operator and `frozen.deref()` are now interchangeable
+// for any T-instantiation pattern.
 // ============================================================
 
 impl<T> std.ops.deref.Deref for Frozen<T> {

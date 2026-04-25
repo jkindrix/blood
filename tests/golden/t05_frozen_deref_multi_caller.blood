@@ -1,10 +1,10 @@
-// Test: multi-caller `impl<T> Deref for Frozen<T>` from stdlib (S87).
+// Test: multi-caller `impl<T> Deref for Frozen<T>` from stdlib (S87+S88).
 //
 // Three different Frozen<T> instantiations (i32, bool, u64) all
 // dispatch through the same delegation; per-T specialization picks
-// the correct &T return type per call site. Uses `.deref()` (explicit
-// method-call syntax) rather than `*f` (unary auto-deref); see S87
-// follow-up note for the auto-deref limitation when Target = Param T.
+// the correct Target type per call site. Uses `*f` (unary auto-
+// deref); S88 fixed the auto-deref Param-T substitution so each
+// `*fX` returns Target with that fX's concrete T substituted in.
 //
 // EXPECT: 42
 // EXPECT: 1
@@ -18,14 +18,13 @@ fn main() -> i32 {
     let fb: Frozen<bool> = Frozen.new(true);
     let fu: Frozen<u64> = Frozen.new(99u64);
 
-    let ri: &i32 = fi.deref();
-    let rb: &bool = fb.deref();
-    let ru: &u64 = fu.deref();
+    let vi: i32 = *fi;
+    let vb: bool = *fb;
+    let vu: u64 = *fu;
 
-    println_int(*ri);
-    if *rb { println_int(1); } else { println_int(0); }
-    let u: u64 = *ru;
-    println_int(u as i32);
+    println_int(vi);
+    if vb { println_int(1); } else { println_int(0); }
+    println_int(vu as i32);
 
     0
 }
