@@ -1,0 +1,52 @@
+// Test: Vec.get inline in main. Closes S91 — pre-S91 the inline call site
+// had the same ABI mismatch as wrapper calls (no dedicated emitter), so
+// matching `Option.Some(x) => *x` segfaulted on the deref. S91's emitter
+// routes Vec.get through `vec_get_ptr` and builds a properly-typed
+// `Option<&T>` regardless of call shape.
+// EXPECT: a: 100
+// EXPECT: b: 200
+// EXPECT: c: 300
+// EXPECT: oob: NONE
+// EXPECT: after_realloc: 100
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(100);
+    v.push(200);
+    v.push(300);
+
+    print("a: ");
+    match v.get(0) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    print("b: ");
+    match v.get(1) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    print("c: ");
+    match v.get(2) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    print("oob: ");
+    match v.get(7) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+
+    // Trigger several pushes to force a realloc; `get(0)` should still
+    // return 100 (the gen registry follows the new buffer base).
+    v.push(400);
+    v.push(500);
+    v.push(600);
+    v.push(700);
+    v.push(800);
+    print("after_realloc: ");
+    match v.get(0) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    0
+}

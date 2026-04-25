@@ -1,0 +1,42 @@
+// Test: Vec.get with a multi-field struct element type. The fat ref
+// payload's gen comes from `blood_lazy_register_gen` on the Vec's data
+// buffer; field access through the returned `&Point` must read from the
+// in-place element (not a copy), so `p.x` and `p.y` reflect the values
+// stored at push time.
+// EXPECT: 0,0: 10
+// EXPECT: 0,1: 20
+// EXPECT: 1,0: 30
+// EXPECT: 1,1: 40
+// EXPECT: oob: NONE
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn at_xy(v: &Vec<Point>, idx: usize) -> (i32, i32) / pure {
+    match v.get(idx) {
+        Option.Some(p) => (p.x, p.y),
+        Option.None => (-1, -1),
+    }
+}
+
+fn main() -> i32 {
+    let mut v: Vec<Point> = Vec.new();
+    v.push(Point { x: 10, y: 20 });
+    v.push(Point { x: 30, y: 40 });
+
+    let (x0, y0) = at_xy(&v, 0usize);
+    print("0,0: "); println_int(x0);
+    print("0,1: "); println_int(y0);
+    let (x1, y1) = at_xy(&v, 1usize);
+    print("1,0: "); println_int(x1);
+    print("1,1: "); println_int(y1);
+
+    print("oob: ");
+    match v.get(99usize) {
+        Option.Some(p) => println_int(p.x),
+        Option.None => println("NONE"),
+    }
+    0
+}

@@ -1,0 +1,57 @@
+// Test: Vec.get through a non-generic wrapper function. Closes S91.
+// Pre-S91 there was no `emit_vec_get_call` builtin — Vec.get fell through
+// the generic call dispatch path, which emitted a call site whose ABI
+// did not match the runtime declaration `i32 @vec_get(ptr, i64, i64, ptr)`.
+// IR showed `call { i32, [2 x i64] } @vec_get({ ptr, i32 } %recv, i64 %idx)`,
+// reading garbage into `Option<&T>`'s payload. Both inline-in-main and
+// wrapper-call shapes segfaulted on extracting `Option.Some(x) => *x`.
+// S91 adds a dedicated emitter routed through `vec_get_ptr` plus a
+// `blood_lazy_register_gen` call, building a proper `{ ptr, i32 }` fat
+// ref payload tied to the buffer's lifetime.
+// EXPECT: len: 3
+// EXPECT: first: 11
+// EXPECT: get 0: 11
+// EXPECT: get 1: 22
+// EXPECT: get 2: 33
+// EXPECT: get_oob: NONE
+
+fn first(v: &Vec<i32>) -> i32 / pure {
+    match v.get(0) {
+        Option.Some(x) => *x,
+        Option.None => -1,
+    }
+}
+
+fn at(v: &Vec<i32>, idx: usize) -> i32 / pure {
+    match v.get(idx) {
+        Option.Some(x) => *x,
+        Option.None => -1,
+    }
+}
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(11);
+    v.push(22);
+    v.push(33);
+
+    print("len: ");
+    println_int(v.len() as i32);
+
+    print("first: ");
+    println_int(first(&v));
+
+    print("get 0: ");
+    println_int(at(&v, 0usize));
+    print("get 1: ");
+    println_int(at(&v, 1usize));
+    print("get 2: ");
+    println_int(at(&v, 2usize));
+
+    print("get_oob: ");
+    match v.get(99usize) {
+        Option.Some(x) => println_int(*x),
+        Option.None => println("NONE"),
+    }
+    0
+}
