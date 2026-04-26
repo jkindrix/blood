@@ -1925,6 +1925,26 @@ impl TypeChecker {
             &Option.None => {}
         }
 
+        // Auto-derive PartialEq for the implicit eq-family: primitives,
+        // references/slices/arrays/tuples thereof, and the builtin generic
+        // ADTs (String, Vec, Option, Result). User ADTs are nominal — they
+        // need an explicit impl or `#[derive(PartialEq)]`.
+        match &self.partial_eq_trait_def_id {
+            &Option.Some(ref eq_id) => {
+                if target_trait_idx == eq_id.index {
+                    let resolved = self.resolve(ty);
+                    return type_is_implicitly_partial_eq(
+                        resolved,
+                        &self.builtin_string_def,
+                        &self.builtin_vec_def,
+                        &self.builtin_option_def,
+                        &self.builtin_result_def,
+                    );
+                }
+            }
+            &Option.None => {}
+        }
+
         false
     }
 
@@ -2384,6 +2404,150 @@ fn type_is_freeze(ty: type_intern.TyId, structs: &Vec<Option<typeck_info.StructI
         }
         &type_intern.InternedTypeKind.Forall { params: _, body: _ } => false,
         &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => false,
+    }
+}
+
+/// Checks whether `ty` is structurally a member of the implicitly-PartialEq
+/// family. This is the auto-derive fallback used by `type_implements_trait`
+/// when the requested trait is `PartialEq` and no manual impl was found.
+///
+/// The family covers types whose equality semantics are well-defined without
+/// a user-written `impl PartialEq`:
+/// - All primitives (numeric, bool, char, str)
+/// - References, slices, arrays — recurse on the element/inner type
+/// - Tuples — all elements must satisfy
+/// - Builtin generic ADTs (`String`, `Vec<T>`, `Option<T>`, `Result<T, E>`) —
+///   recurse on type arguments
+///
+/// User-defined ADTs require an explicit `impl PartialEq` (or `#[derive(PartialEq)]`,
+/// which expands into one). They are NOT auto-recognized even if every field
+/// satisfies — PartialEq is a nominal trait in Blood, mirroring Rust's `derive`
+/// requirement.
+///
+/// Generic contexts (`Param` / `Infer`) return `true` (deferred to monomorphization)
+/// to mirror the HashMap-key bounds enforcement pattern: when the function is
+/// monomorphized to a concrete T, the substituted body re-checks and the bound
+/// applies at that point.
+///
+/// `Error` returns `true` to avoid compounding diagnostics on already-broken types.
+fn type_is_implicitly_partial_eq(
+    ty: type_intern.TyId,
+    string_def: &Option<hir_def.DefId>,
+    vec_def: &Option<hir_def.DefId>,
+    option_def: &Option<hir_def.DefId>,
+    result_def: &Option<hir_def.DefId>,
+) -> bool {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        // All primitives implement PartialEq (i8..u128, isize/usize, f32/f64,
+        // bool, char, str). The Float NaN inequality wrinkle is the same as
+        // Rust's PartialEq impl — `f32 == f32` returns false for NaN, but the
+        // PartialEq trait itself is still implemented.
+        &type_intern.InternedTypeKind.Primitive(_) => true,
+        // References are covariant for equality: &T satisfies if T does.
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+            type_is_implicitly_partial_eq(
+                type_intern.TyId.new(inner.index),
+                string_def, vec_def, option_def, result_def,
+            )
+        }
+        // Slices and arrays satisfy iff the element type does.
+        &type_intern.InternedTypeKind.Slice { element } => {
+            type_is_implicitly_partial_eq(
+                type_intern.TyId.new(element.index),
+                string_def, vec_def, option_def, result_def,
+            )
+        }
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
+            type_is_implicitly_partial_eq(
+                type_intern.TyId.new(element.index),
+                string_def, vec_def, option_def, result_def,
+            )
+        }
+        // Tuples satisfy iff every element does.
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len: usize = interner.ty_list_len(list_id);
+            let mut i: usize = 0;
+            while i < len {
+                if !type_is_implicitly_partial_eq(
+                    interner.get_ty_list_element(list_id, i),
+                    string_def, vec_def, option_def, result_def,
+                ) {
+                    return false;
+                }
+                i += 1;
+            }
+            true
+        }
+        // Builtin generic ADTs (String, Vec, Option, Result) are implicitly
+        // PartialEq when their type arguments are. User ADTs require explicit
+        // impl/derive — return false.
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            let mut is_builtin = false;
+            match string_def {
+                &Option.Some(ref d) => { if d.index == def_id.index { is_builtin = true; } }
+                &Option.None => {}
+            }
+            if !is_builtin {
+                match vec_def {
+                    &Option.Some(ref d) => { if d.index == def_id.index { is_builtin = true; } }
+                    &Option.None => {}
+                }
+            }
+            if !is_builtin {
+                match option_def {
+                    &Option.Some(ref d) => { if d.index == def_id.index { is_builtin = true; } }
+                    &Option.None => {}
+                }
+            }
+            if !is_builtin {
+                match result_def {
+                    &Option.Some(ref d) => { if d.index == def_id.index { is_builtin = true; } }
+                    &Option.None => {}
+                }
+            }
+            if !is_builtin {
+                return false;
+            }
+            // For builtin: every type argument must also be implicitly PartialEq.
+            let num_args: usize = interner.ty_list_len(args);
+            let mut ai: usize = 0;
+            while ai < num_args {
+                if !type_is_implicitly_partial_eq(
+                    interner.get_ty_list_element(args, ai),
+                    string_def, vec_def, option_def, result_def,
+                ) {
+                    return false;
+                }
+                ai += 1;
+            }
+            true
+        }
+        // Generic context — defer to monomorphization (mirrors HashMap-key check).
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        // Don't compound errors on already-broken types.
+        &type_intern.InternedTypeKind.Error => true,
+        // The never type vacuously satisfies any trait.
+        &type_intern.InternedTypeKind.Never => true,
+        // Range over T satisfies if T does.
+        &type_intern.InternedTypeKind.Range { element, inclusive: _ } => {
+            type_is_implicitly_partial_eq(
+                type_intern.TyId.new(element.index),
+                string_def, vec_def, option_def, result_def,
+            )
+        }
+        // Function pointers, closures, raw pointers, dyn traits, records,
+        // forall, ownership-qualified — none have implicit PartialEq.
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => false,
+        &type_intern.InternedTypeKind.Closure { def_id: _, params: _, ret: _ } => false,
+        &type_intern.InternedTypeKind.Ptr { inner: _, mutable: _ } => false,
+        &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => false,
+        &type_intern.InternedTypeKind.Record { fields: _, row_var: _ } => false,
+        &type_intern.InternedTypeKind.Forall { params: _, body: _ } => false,
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => false,
+        &type_intern.InternedTypeKind.Projection { base_var: _, trait_def: _, assoc_name: _ } => false,
     }
 }
 

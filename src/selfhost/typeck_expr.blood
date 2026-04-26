@@ -1090,9 +1090,18 @@ fn infer_binary(
 
     // Determine result type based on operator
     match bin_op {
-        // Comparison operators return bool
-        common.BinOp.Eq => type_intern.CommonTypes.bool_ty(),
-        common.BinOp.Ne => type_intern.CommonTypes.bool_ty(),
+        // Comparison operators return bool. Eq/Ne require the operand type
+        // to implement PartialEq (Stage 1 of moving the silent-miscompile guard
+        // from codegen to typeck). The check defers on Param/Infer (re-checked
+        // at monomorphization) and on Error (don't compound diagnostics).
+        common.BinOp.Eq => {
+            enforce_eq_operand_partial_eq(checker, left_ty, span);
+            type_intern.CommonTypes.bool_ty()
+        }
+        common.BinOp.Ne => {
+            enforce_eq_operand_partial_eq(checker, left_ty, span);
+            type_intern.CommonTypes.bool_ty()
+        }
         common.BinOp.Lt => type_intern.CommonTypes.bool_ty(),
         common.BinOp.Le => type_intern.CommonTypes.bool_ty(),
         common.BinOp.Gt => type_intern.CommonTypes.bool_ty(),
@@ -2064,6 +2073,58 @@ fn enforce_hashmap_key_bounds(
                 let note = common.make_string(
                     "HashMap key type does not implement `PartialEq`; add `impl PartialEq for <K> { fn eq(self: &Self, other: &Self) -> bool { ... } }`"
                 );
+                checker.error_with_note(
+                    typeck_types.TypeErrorKind.TraitNotImplemented,
+                    span,
+                    note,
+                );
+            }
+        }
+        &Option.None => {}
+    }
+}
+
+/// Enforces `T: PartialEq` on the operand of `==` and `!=`. Reports
+/// `TraitNotImplemented` if `T` is neither implicitly PartialEq (primitives
+/// + str + references/slices/arrays/tuples thereof + builtin generic ADTs
+/// String/Vec/Option/Result) nor backed by an explicit `impl PartialEq`
+/// (manual or `#[derive(PartialEq)]`).
+///
+/// This is the typeck-time complement to S104-B's codegen-time E0806 fatal
+/// guard. Catching the bug here gives a better diagnostic earlier in the
+/// pipeline. Code that already passes S104-B continues to pass; only the
+/// timing and message change for the failing case.
+///
+/// Skips when `partial_eq_trait_def_id` is unset (test files without prelude
+/// won't have the trait registered — silently allow rather than spam noise).
+/// Skips when the operand resolves to `Infer` or `Error` to avoid compounding
+/// diagnostics on already-broken types.
+fn enforce_eq_operand_partial_eq(
+    checker: &mut typeck.TypeChecker,
+    operand_ty: type_intern.TyId,
+    span: common.Span,
+) {
+    let resolved = checker.resolve(operand_ty);
+    let interner = type_intern.type_interner();
+    let kind = interner.get(resolved);
+    match kind {
+        &type_intern.InternedTypeKind.Infer(_) => { return; }
+        &type_intern.InternedTypeKind.Error => { return; }
+        _ => {}
+    }
+
+    match &checker.partial_eq_trait_def_id {
+        &Option.Some(ref eq_def) => {
+            let eq_tref = hir_ty.TraitRef.new(
+                hir_def.DefId.new(eq_def.index),
+                Vec.new(),
+                span,
+            );
+            if !checker.type_implements_trait(resolved, &eq_tref) {
+                let mut note = common.make_string("type `");
+                let ty_str = format_ty_for_error(checker, resolved);
+                note.push_str(ty_str.as_str());
+                note.push_str("` does not implement `PartialEq`; add `#[derive(PartialEq)]` to the type or write `impl PartialEq for <T> { fn eq(self: &Self, other: &Self) -> bool { ... } }`");
                 checker.error_with_note(
                     typeck_types.TypeErrorKind.TraitNotImplemented,
                     span,

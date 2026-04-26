@@ -1,0 +1,30 @@
+// COMPILE_FAIL: == on a user struct without `impl PartialEq` (typeck guard, S105)
+//
+// Stage 1 of moving the silent-miscompile guard from codegen to typeck.
+// The typeck check requires `T: PartialEq` for `T == T` and `T != T`.
+// Primitives, references, slices, arrays, tuples, and the builtin generic
+// ADTs (String, Vec, Option, Result) auto-derive PartialEq. User ADTs
+// require an explicit `impl PartialEq` (or `#[derive(PartialEq)]`, which
+// expands into one).
+//
+// This file declares `trait PartialEq` locally so the check fires at
+// `check` time without needing the prelude (faster than the build-time
+// regression at t06_err_struct_eq_default_path).
+//
+// EXPECT: does not implement `PartialEq`
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 2 };
+    if p1 == p2 { 0 } else { 1 }
+}

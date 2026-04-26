@@ -1,4 +1,4 @@
-// COMPILE_FAIL: == on multi-field custom struct (silent miscompile guard, S104-B)
+// COMPILE_FAIL: == on multi-field custom struct without PartialEq (typeck guard, S105)
 //
 // Before S104-B, equality on a multi-field aggregate fell through to
 // emit_binop_typed's extract-first-field branch, which silently
@@ -6,20 +6,18 @@
 // that meant `Point { x: 1, y: 2 } == Point { x: 1, y: 99 }` returned
 // `true` because only `x` was inspected — a silent miscompile.
 //
-// S104-B turns this into a hard codegen error. The S98–S103 dispatch
-// chain handles every known eq-family aggregate (str / String / &String
-// / & &String / &[T] / Vec<T> / &Vec<T>) by routing through @str_eq.
-// Any other aggregate (custom struct, Option/Result, fat-ref of custom
-// type, closure, HashMap) reaches the default path and now diagnoses
-// instead of miscompiling.
+// S104-B caught this at codegen time with a fatal E0806. S105 promotes
+// the guard to typeck time as a `T: PartialEq` requirement on the operand
+// of `==` / `!=`. The codegen-level guard remains as defense in depth.
 //
-// Workarounds for legitimate use cases:
-//   - custom struct: `#[derive(PartialEq)]` and call `.eq()`
-//   - Option/Result: pattern-match
-//   - HashMap: not supported (architectural; needs iteration)
-//   - closure: not comparable
+// Workarounds:
+//   - custom struct: `#[derive(PartialEq)]` and the operator dispatches
+//     to the synthesized `eq` method.
+//   - Option/Result/Vec: implicitly PartialEq when their type args are.
+//   - HashMap: not supported (architectural; needs iteration).
+//   - closure: not comparable.
 //
-// EXPECT: equality on multi-field aggregate type
+// EXPECT: does not implement `PartialEq`
 mod std;
 
 struct Point {
