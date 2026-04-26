@@ -352,6 +352,77 @@ fn emit_constant(
 // Rvalue Codegen
 // ============================================================
 
+/// Returns the operand's interned TyId, or None if unavailable.
+fn operand_ty_id(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> Option<type_intern.TyId> {
+    match operand {
+        &mir_types.Operand.Copy(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Move(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Constant(ref c) => Option.Some(c.ty),
+    }
+}
+
+/// True if operand has a type that, after stripping all refs, is `str`.
+/// Catches `&str`, `&&str`, etc. Used to gate the @str_eq routing path
+/// against `&[T]` slices, which share `&str`'s LLVM layout `{ ptr, i64 }`
+/// but must NOT be byte-compared as strings.
+fn operand_is_str_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            let stripped = type_intern.unwrap_all_refs_id(id);
+            stripped.index == type_intern.CommonTypes.str_ty().index
+        }
+        Option.None => false,
+    }
+}
+
+/// Routes `&str == &str` and `&str != &str` through the `@str_eq` runtime
+/// function. The default binop path treats `{ ptr, i64 }` as an aggregate and
+/// extracts the first field (ptr), giving pointer-equality semantics — wrong
+/// for any &str whose backing buffer is not the same allocation (e.g., a
+/// String's heap buffer vs a literal's interned ptr). Returns true if the
+/// binop was handled here; the caller should skip the default path.
+fn try_emit_binop_str_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_str_ref(ctx, left) || !operand_is_str_ref(ctx, right) {
+        return false;
+    }
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_str(true, "{ ptr, i64 }", left_val.as_str());
+    ctx.call_arg_str(false, "{ ptr, i64 }", right_val.as_str());
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -518,6 +589,12 @@ pub fn emit_rvalue(
         &mir_types.Rvalue.BinaryOp { operator: ref bin_op, ref left, ref right } => {
             let t_arm = blood_clock_millis();
             @unsafe { RV_C_BINOP += 1; }
+            // S98: short-circuit &str equality through @str_eq runtime to avoid
+            // the {ptr,i64} aggregate-extract path's pointer-equality miscompile.
+            if try_emit_binop_str_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
             let (right_val, right_ty) = emit_operand_typed(ctx, right);
