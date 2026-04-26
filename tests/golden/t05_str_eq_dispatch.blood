@@ -1,0 +1,76 @@
+// Test: `&str == &str` and `&str != &str` dispatch through `@str_eq` runtime.
+// Pre-fix, the BinaryOp codegen treated &str's `{ ptr, i64 }` LLVM layout as
+// an aggregate, extracted the first field (ptr), and emitted `icmp eq ptr` —
+// silent miscompile when comparing a String's heap buffer pointer (via
+// `String.as_str()`) against a literal's interned pointer. Two same-content
+// literals coincidentally shared a pointer (passed by luck); String-derived
+// &str values always failed even when content matched.
+// EXPECT: lit_eq_lit_same: 1
+// EXPECT: lit_eq_lit_diff: 0
+// EXPECT: lit_ne_lit_same: 0
+// EXPECT: lit_ne_lit_diff: 1
+// EXPECT: heap_eq_lit_match: 1
+// EXPECT: heap_eq_lit_mismatch: 0
+// EXPECT: heap_ne_lit_match: 0
+// EXPECT: heap_ne_lit_mismatch: 1
+// EXPECT: heap_eq_heap_match: 1
+// EXPECT: heap_eq_heap_mismatch: 0
+// EXPECT: empty_eq_empty: 1
+// EXPECT: empty_eq_nonempty: 0
+
+fn build_string(text: &str) -> String {
+    let s = String.new();
+    s.push_str(text);
+    s
+}
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn main() -> i32 {
+    // Pattern A: both operands are literals (was already working by luck —
+    // identical interned pointers).
+    let lit_a: &str = "hello";
+    let lit_b: &str = "hello";
+    let lit_c: &str = "world";
+    print_kv("lit_eq_lit_same", lit_a == lit_b);
+    print_kv("lit_eq_lit_diff", lit_a == lit_c);
+    print_kv("lit_ne_lit_same", lit_a != lit_b);
+    print_kv("lit_ne_lit_diff", lit_a != lit_c);
+
+    // Pattern B: heap-backed &str (from String.as_str()) vs literal &str —
+    // the silent-miscompile case. Pre-fix, this path always returned false
+    // because heap and interned pointers differ regardless of content.
+    let s_hello = build_string("hello");
+    let s_world = build_string("world");
+    let heap_hello: &str = s_hello.as_str();
+    let heap_world: &str = s_world.as_str();
+    print_kv("heap_eq_lit_match", heap_hello == lit_a);
+    print_kv("heap_eq_lit_mismatch", heap_hello == lit_c);
+    print_kv("heap_ne_lit_match", heap_hello != lit_a);
+    print_kv("heap_ne_lit_mismatch", heap_hello != lit_c);
+
+    // Pattern C: heap-backed vs heap-backed, two distinct String allocations
+    // with the same content.
+    let s_hello2 = build_string("hello");
+    let heap_hello2: &str = s_hello2.as_str();
+    print_kv("heap_eq_heap_match", heap_hello == heap_hello2);
+    print_kv("heap_eq_heap_mismatch", heap_hello == heap_world);
+
+    // Pattern D: empty-string equality.
+    let s_empty = build_string("");
+    let s_empty2 = build_string("");
+    let heap_empty: &str = s_empty.as_str();
+    let heap_empty2: &str = s_empty2.as_str();
+    print_kv("empty_eq_empty", heap_empty == heap_empty2);
+    print_kv("empty_eq_nonempty", heap_empty == heap_hello);
+
+    0
+}
