@@ -1,0 +1,34 @@
+// Test: &str.contains(&str) inline. Closes S96's str primitive audit.
+// Pre-S96 dormant — no runtime, no decl, no emitter; llc errored on
+// `use of undefined value '@str_contains'`. S96 adds rt_str_contains,
+// the @str_contains declaration, and emit_str_contains_call (sharing
+// emit_str_bool_with_needle_call with starts_with/ends_with).
+// EXPECT: hit: true
+// EXPECT: miss: false
+// EXPECT: empty_needle: true
+// EXPECT: too_long: false
+// EXPECT: at_start: true
+// EXPECT: at_end: true
+
+fn main() -> i32 {
+    let s: &str = "hello world";
+
+    print("hit: ");
+    if s.contains("lo wo") { println("true"); } else { println("false"); }
+
+    print("miss: ");
+    if s.contains("xyz") { println("true"); } else { println("false"); }
+
+    print("empty_needle: ");
+    if s.contains("") { println("true"); } else { println("false"); }
+
+    print("too_long: ");
+    if s.contains("hello world!") { println("true"); } else { println("false"); }
+
+    print("at_start: ");
+    if s.contains("hello") { println("true"); } else { println("false"); }
+
+    print("at_end: ");
+    if s.contains("world") { println("true"); } else { println("false"); }
+    0
+}

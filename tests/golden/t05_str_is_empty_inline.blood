@@ -1,0 +1,24 @@
+// Test: &str.is_empty() inline. Closes S96's str primitive audit.
+// Pre-S96 the typeck registration `add_method(... "is_empty", "str_is_empty" ...)`
+// was dormant — no runtime, no declaration, no emitter. Calling s.is_empty()
+// failed at llc with `use of undefined value '@str_is_empty'`. S96 adds
+// rt_str_is_empty (by-value &str), the @str_is_empty declaration, and
+// emit_str_is_empty_call.
+// EXPECT: empty: true
+// EXPECT: nonempty: false
+// EXPECT: space: false
+
+fn main() -> i32 {
+    let s_empty: &str = "";
+    print("empty: ");
+    if s_empty.is_empty() { println("true"); } else { println("false"); }
+
+    let s_hello: &str = "hello";
+    print("nonempty: ");
+    if s_hello.is_empty() { println("true"); } else { println("false"); }
+
+    let s_space: &str = " ";
+    print("space: ");
+    if s_space.is_empty() { println("true"); } else { println("false"); }
+    0
+}

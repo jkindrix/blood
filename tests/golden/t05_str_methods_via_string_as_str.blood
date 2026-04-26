@@ -1,0 +1,33 @@
+// Test: str methods called on String.as_str() (gen-tracked &str). S96.
+// String.as_str() lazily registers the data buffer in the gen registry and
+// packs the gen into the upper 32 bits of the &str's len field. The 4 new
+// runtime functions mask gen bits via `% 4294967296` before using len, so
+// they handle both static (gen=0) and gen-tracked (gen!=0) &str references.
+// emit_str_gen_validation runs first to ensure the gen is still valid.
+// EXPECT: empty_dyn: false
+// EXPECT: starts: true
+// EXPECT: ends: true
+// EXPECT: contains: true
+// EXPECT: bytes_len: 11
+
+fn main() -> i32 {
+    let mut s: String = String.new();
+    s.push_str("hello world");
+    let view: &str = s.as_str();
+
+    print("empty_dyn: ");
+    if view.is_empty() { println("true"); } else { println("false"); }
+
+    print("starts: ");
+    if view.starts_with("hello") { println("true"); } else { println("false"); }
+
+    print("ends: ");
+    if view.ends_with("world") { println("true"); } else { println("false"); }
+
+    print("contains: ");
+    if view.contains("lo wo") { println("true"); } else { println("false"); }
+
+    let bytes: &[u8] = view.as_bytes();
+    print("bytes_len: "); println_int(bytes.len() as i32);
+    0
+}

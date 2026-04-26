@@ -1,0 +1,23 @@
+// Test: &str.is_empty() through a non-generic wrapper function. S96.
+// Verifies the by-value ABI works through a function-call boundary.
+// EXPECT: w_empty: true
+// EXPECT: w_hello: false
+// EXPECT: w_static_blank: true
+
+fn str_empty(s: &str) -> bool / pure {
+    s.is_empty()
+}
+
+fn main() -> i32 {
+    let s_empty: &str = "";
+    print("w_empty: ");
+    if str_empty(s_empty) { println("true"); } else { println("false"); }
+
+    let s_hello: &str = "hello";
+    print("w_hello: ");
+    if str_empty(s_hello) { println("true"); } else { println("false"); }
+
+    print("w_static_blank: ");
+    if str_empty("") { println("true"); } else { println("false"); }
+    0
+}

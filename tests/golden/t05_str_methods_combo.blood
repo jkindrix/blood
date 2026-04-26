@@ -1,0 +1,40 @@
+// Test: &str builtin methods combined in sequence. S96.
+// Verifies all 5 emitters dispatch correctly side-by-side and that each
+// method's bool return is independent (no cross-talk via shared temps).
+// EXPECT: empty: false
+// EXPECT: starts_h: true
+// EXPECT: starts_w: false
+// EXPECT: ends_d: true
+// EXPECT: ends_h: false
+// EXPECT: contains_lo: true
+// EXPECT: contains_xy: false
+// EXPECT: bytes_len: 11
+
+fn main() -> i32 {
+    let s: &str = "hello world";
+
+    print("empty: ");
+    if s.is_empty() { println("true"); } else { println("false"); }
+
+    print("starts_h: ");
+    if s.starts_with("hello") { println("true"); } else { println("false"); }
+
+    print("starts_w: ");
+    if s.starts_with("world") { println("true"); } else { println("false"); }
+
+    print("ends_d: ");
+    if s.ends_with("world") { println("true"); } else { println("false"); }
+
+    print("ends_h: ");
+    if s.ends_with("hello") { println("true"); } else { println("false"); }
+
+    print("contains_lo: ");
+    if s.contains("lo wo") { println("true"); } else { println("false"); }
+
+    print("contains_xy: ");
+    if s.contains("xyz") { println("true"); } else { println("false"); }
+
+    let bytes: &[u8] = s.as_bytes();
+    print("bytes_len: "); println_int(bytes.len() as i32);
+    0
+}

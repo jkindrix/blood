@@ -1,0 +1,24 @@
+// Test: &str.as_bytes() inline. S96 cleanup.
+// Pre-S96 worked by ABI accident — generic dispatch passed a {ptr,i32} gen ref
+// where the runtime expected ptr-to-fat-str; the gen ref's first 8 bytes
+// happened to BE that ptr, so it returned correct results. S96 routes through
+// emit_str_as_bytes_call which loads the {ptr,i64}, validates the gen, stages
+// in alloca, and passes the alloca ptr — no longer relies on the accident.
+// EXPECT: hello_len: 5
+// EXPECT: empty_len: 0
+// EXPECT: world_len: 11
+
+fn main() -> i32 {
+    let s_hello: &str = "hello";
+    let bytes_hello: &[u8] = s_hello.as_bytes();
+    print("hello_len: "); println_int(bytes_hello.len() as i32);
+
+    let s_empty: &str = "";
+    let bytes_empty: &[u8] = s_empty.as_bytes();
+    print("empty_len: "); println_int(bytes_empty.len() as i32);
+
+    let s_world: &str = "hello world";
+    let bytes_world: &[u8] = s_world.as_bytes();
+    print("world_len: "); println_int(bytes_world.len() as i32);
+    0
+}
