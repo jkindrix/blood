@@ -423,6 +423,111 @@ fn try_emit_binop_str_eq(
     true
 }
 
+/// True if operand has type `String` (the heap-owning Adt; not `&String`).
+/// `&String` deliberately returns false: its loaded value is `{ ptr, i32 }`
+/// (a fat ref to the String alloca), not the `{ ptr, i64, i64 }` aggregate the
+/// String-eq path expects to extract from. A separate path could handle the
+/// ref-deref case in the future.
+fn operand_is_string_value(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    if ctx.string_def_id == 0 { return false; }
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            match type_intern.get_adt_def_id(id) {
+                Option.Some(def_id) => def_id.index == ctx.string_def_id,
+                Option.None => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Builds a `{ ptr, i64 }` view from a String aggregate's first two fields
+/// (data ptr + len), discarding the cap field. Returns the SSA temp holding
+/// the constructed view, ready to feed into `@str_eq`.
+fn extract_string_str_view(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    string_val: &str,
+) -> codegen_ctx.CgName {
+    let data = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&data);
+    ctx.write(" = extractvalue { ptr, i64, i64 } ");
+    ctx.write(string_val);
+    ctx.write(", 0\n");
+    let len = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&len);
+    ctx.write(" = extractvalue { ptr, i64, i64 } ");
+    ctx.write(string_val);
+    ctx.write(", 1\n");
+    let view0 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&view0);
+    ctx.write(" = insertvalue { ptr, i64 } zeroinitializer, ptr ");
+    ctx.write_cgname(&data);
+    ctx.write(", 0\n");
+    let view = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&view);
+    ctx.write(" = insertvalue { ptr, i64 } ");
+    ctx.write_cgname(&view0);
+    ctx.write(", i64 ");
+    ctx.write_cgname(&len);
+    ctx.write(", 1\n");
+    view
+}
+
+/// Routes `String == String` and `String != String` through `@str_eq`. The
+/// default binop path treats `{ ptr, i64, i64 }` as an aggregate and extracts
+/// the first field (heap data ptr), giving pointer-equality semantics — always
+/// wrong for two distinct String allocations regardless of content. Builds a
+/// `{ ptr, i64 }` view (data + len, dropping cap) of each operand and dispatches
+/// to the same runtime function S98 routes &str equality through. Returns true
+/// if the binop was handled here; the caller should skip the default path.
+fn try_emit_binop_string_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_string_value(ctx, left) || !operand_is_string_value(ctx, right) {
+        return false;
+    }
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_view = extract_string_str_view(ctx, left_val.as_str());
+    let right_view = extract_string_str_view(ctx, right_val.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &left_view);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &right_view);
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -592,6 +697,14 @@ pub fn emit_rvalue(
             // S98: short-circuit &str equality through @str_eq runtime to avoid
             // the {ptr,i64} aggregate-extract path's pointer-equality miscompile.
             if try_emit_binop_str_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S99: same routing for direct String == String — `{ ptr, i64, i64 }`
+            // aggregate extracts to data ptr and pointer-compares; needs byte
+            // comparison instead. Builds { ptr, i64 } views and dispatches to
+            // the same @str_eq runtime function.
+            if try_emit_binop_string_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
