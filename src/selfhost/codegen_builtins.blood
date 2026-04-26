@@ -1130,6 +1130,26 @@ pub fn is_string_as_bytes(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@string_as_bytes")
 }
 
+/// Checks if the function name is @string_is_empty.
+pub fn is_string_is_empty(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_is_empty")
+}
+
+/// Checks if the function name is @string_contains.
+pub fn is_string_contains(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_contains")
+}
+
+/// Checks if the function name is @string_starts_with.
+pub fn is_string_starts_with(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_starts_with")
+}
+
+/// Checks if the function name is @string_ends_with.
+pub fn is_string_ends_with(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_ends_with")
+}
+
 /// Emits a string_new call with correct calling convention.
 /// Runtime signature: void @string_new(ptr out_ptr)
 ///
@@ -1575,6 +1595,133 @@ pub fn emit_string_as_bytes_call(
     ctx.emit_store_cg("{ ptr, i64 }", &packed_result, dest_ptr.as_str());
 
     // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_is_empty call. Blood method `String.is_empty(&self) -> bool`
+/// is dispatched via `i32 @string_is_empty(ptr self)`. Without this dedicated
+/// emitter the generic dispatch path emits `call i1 @string_is_empty({ ptr, i32 })`
+/// against an undeclared symbol — llc fails. Strips gen ref to bare ptr,
+/// converts i32 -> i1 via `icmp ne 0`. Mirrors emit_vec_is_empty_call.
+pub fn emit_string_is_empty_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Strip gen ref - FFI expects bare ptr.
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
+
+    // %result = call i32 @string_is_empty(ptr self)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@string_is_empty");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
+
+    // Convert i32 -> i1
+    let bool_val = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&bool_val, "ne", "i32", &result, "0");
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &bool_val, dest_ptr.as_str());
+
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_contains call. Blood method
+/// `String.contains(&self, needle: &str) -> bool` is dispatched via
+/// `i32 @string_contains(ptr self, ptr needle_str)` where needle_str is
+/// a pointer to a {ptr, i64} fat string (mirrors emit_string_push_str_call's
+/// needle staging). Strips receiver gen ref, allocas the &str fat pointer
+/// for the runtime, converts i32 -> i1 via `icmp ne 0`.
+pub fn emit_string_contains_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_string_bool_with_needle_call(ctx, args, destination, target, "@string_contains");
+}
+
+/// Emits a string_starts_with call. Same shape as string_contains.
+pub fn emit_string_starts_with_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_string_bool_with_needle_call(ctx, args, destination, target, "@string_starts_with");
+}
+
+/// Emits a string_ends_with call. Same shape as string_contains.
+pub fn emit_string_ends_with_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_string_bool_with_needle_call(ctx, args, destination, target, "@string_ends_with");
+}
+
+/// Shared helper for String methods of shape (ptr self, ptr needle_str) -> i32
+/// converted to bool. Three callers: contains, starts_with, ends_with — all
+/// identical except for the runtime function name.
+fn emit_string_bool_with_needle_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+    runtime_name: &str,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // args[0] = &String (or &&String); args[1] = &str
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let (arg_val, _arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+
+    // Alloca for &str fat pointer (runtime expects ptr to {ptr, i64}).
+    let str_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&str_tmp, "{ ptr, i64 }");
+    ctx.emit_store_str_cg("{ ptr, i64 }", arg_val.as_str(), &str_tmp);
+
+    // %result = call i32 @<runtime_name>(ptr self, ptr needle_str)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", runtime_name);
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &str_tmp);
+    ctx.end_call();
+
+    // Convert i32 -> i1
+    let bool_val = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&bool_val, "ne", "i32", &result, "0");
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &bool_val, dest_ptr.as_str());
+
     match target {
         &Option.Some(t) => {
             let label = ctx.block_label_cg(t);

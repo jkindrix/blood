@@ -93,6 +93,95 @@ pub fn rt_string_len(s: *mut u8) -> i64 {
     get_len(s)
 }
 
+// i32 @string_is_empty(ptr)
+#[export_name = "string_is_empty"]
+pub fn rt_string_is_empty(s: *mut u8) -> i32 {
+    if get_len(s) == 0 { 1 } else { 0 }
+}
+
+// i32 @string_starts_with(ptr self, ptr fat_str)
+//   fat_str = ptr to { data: i64, len: i64 } where len's upper 32 bits hold gen.
+#[export_name = "string_starts_with"]
+pub fn rt_string_starts_with(s: *mut u8, fat_str: *mut u8) -> i32 {
+    let s_data: i64 = get_data(s);
+    let s_len: i64 = get_len(s);
+    let n_data: i64 = @unsafe { ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64) };
+    let n_len: i64 = @unsafe { ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296 };
+
+    if n_len == 0 { return 1; }
+    if n_len > s_len { return 0; }
+
+    let mut i: i64 = 0;
+    while i < n_len {
+        let matches: bool = @unsafe {
+            let a: u8 = ptr_read_u8((s_data + i) as u64);
+            let b: u8 = ptr_read_u8((n_data + i) as u64);
+            a == b
+        };
+        if !matches { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+// i32 @string_ends_with(ptr self, ptr fat_str)
+#[export_name = "string_ends_with"]
+pub fn rt_string_ends_with(s: *mut u8, fat_str: *mut u8) -> i32 {
+    let s_data: i64 = get_data(s);
+    let s_len: i64 = get_len(s);
+    let n_data: i64 = @unsafe { ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64) };
+    let n_len: i64 = @unsafe { ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296 };
+
+    if n_len == 0 { return 1; }
+    if n_len > s_len { return 0; }
+
+    let offset: i64 = s_len - n_len;
+    let mut i: i64 = 0;
+    while i < n_len {
+        let matches: bool = @unsafe {
+            let a: u8 = ptr_read_u8((s_data + offset + i) as u64);
+            let b: u8 = ptr_read_u8((n_data + i) as u64);
+            a == b
+        };
+        if !matches { return 0; }
+        i = i + 1;
+    }
+    1
+}
+
+// i32 @string_contains(ptr self, ptr fat_str)
+// Naive O(n*m) substring search. Returns 1 if needle found, 0 otherwise.
+// Empty needle matches anything (including empty self).
+#[export_name = "string_contains"]
+pub fn rt_string_contains(s: *mut u8, fat_str: *mut u8) -> i32 {
+    let s_data: i64 = get_data(s);
+    let s_len: i64 = get_len(s);
+    let n_data: i64 = @unsafe { ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64) };
+    let n_len: i64 = @unsafe { ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296 };
+
+    if n_len == 0 { return 1; }
+    if n_len > s_len { return 0; }
+
+    let max_start: i64 = s_len - n_len;
+    let mut i: i64 = 0;
+    while i <= max_start {
+        let mut matched: i32 = 1;
+        let mut j: i64 = 0;
+        while j < n_len {
+            let eq: bool = @unsafe {
+                let a: u8 = ptr_read_u8((s_data + i + j) as u64);
+                let b: u8 = ptr_read_u8((n_data + j) as u64);
+                a == b
+            };
+            if !eq { matched = 0; }
+            j = j + 1;
+        }
+        if matched == 1 { return 1; }
+        i = i + 1;
+    }
+    0
+}
+
 fn ensure_cap(s: *mut u8, needed: i64) {
     let cap: i64 = get_cap(s);
     if needed <= cap { return; }
