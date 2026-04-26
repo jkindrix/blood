@@ -314,12 +314,12 @@ pub fn emit_body_fn(
                     s
                 };
                 let src_ptr_str = src_ptr_name.as_str();
-                let is_ptr = ty_str_equals(ty_str, "ptr");
-                let is_i64 = ty_str_equals(ty_str, "i64");
-                let is_narrow_int = ty_str_equals(ty_str, "i32")
-                    || ty_str_equals(ty_str, "i16")
-                    || ty_str_equals(ty_str, "i8")
-                    || ty_str_equals(ty_str, "i1");
+                let is_ptr = ty_str == "ptr";
+                let is_i64 = ty_str == "i64";
+                let is_narrow_int = ty_str == "i32"
+                    || ty_str == "i16"
+                    || ty_str == "i8"
+                    || ty_str == "i1";
                 if is_ptr {
                     ctx.write("  %body_result_ptr = load ptr, ptr ");
                     ctx.write(src_ptr_str);
@@ -506,23 +506,6 @@ fn find_body_fn_entry(
 // ============================================================
 // Small utilities
 // ============================================================
-
-/// True if two LLVM type strings match byte-for-byte. Used to pick the
-/// right widening path for body_fn's return value; the built-in str_eq
-/// compares a String against a &str, but we have two &str here.
-fn ty_str_equals(a: &str, b: &str) -> bool {
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    if ab.len() != bb.len() {
-        return false;
-    }
-    for i in 0usize..ab.len() {
-        if ab[i] != bb[i] {
-            return false;
-        }
-    }
-    true
-}
 
 /// True if the LLVM type string represents the zero-sized unit type.
 fn is_unit_llvm_ty(ty: &str) -> bool {
