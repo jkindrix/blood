@@ -1,0 +1,34 @@
+// Test: `default` as a parameter and let-binding name resolves to the binding,
+// not the type-default expression. Pre-fix, the parser unconditionally lowered
+// bare `default` to ExprKind.Default (ZeroInit), silently shadowing the local.
+// EXPECT: 7
+// EXPECT: 42
+// EXPECT: 99
+// EXPECT: 13
+
+fn unwrap_or_default(opt: Option<i32>, default: i32) -> i32 {
+    match opt {
+        Option.Some(v) => v,
+        Option.None => default,
+    }
+}
+
+fn main() -> i32 {
+    let a: i32 = unwrap_or_default(Option.Some(7), 99);
+    println_int(a);
+
+    let b: i32 = unwrap_or_default(Option.None, 42);
+    println_int(b);
+
+    let c: i32 = unwrap_or_default(Option.None, 99);
+    println_int(c);
+
+    let default: i32 = 13;
+    println_int(default);
+
+    if a != 7 { return 1; }
+    if b != 42 { return 2; }
+    if c != 99 { return 3; }
+    if default != 13 { return 4; }
+    0
+}
