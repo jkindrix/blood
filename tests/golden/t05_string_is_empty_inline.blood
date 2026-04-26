@@ -1,0 +1,24 @@
+// Test: String.is_empty inline. Closes S94's String audit.
+// Pre-S94 the typeck registration `add_method(... "is_empty", "string_is_empty" ...)`
+// was dormant — runtime function did not exist, no external declaration, no
+// dedicated emitter. Calling s.is_empty() failed at llc with `use of undefined
+// value '@string_is_empty'`. S94 adds runtime function rt_string_is_empty,
+// the @string_is_empty external declaration, and emit_string_is_empty_call.
+// EXPECT: empty: true
+// EXPECT: nonempty: false
+// EXPECT: after_clear: true
+
+fn main() -> i32 {
+    let mut s: String = String.new();
+    print("empty: ");
+    if s.is_empty() { println("true"); } else { println("false"); }
+
+    s.push_str("hello");
+    print("nonempty: ");
+    if s.is_empty() { println("true"); } else { println("false"); }
+
+    let empty: String = String.new();
+    print("after_clear: ");
+    if empty.is_empty() { println("true"); } else { println("false"); }
+    0
+}

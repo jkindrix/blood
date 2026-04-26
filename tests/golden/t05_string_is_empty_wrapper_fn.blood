@@ -1,0 +1,25 @@
+// Test: String.is_empty through a non-generic wrapper function. Closes S94.
+// Wrapper auto-refs &String to &&String in MIR; emit_operand_as_ptr strips
+// both ref layers down to the bare ptr the runtime expects.
+// EXPECT: w_empty: true
+// EXPECT: w_one: false
+// EXPECT: w_again: true
+
+fn str_empty(s: &String) -> bool / pure {
+    s.is_empty()
+}
+
+fn main() -> i32 {
+    let mut s: String = String.new();
+    print("w_empty: ");
+    if str_empty(&s) { println("true"); } else { println("false"); }
+
+    s.push_str("X");
+    print("w_one: ");
+    if str_empty(&s) { println("true"); } else { println("false"); }
+
+    let empty: String = String.from("");
+    print("w_again: ");
+    if str_empty(&empty) { println("true"); } else { println("false"); }
+    0
+}

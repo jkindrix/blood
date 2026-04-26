@@ -1,0 +1,37 @@
+// Test: String.contains(&str) inline. Closes S94's String audit.
+// Pre-S94 the typeck registration was dormant — runtime function did not
+// exist, no external declaration, no dedicated emitter. Calling s.contains(...)
+// failed at llc with `use of undefined value '@string_contains'`. S94 adds
+// runtime rt_string_contains (naive O(n*m) substring search), the
+// @string_contains external declaration, and emit_string_contains_call.
+// Verifies hit, miss, empty-needle (always matches), needle-longer-than-self,
+// and multi-char-overlap cases.
+// EXPECT: hit: true
+// EXPECT: miss: false
+// EXPECT: empty_needle: true
+// EXPECT: too_long: false
+// EXPECT: at_start: true
+// EXPECT: at_end: true
+
+fn main() -> i32 {
+    let s: String = String.from("hello world");
+
+    print("hit: ");
+    if s.contains("lo wo") { println("true"); } else { println("false"); }
+
+    print("miss: ");
+    if s.contains("xyz") { println("true"); } else { println("false"); }
+
+    print("empty_needle: ");
+    if s.contains("") { println("true"); } else { println("false"); }
+
+    print("too_long: ");
+    if s.contains("hello world!") { println("true"); } else { println("false"); }
+
+    print("at_start: ");
+    if s.contains("hello") { println("true"); } else { println("false"); }
+
+    print("at_end: ");
+    if s.contains("world") { println("true"); } else { println("false"); }
+    0
+}
