@@ -141,6 +141,11 @@ pub fn is_vec_insert(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_insert")
 }
 
+/// Checks if the function name is @vec_is_empty.
+pub fn is_vec_is_empty(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_is_empty")
+}
+
 /// Checks if the function name is @vec_with_capacity.
 pub fn is_vec_with_capacity(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_with_capacity")
@@ -1011,6 +1016,56 @@ pub fn emit_vec_insert_call(
     ctx.write("call void @llvm.stackrestore(ptr ");
     ctx.write_cgname(&stack_save);
     ctx.write(")\n");
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a vec_is_empty call. Blood method `Vec.is_empty(&self) -> bool` is
+/// dispatched via the runtime `i32 @vec_is_empty(ptr v)`. Without this
+/// dedicated emitter, the call falls through generic dispatch emitting
+/// `call i1 @vec_is_empty({ ptr, i32 } %recv)` against the runtime's
+/// `i32 @vec_is_empty(ptr)` declaration. That works by ABI accident — extra
+/// trailing bytes in the fat receiver are ignored at the C ABI when only the
+/// leading ptr is read, and i32 -> i1 truncation is safe for 0/1 returns —
+/// but the mismatch is fragile against optimization changes or arg-layout
+/// shifts. This emitter strips the gen ref to a bare ptr, calls i32, and
+/// converts to i1 via `icmp ne 0` (mirrors `emit_vec_contains_call`).
+pub fn emit_vec_is_empty_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] = &Vec<T> (or &&Vec<T> in wrappers).
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Strip gen ref - FFI expects bare ptr.
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
+
+    // %result = call i32 @vec_is_empty(ptr v)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@vec_is_empty");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.end_call();
+
+    // Convert i32 -> i1: bool_val = (result != 0)
+    let bool_val = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&bool_val, "ne", "i32", &result, "0");
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &bool_val, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
