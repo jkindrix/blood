@@ -1,7 +1,7 @@
 # Blood — Known Limitations
 
 **Last updated:** 2026-04-23
-**Scope:** honest enumeration of gaps between the spec and the current compiler artifact. This document exists because the older `docs/planning/IMPLEMENTATION_STATUS.md` has drifted from reality since January; a comprehensive working audit lives at `.tmp/DEEP_AUDIT_2026-04-10.md` (not committed — it's a live session document).
+**Scope:** honest enumeration of gaps between the spec and the current compiler artifact. This document exists because the older `docs/planning/IMPLEMENTATION_STATUS.md` is retired (its body was January 2026 vintage and predates the self-hosted compiler and the 2026-04-10 deep audit); a comprehensive working audit lives at `.tmp/DEEP_AUDIT_2026-04-10.md` (not committed — it's a live session document).
 
 The goal of this file is to answer honestly: *if you write a Blood program today, what won't work?*
 

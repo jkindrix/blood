@@ -365,9 +365,9 @@ All 47 `.blood` files in `src/selfhost/` migrated. Key steps:
 **Priority**: High — cheap analysis, high information value.
 **Prerequisite**: Phase A complete (syntax aligned).
 
-> **Stale Documents Warning (Phase B)**
+> **Retired Documents (Phase B)**
 >
-> - **`docs/planning/IMPLEMENTATION_STATUS.md`** (v0.5.3, 2026-01-29) — **STALE. Do not use.** Missing all 337 golden tests, closures, array-to-slice coercion, MIR region fixes, self-hosted compiler progress, and ADR-001 through ADR-037. Must be regenerated from current compiler state before use.
+> - **`docs/planning/IMPLEMENTATION_STATUS.md`** — **RETIRED.** The 2026-01-29 revision (v0.5.3) predates the self-hosted compiler, the 2026-04-10 deep audit, and ~70 subsequent sessions. The file has been replaced with a redirect; use `docs/KNOWN_LIMITATIONS.md` for current outward-facing status.
 
 Audit whether compiler behavior matches the formal semantics we've specified:
 
