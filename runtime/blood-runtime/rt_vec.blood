@@ -249,6 +249,65 @@ pub fn rt_vec_last(v: *mut u8, elem_size: i64, out: *mut u8) {
     }
 }
 
+// void @vec_remove(ptr vec, i64 idx, i64 elem_size, ptr out)
+//
+// Removes the element at idx, copies it into `out`, and shifts trailing
+// elements left by one slot. Panics on idx >= len. T return value is
+// delivered out-of-band via `out` to dodge backlog #30 (consuming-self
+// primitive return calling-convention bug).
+#[export_name = "vec_remove"]
+pub fn rt_vec_remove(v: *mut u8, idx: i64, elem_size: i64, out: *mut u8) {
+    let len: i64 = get_len(v);
+    if idx < 0 || idx >= len {
+        rt_panic.rt_panic("vec_remove: index out of bounds");
+    }
+    let data: i64 = get_data(v);
+    let src: i64 = data + idx * elem_size;
+    // Copy removed element to out.
+    @unsafe {
+        libc.sys_memmove(out, alloc.addr_to_cptr(src), elem_size as u64);
+    }
+    // Shift trailing bytes left by one element.
+    let trailing: i64 = (len - idx - 1) * elem_size;
+    if trailing > 0 {
+        let after: i64 = data + (idx + 1) * elem_size;
+        @unsafe {
+            libc.sys_memmove(alloc.addr_to_ptr(src), alloc.addr_to_cptr(after), trailing as u64);
+        }
+    }
+    set_len(v, len - 1);
+}
+
+// void @vec_insert(ptr vec, i64 idx, ptr elem, i64 elem_size)
+//
+// Inserts elem at idx, shifting trailing elements right by one slot. Panics
+// on idx > len. After ensure_cap may have moved the buffer; data is re-fetched
+// after the growth call.
+#[export_name = "vec_insert"]
+pub fn rt_vec_insert(v: *mut u8, idx: i64, elem: *mut u8, elem_size: i64) {
+    let len: i64 = get_len(v);
+    if idx < 0 || idx > len {
+        rt_panic.rt_panic("vec_insert: index out of bounds");
+    }
+    vec_ensure_cap(v, len + 1, elem_size);
+    // Re-fetch data: ensure_cap may have reallocated the buffer.
+    let data: i64 = get_data(v);
+    let dst: i64 = data + idx * elem_size;
+    // Shift trailing bytes right by one element to open the gap.
+    let trailing: i64 = (len - idx) * elem_size;
+    if trailing > 0 {
+        let next: i64 = data + (idx + 1) * elem_size;
+        @unsafe {
+            libc.sys_memmove(alloc.addr_to_ptr(next), alloc.addr_to_cptr(dst), trailing as u64);
+        }
+    }
+    // Copy elem into the gap.
+    @unsafe {
+        libc.sys_memmove(alloc.addr_to_ptr(dst), elem, elem_size as u64);
+    }
+    set_len(v, len + 1);
+}
+
 // void @vec_free(ptr vec, i64 elem_size)
 #[export_name = "vec_free"]
 pub fn rt_vec_free(v: *mut u8, elem_size: i64) {
