@@ -88,40 +88,6 @@ pub fn print_string(s: &String) {
     print_str(s.as_str());
 }
 
-
-// ============================================================
-// String Helpers
-// ============================================================
-
-/// Compares a String with a &str.
-pub fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-
-    if bytes.len() != other_bytes.len() {
-        return false;
-    }
-
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Compares two &str values for equality.
-pub fn str_equals_str(a: &str, b: &str) -> bool {
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    if ab.len() != bb.len() { return false; }
-    for i in 0usize..ab.len() {
-        if ab[i] != bb[i] { return false; }
-    }
-    true
-}
-
 /// Strips the filename from a path, returning the directory portion.
 /// "build/obj/main.ll" -> "build/obj"
 pub fn strip_filename(path: &str) -> String {
@@ -236,7 +202,7 @@ pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnIn
     };
 
     // Entry point: blood-rust runtime expects "blood_main"
-    if str_equals(&bare_name, "main") {
+    if bare_name.as_str() == "main" {
         return common.make_string("blood_main");
     }
 
@@ -468,7 +434,7 @@ pub fn generate_missing_stubs(
         let mut is_defined = false;
         let mut di: usize = 0;
         while di < defined_names.len() {
-            if str_equals(&defined_names[di], name.as_str()) {
+            if defined_names[di].as_str() == name.as_str() {
                 is_defined = true;
                 di = defined_names.len(); // break
             }
@@ -479,7 +445,7 @@ pub fn generate_missing_stubs(
             let mut already_stubbed = false;
             let mut si: usize = 0;
             while si < generated_stubs.len() {
-                if str_equals(&generated_stubs[si], name.as_str()) {
+                if generated_stubs[si].as_str() == name.as_str() {
                     already_stubbed = true;
                     si = generated_stubs.len(); // break
                 }
@@ -519,7 +485,7 @@ pub fn register_all_item_names(
                 let export = lookup_export_name(entry.def_id.index, export_name_entries);
                 if export.len() > 0 {
                     ctx.register_def_name(entry.def_id.index, export);
-                } else if str_equals(&name, "main") {
+                } else if name.as_str() == "main" {
                     ctx.register_def_name(entry.def_id.index, common.make_string("blood_main"));
                 } else if is_no_mangle(entry.def_id.index, no_mangle_def_ids) {
                     // #[no_mangle]: use bare function name, no def{N}_ prefix
