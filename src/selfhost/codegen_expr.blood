@@ -628,6 +628,106 @@ fn try_emit_binop_string_ref_eq(
     true
 }
 
+/// True if operand is `& &String` — exactly two Ref layers wrapping String.
+/// Mutually exclusive with `operand_is_string_ref` (which requires the inner
+/// type be Adt(String), not another Ref). Used to gate the @str_eq routing
+/// for `& &String` equality, the deepest ref shape S103-B closes.
+fn operand_is_string_ref_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    if ctx.string_def_id == 0 { return false; }
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner1 = type_intern.unwrap_ref_id(id);
+            if !type_intern.is_ref_id(inner1) { return false; }
+            let inner2 = type_intern.unwrap_ref_id(inner1);
+            match type_intern.get_adt_def_id(inner2) {
+                Option.Some(def_id) => def_id.index == ctx.string_def_id,
+                Option.None => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Builds a `{ ptr, i64 }` view from a `& &String` outer fat ref. Three-step
+/// deref: extract field 0 (ptr to inner fat ref alloca) from the outer
+/// `{ ptr, i32 }`, load the inner `{ ptr, i32 }` ref value, then chain into
+/// S100's `extract_string_ref_str_view` to do the remaining
+/// extract+load+drop-cap. Mirrors S100's choice to skip generation validation
+/// in the binop path — `@str_eq` reads bytes through the data ptr trusting
+/// the refs are live.
+fn extract_string_ref_ref_str_view(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ref_ref_val: &str,
+) -> codegen_ctx.CgName {
+    let inner_ref_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&inner_ref_alloca);
+    ctx.write(" = extractvalue { ptr, i32 } ");
+    ctx.write(ref_ref_val);
+    ctx.write(", 0\n");
+    let inner_ref_val = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&inner_ref_val);
+    ctx.write(" = load { ptr, i32 }, ptr ");
+    ctx.write_cgname(&inner_ref_alloca);
+    ctx.write("\n");
+    let inner_ref_val_str = cgname_to_string(&inner_ref_val);
+    extract_string_ref_str_view(ctx, inner_ref_val_str.as_str())
+}
+
+/// Routes `& &String == & &String` and `& &String != & &String` through
+/// `@str_eq`. Same root cause as S100 (`&String == &String`) but operand shape
+/// adds one more ref layer: outer `{ ptr, i32 }` whose ptr addresses the
+/// inner ref's alloca, which itself loads to another `{ ptr, i32 }` whose ptr
+/// addresses the underlying String's alloca. The default binop path would
+/// extract the outer field 0 (an alloca address) and pointer-compare — wrong
+/// for the same reason S100 was wrong, just one indirection deeper. Returns
+/// true if the binop was handled here; the caller should skip the default.
+fn try_emit_binop_string_ref_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_string_ref_ref(ctx, left) || !operand_is_string_ref_ref(ctx, right) {
+        return false;
+    }
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_view = extract_string_ref_ref_str_view(ctx, left_val.as_str());
+    let right_view = extract_string_ref_ref_str_view(ctx, right_val.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &left_view);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &right_view);
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// True if operand is `&[T]` for some T — exactly one Ref layer wrapping a
 /// Slice. Multi-layer refs to slices deliberately rejected (mirrors S100's
 /// single-Ref-layer choice for `&String`). Used to gate the @str_eq routing
@@ -983,6 +1083,14 @@ pub fn emit_rvalue(
             // Derefs each operand to load the underlying String, then runs
             // through the same @str_eq pipeline S99 set up.
             if try_emit_binop_string_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S103-B: closes the multi-layer-ref hole left by S100. `& &String`
+            // loads as `{ ptr, i32 }` (outer fat ref) whose ptr addresses the
+            // inner ref's alloca, which itself loads as another `{ ptr, i32 }`.
+            // Same root cause as S100 but one indirection deeper.
+            if try_emit_binop_string_ref_ref_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
