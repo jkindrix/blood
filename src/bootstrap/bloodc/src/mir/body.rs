@@ -18,9 +18,9 @@
 
 use std::collections::HashMap;
 
+use super::types::{BasicBlockData, BasicBlockId, Statement, Terminator};
 use crate::hir::{DefId, LocalId, Type};
 use crate::span::Span;
-use super::types::{BasicBlockData, BasicBlockId, Terminator, Statement};
 
 #[cfg(test)]
 use super::types::TerminatorKind;
@@ -402,7 +402,8 @@ impl MirBodyBuilder {
 
     /// Check if the current block is terminated.
     pub fn is_current_terminated(&self) -> bool {
-        self.body.get_block(self.current_block)
+        self.body
+            .get_block(self.current_block)
             .map(|b| b.is_terminated())
             .unwrap_or(false)
     }
@@ -487,10 +488,7 @@ mod tests {
                     discr: super::super::types::Operand::Constant(
                         super::super::types::Constant::bool(true),
                     ),
-                    targets: super::super::types::SwitchTargets::new(
-                        vec![(0, bb1)],
-                        bb2,
-                    ),
+                    targets: super::super::types::SwitchTargets::new(vec![(0, bb1)], bb2),
                 },
                 Span::dummy(),
             ),
@@ -499,10 +497,7 @@ mod tests {
             bb1,
             Terminator::new(TerminatorKind::Goto { target: bb2 }, Span::dummy()),
         );
-        body.set_terminator(
-            bb2,
-            Terminator::new(TerminatorKind::Return, Span::dummy()),
-        );
+        body.set_terminator(bb2, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
         let preds = body.predecessors();
         assert!(preds[&bb0].is_empty());
@@ -522,10 +517,7 @@ mod tests {
             bb0,
             Terminator::new(TerminatorKind::Goto { target: bb1 }, Span::dummy()),
         );
-        body.set_terminator(
-            bb1,
-            Terminator::new(TerminatorKind::Return, Span::dummy()),
-        );
+        body.set_terminator(bb1, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
         assert!(body.is_reachable(bb0));
         assert!(body.is_reachable(bb1));
@@ -535,7 +527,12 @@ mod tests {
 
     #[test]
     fn test_mir_local_kind() {
-        let local = MirLocal::new(LocalId::new(0), Type::i32(), LocalKind::ReturnPlace, Span::dummy());
+        let local = MirLocal::new(
+            LocalId::new(0),
+            Type::i32(),
+            LocalKind::ReturnPlace,
+            Span::dummy(),
+        );
         assert!(local.is_return_place());
         assert!(!local.is_param());
         assert!(!local.is_temp());
@@ -579,10 +576,7 @@ mod tests {
             bb1,
             Terminator::new(TerminatorKind::Goto { target: bb2 }, Span::dummy()),
         );
-        body.set_terminator(
-            bb2,
-            Terminator::new(TerminatorKind::Return, Span::dummy()),
-        );
+        body.set_terminator(bb2, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
         let rpo = body.reverse_postorder();
         assert_eq!(rpo, vec![bb0, bb1, bb2]);

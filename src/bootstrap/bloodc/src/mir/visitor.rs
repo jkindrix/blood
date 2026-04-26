@@ -32,13 +32,12 @@
 //! the default recursive traversal. Override `visit_X` for custom behavior,
 //! call `super_X` to continue traversal into children.
 
-use crate::hir::LocalId;
 use super::body::MirBody;
 use super::types::{
-    BasicBlockId, BasicBlockData, Statement, StatementKind,
-    Terminator, TerminatorKind, Place, PlaceElem, Operand, Rvalue,
-    Constant, BinOp, UnOp, AggregateKind,
+    AggregateKind, BasicBlockData, BasicBlockId, BinOp, Constant, Operand, Place, PlaceElem,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind, UnOp,
 };
+use crate::hir::LocalId;
 
 // ============================================================================
 // Location
@@ -59,12 +58,18 @@ impl Location {
 
     /// Create a location for a statement.
     pub fn statement(block: BasicBlockId, index: usize) -> Self {
-        Self { block, statement_index: index }
+        Self {
+            block,
+            statement_index: index,
+        }
     }
 
     /// Create a location for a terminator.
     pub fn terminator(block: BasicBlockId) -> Self {
-        Self { block, statement_index: Self::TERMINATOR }
+        Self {
+            block,
+            statement_index: Self::TERMINATOR,
+        }
     }
 
     /// Check if this location points to a terminator.
@@ -152,21 +157,42 @@ pub trait Visitor: Sized {
                 self.visit_place(ptr, PlaceContext::Read, location);
                 self.visit_operand(expected_gen, location);
             }
-            StatementKind::PushHandler { handler_id: _, state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
+            StatementKind::PushHandler {
+                handler_id: _,
+                state_place,
+                state_kind: _,
+                allocation_tier: _,
+                inline_mode: _,
+            } => {
                 self.visit_place(state_place, PlaceContext::Read, location);
             }
-            StatementKind::PushInlineHandler { effect_id: _, operations: _, allocation_tier: _, inline_mode: _ } => {
+            StatementKind::PushInlineHandler {
+                effect_id: _,
+                operations: _,
+                allocation_tier: _,
+                inline_mode: _,
+            } => {
                 // Inline handlers have no state place to visit
             }
             StatementKind::PopHandler => {
                 // No places or operands to visit
             }
-            StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result, state_place, destination } => {
+            StatementKind::CallReturnClause {
+                handler_id: _,
+                handler_name: _,
+                body_result,
+                state_place,
+                destination,
+            } => {
                 self.visit_operand(body_result, location);
                 self.visit_place(state_place, PlaceContext::Read, location);
                 self.visit_place(destination, PlaceContext::Store, location);
             }
-            StatementKind::CallFinallyClause { handler_id: _, handler_name: _, state_place } => {
+            StatementKind::CallFinallyClause {
+                handler_id: _,
+                handler_name: _,
+                state_place,
+            } => {
                 self.visit_place(state_place, PlaceContext::Read, location);
             }
             StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
@@ -203,21 +229,45 @@ pub trait Visitor: Sized {
             }
             TerminatorKind::Return => {}
             TerminatorKind::Unreachable => {}
-            TerminatorKind::Call { func, args, destination, target: _, unwind: _ } => {
+            TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                target: _,
+                unwind: _,
+            } => {
                 self.visit_operand(func, location);
                 for arg in args {
                     self.visit_operand(arg, location);
                 }
                 self.visit_place(destination, PlaceContext::Store, location);
             }
-            TerminatorKind::Assert { cond, target: _, msg: _, expected: _, unwind: _ } => {
+            TerminatorKind::Assert {
+                cond,
+                target: _,
+                msg: _,
+                expected: _,
+                unwind: _,
+            } => {
                 self.visit_operand(cond, location);
             }
-            TerminatorKind::DropAndReplace { place, value, target: _, unwind: _ } => {
+            TerminatorKind::DropAndReplace {
+                place,
+                value,
+                target: _,
+                unwind: _,
+            } => {
                 self.visit_place(place, PlaceContext::Store, location);
                 self.visit_operand(value, location);
             }
-            TerminatorKind::Perform { effect_id: _, op_index: _, args, destination, target: _, is_tail_resumptive: _ } => {
+            TerminatorKind::Perform {
+                effect_id: _,
+                op_index: _,
+                args,
+                destination,
+                target: _,
+                is_tail_resumptive: _,
+            } => {
                 for arg in args {
                     self.visit_operand(arg, location);
                 }
@@ -228,7 +278,11 @@ pub trait Visitor: Sized {
                     self.visit_operand(v, location);
                 }
             }
-            TerminatorKind::StaleReference { ptr, expected: _, actual: _ } => {
+            TerminatorKind::StaleReference {
+                ptr,
+                expected: _,
+                actual: _,
+            } => {
                 self.visit_place(ptr, PlaceContext::Read, location);
             }
         }
@@ -266,7 +320,10 @@ pub trait Visitor: Sized {
                 self.visit_unop(*op, location);
                 self.visit_operand(operand, location);
             }
-            Rvalue::Cast { operand, target_ty: _ } => {
+            Rvalue::Cast {
+                operand,
+                target_ty: _,
+            } => {
                 self.visit_operand(operand, location);
             }
             Rvalue::Aggregate { kind, operands } => {
@@ -290,7 +347,11 @@ pub trait Visitor: Sized {
             Rvalue::NullCheck(op) => {
                 self.visit_operand(op, location);
             }
-            Rvalue::MakeGenPtr { address, generation, metadata: _ } => {
+            Rvalue::MakeGenPtr {
+                address,
+                generation,
+                metadata: _,
+            } => {
                 self.visit_operand(address, location);
                 self.visit_operand(generation, location);
             }
@@ -421,12 +482,18 @@ pub enum PlaceContext {
 impl PlaceContext {
     /// Returns true if this is a mutating use.
     pub fn is_mutating(&self) -> bool {
-        matches!(self, PlaceContext::Store | PlaceContext::MutatingUse | PlaceContext::Drop)
+        matches!(
+            self,
+            PlaceContext::Store | PlaceContext::MutatingUse | PlaceContext::Drop
+        )
     }
 
     /// Returns true if this is a use (read, copy, move, borrow).
     pub fn is_use(&self) -> bool {
-        matches!(self, PlaceContext::Read | PlaceContext::Copy | PlaceContext::Move | PlaceContext::Borrow)
+        matches!(
+            self,
+            PlaceContext::Read | PlaceContext::Copy | PlaceContext::Move | PlaceContext::Borrow
+        )
     }
 }
 
@@ -479,10 +546,10 @@ pub fn collect_operand_locals(operand: &Operand) -> Vec<LocalId> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::body::LocalKind;
     use super::*;
     use crate::hir::{DefId, Type};
     use crate::span::Span;
-    use super::super::body::LocalKind;
 
     fn dummy_def_id() -> DefId {
         DefId::new(0)
@@ -572,18 +639,24 @@ mod tests {
         let bb = body.new_block();
 
         // Add some statements
-        use super::super::types::{ConstantKind};
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(temp),
-                Rvalue::Use(Operand::Constant(Constant::new(Type::i32(), ConstantKind::Int(42)))),
+        use super::super::types::ConstantKind;
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(temp),
+                    Rvalue::Use(Operand::Constant(Constant::new(
+                        Type::i32(),
+                        ConstantKind::Int(42),
+                    ))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
-        body.push_statement(bb, Statement::new(
-            StatementKind::StorageLive(temp),
-            Span::dummy(),
-        ));
+        );
+        body.push_statement(
+            bb,
+            Statement::new(StatementKind::StorageLive(temp), Span::dummy()),
+        );
 
         let mut counter = StatementCounter { count: 0 };
         walk_body(&mut counter, &body);
@@ -632,15 +705,21 @@ mod tests {
         let bb = body.new_block();
 
         // Assign src to dest
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(dest),
-                Rvalue::Use(Operand::Copy(Place::local(src))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(dest),
+                    Rvalue::Use(Operand::Copy(Place::local(src))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
-        let mut tracker = ContextTracker { stores: Vec::new(), reads: Vec::new() };
+        let mut tracker = ContextTracker {
+            stores: Vec::new(),
+            reads: Vec::new(),
+        };
         walk_body(&mut tracker, &body);
 
         assert_eq!(tracker.stores, vec![dest]);
@@ -669,26 +748,40 @@ mod tests {
         let bb = body.new_block();
 
         use super::super::types::ConstantKind;
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(temp),
-                Rvalue::Use(Operand::Constant(Constant::new(Type::i32(), ConstantKind::Int(1)))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(temp),
+                    Rvalue::Use(Operand::Constant(Constant::new(
+                        Type::i32(),
+                        ConstantKind::Int(1),
+                    ))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
-        body.push_statement(bb, Statement::new(
-            StatementKind::StorageLive(temp),
-            Span::dummy(),
-        ));
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(temp),
-                Rvalue::Use(Operand::Constant(Constant::new(Type::i32(), ConstantKind::Int(2)))),
+        );
+        body.push_statement(
+            bb,
+            Statement::new(StatementKind::StorageLive(temp), Span::dummy()),
+        );
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(temp),
+                    Rvalue::Use(Operand::Constant(Constant::new(
+                        Type::i32(),
+                        ConstantKind::Int(2),
+                    ))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
-        let mut visitor = SelectiveVisitor { assignments_visited: 0 };
+        let mut visitor = SelectiveVisitor {
+            assignments_visited: 0,
+        };
         walk_body(&mut visitor, &body);
         assert_eq!(visitor.assignments_visited, 2);
     }

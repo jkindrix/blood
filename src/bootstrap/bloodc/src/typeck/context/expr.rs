@@ -5,19 +5,26 @@
 use std::collections::HashMap;
 
 use crate::ast;
-use crate::hir::{self, DefId, Type, TypeKind, PrimitiveTy, TyVarId};
 use crate::hir::def::{IntTy, UintTy};
+use crate::hir::{self, DefId, PrimitiveTy, TyVarId, Type, TypeKind};
 use crate::span::{Span, Spanned};
 
-use super::TypeContext;
 use super::super::const_eval;
 use super::super::error::{TypeError, TypeErrorKind};
 use super::super::exhaustiveness;
 use super::super::resolve::{Binding, ScopeKind};
+use super::TypeContext;
 
 /// Handler information collected during try/with inference:
 /// (effect_id, op_name, param_types, return_type, ast_handler, effect_type_args).
-type HandlerInfo<'b> = Vec<(DefId, String, Vec<Type>, Type, &'b ast::TryWithHandler, Vec<Type>)>;
+type HandlerInfo<'b> = Vec<(
+    DefId,
+    String,
+    Vec<Type>,
+    Type,
+    &'b ast::TryWithHandler,
+    Vec<Type>,
+)>;
 
 /// Resolved method information from find_method_for_type.
 pub(crate) enum MethodLookup {
@@ -26,7 +33,10 @@ pub(crate) enum MethodLookup {
     /// No matching method found.
     NotFound,
     /// Multiple methods match with equal specificity.
-    Ambiguous { method_name: String, candidates: Vec<String> },
+    Ambiguous {
+        method_name: String,
+        candidates: Vec<String>,
+    },
 }
 
 /// Full method resolution result: (def_id, return_type, first_param_type, impl_generics, method_generics, needs_auto_ref).
@@ -34,7 +44,11 @@ type MethodResolution = (DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>, 
 
 impl<'a> TypeContext<'a> {
     /// Check an expression against an expected type.
-    pub(crate) fn check_expr(&mut self, expr: &ast::Expr, expected: &Type) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn check_expr(
+        &mut self,
+        expr: &ast::Expr,
+        expected: &Type,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         use crate::hir::TypeKind;
 
         // Special case for literals: use expected type to guide numeric literal inference
@@ -44,11 +58,18 @@ impl<'a> TypeContext<'a> {
 
         // Special case for unary negate of a literal (e.g., `-1`): propagate expected
         // type through the negation so unsuffixed integer literals get the right type.
-        if let ast::ExprKind::Unary { op: ast::UnaryOp::Neg, operand } = &expr.kind {
+        if let ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            operand,
+        } = &expr.kind
+        {
             if let ast::ExprKind::Literal(lit) = &operand.kind {
                 let inner = self.check_literal(lit, expected, operand.span)?;
                 return Ok(hir::Expr::new(
-                    hir::ExprKind::Unary { op: ast::UnaryOp::Neg, operand: Box::new(inner) },
+                    hir::ExprKind::Unary {
+                        op: ast::UnaryOp::Neg,
+                        operand: Box::new(inner),
+                    },
                     expected.clone(),
                     expr.span,
                 ));
@@ -56,8 +77,19 @@ impl<'a> TypeContext<'a> {
         }
 
         // Special case for if expressions: propagate expected type to branches
-        if let ast::ExprKind::If { condition, then_branch, else_branch } = &expr.kind {
-            return self.check_if(condition, then_branch, else_branch.as_ref(), expected, expr.span);
+        if let ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } = &expr.kind
+        {
+            return self.check_if(
+                condition,
+                then_branch,
+                else_branch.as_ref(),
+                expected,
+                expr.span,
+            );
         }
 
         // Special case for match expressions: propagate expected type to arms
@@ -80,7 +112,10 @@ impl<'a> TypeContext<'a> {
             let inferred_resolved = self.unifier.resolve(&inferred.ty);
             let expected_resolved = self.unifier.resolve(expected);
             if let TypeKind::Ref { inner, .. } = inferred_resolved.kind() {
-                if !matches!(expected_resolved.kind(), TypeKind::Ref { .. } | TypeKind::Infer(_)) {
+                if !matches!(
+                    expected_resolved.kind(),
+                    TypeKind::Ref { .. } | TypeKind::Infer(_)
+                ) {
                     // Try unifying expected with the dereferenced type
                     self.unifier.unify(&expected_resolved, inner, expr.span)?;
                 } else {
@@ -97,8 +132,14 @@ impl<'a> TypeContext<'a> {
         let inferred_resolved = self.unifier.resolve(&inferred.ty);
 
         if let (
-            TypeKind::Ref { inner: expected_inner, mutable: m1 },
-            TypeKind::Ref { inner: inferred_inner, mutable: m2 },
+            TypeKind::Ref {
+                inner: expected_inner,
+                mutable: m1,
+            },
+            TypeKind::Ref {
+                inner: inferred_inner,
+                mutable: m2,
+            },
         ) = (expected_resolved.kind(), inferred_resolved.kind())
         {
             if m1 == m2 {
@@ -131,103 +172,125 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Binary { op, left, right } => {
                 self.infer_binary(*op, left, right, expr.span)
             }
-            ast::ExprKind::Unary { op, operand } => {
-                self.infer_unary(*op, operand, expr.span)
-            }
-            ast::ExprKind::Call { callee, args } => {
-                self.infer_call(callee, args, expr.span)
-            }
-            ast::ExprKind::If { condition, then_branch, else_branch } => {
-                self.infer_if(condition, then_branch, else_branch.as_ref(), expr.span)
-            }
-            ast::ExprKind::IfLet { pattern, scrutinee, then_branch, else_branch } => {
-                self.infer_if_let(pattern, scrutinee, then_branch, else_branch.as_ref(), expr.span)
-            }
+            ast::ExprKind::Unary { op, operand } => self.infer_unary(*op, operand, expr.span),
+            ast::ExprKind::Call { callee, args } => self.infer_call(callee, args, expr.span),
+            ast::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.infer_if(condition, then_branch, else_branch.as_ref(), expr.span),
+            ast::ExprKind::IfLet {
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch,
+            } => self.infer_if_let(
+                pattern,
+                scrutinee,
+                then_branch,
+                else_branch.as_ref(),
+                expr.span,
+            ),
             ast::ExprKind::Block(block) => {
                 let expected = self.unifier.fresh_var();
                 self.check_block(block, &expected)
             }
-            ast::ExprKind::Return(value) => {
-                self.infer_return(value.as_deref(), expr.span)
-            }
-            ast::ExprKind::Tuple(exprs) => {
-                self.infer_tuple(exprs, expr.span)
-            }
-            ast::ExprKind::Paren(inner) => {
-                self.infer_expr(inner)
-            }
-            ast::ExprKind::Assign { target, value } => {
-                self.infer_assign(target, value, expr.span)
-            }
-            ast::ExprKind::Loop { body, label } => {
-                self.infer_loop(body, label.as_ref(), expr.span)
-            }
-            ast::ExprKind::While { condition, body, label } => {
-                self.infer_while(condition, body, label.as_ref(), expr.span)
-            }
-            ast::ExprKind::WhileLet { pattern, scrutinee, body, label } => {
-                self.infer_while_let(pattern, scrutinee, body, label.as_ref(), expr.span)
-            }
-            ast::ExprKind::For { pattern, iter, body, label } => {
-                self.infer_for(pattern, iter, body, label.as_ref(), expr.span)
-            }
+            ast::ExprKind::Return(value) => self.infer_return(value.as_deref(), expr.span),
+            ast::ExprKind::Tuple(exprs) => self.infer_tuple(exprs, expr.span),
+            ast::ExprKind::Paren(inner) => self.infer_expr(inner),
+            ast::ExprKind::Assign { target, value } => self.infer_assign(target, value, expr.span),
+            ast::ExprKind::Loop { body, label } => self.infer_loop(body, label.as_ref(), expr.span),
+            ast::ExprKind::While {
+                condition,
+                body,
+                label,
+            } => self.infer_while(condition, body, label.as_ref(), expr.span),
+            ast::ExprKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+                label,
+            } => self.infer_while_let(pattern, scrutinee, body, label.as_ref(), expr.span),
+            ast::ExprKind::For {
+                pattern,
+                iter,
+                body,
+                label,
+            } => self.infer_for(pattern, iter, body, label.as_ref(), expr.span),
             ast::ExprKind::Break { value, label } => {
                 self.infer_break(value.as_deref(), label.as_ref(), expr.span)
             }
-            ast::ExprKind::Continue { label } => {
-                self.infer_continue(label.as_ref(), expr.span)
-            }
+            ast::ExprKind::Continue { label } => self.infer_continue(label.as_ref(), expr.span),
             ast::ExprKind::Match { scrutinee, arms } => {
                 self.infer_match(scrutinee, arms, expr.span)
             }
             ast::ExprKind::Record { path, fields, base } => {
                 self.infer_record(path.as_ref(), fields, base.as_deref(), expr.span)
             }
-            ast::ExprKind::Field { base: field_base, field } => {
+            ast::ExprKind::Field {
+                base: field_base,
+                field,
+            } => {
                 // DEF-001: Try to resolve module.item as a qualified path
-                if let Some(result) = self.try_resolve_dot_as_qualified_path(field_base, field, expr.span) {
+                if let Some(result) =
+                    self.try_resolve_dot_as_qualified_path(field_base, field, expr.span)
+                {
                     return result;
                 }
                 self.infer_field_access(field_base, field, expr.span)
             }
-            ast::ExprKind::Closure { is_move, params, return_type, effects, body } => {
-                self.infer_closure(*is_move, params, return_type.as_ref(), effects.as_ref(), body, expr.span)
-            }
+            ast::ExprKind::Closure {
+                is_move,
+                params,
+                return_type,
+                effects,
+                body,
+            } => self.infer_closure(
+                *is_move,
+                params,
+                return_type.as_ref(),
+                effects.as_ref(),
+                body,
+                expr.span,
+            ),
             ast::ExprKind::WithHandle { handler, body } => {
                 self.infer_with_handle(handler, body, expr.span)
             }
             ast::ExprKind::TryWith { body, handlers } => {
                 self.infer_try_with(body, handlers, expr.span)
             }
-            ast::ExprKind::Perform { effect, operation, args } => {
-                self.infer_perform(effect.as_ref(), operation, args, expr.span)
-            }
-            ast::ExprKind::Resume(value) => {
-                self.infer_resume(value, expr.span)
-            }
-            ast::ExprKind::MethodCall { receiver, method, type_args: _, args } => {
+            ast::ExprKind::Perform {
+                effect,
+                operation,
+                args,
+            } => self.infer_perform(effect.as_ref(), operation, args, expr.span),
+            ast::ExprKind::Resume(value) => self.infer_resume(value, expr.span),
+            ast::ExprKind::MethodCall {
+                receiver,
+                method,
+                type_args: _,
+                args,
+            } => {
                 // DEF-001: Try to resolve module.func(args) as a qualified call
-                if let Some(result) = self.try_resolve_dot_call_as_qualified(receiver, &method.node, args, expr.span) {
+                if let Some(result) =
+                    self.try_resolve_dot_call_as_qualified(receiver, &method.node, args, expr.span)
+                {
                     return result;
                 }
                 self.infer_method_call(receiver, &method.node, args, expr.span)
             }
-            ast::ExprKind::Index { base, index } => {
-                self.infer_index(base, index, expr.span)
-            }
-            ast::ExprKind::Array(array_expr) => {
-                self.infer_array(array_expr, expr.span)
-            }
-            ast::ExprKind::Cast { expr: inner, ty } => {
-                self.infer_cast(inner, ty, expr.span)
-            }
+            ast::ExprKind::Index { base, index } => self.infer_index(base, index, expr.span),
+            ast::ExprKind::Array(array_expr) => self.infer_array(array_expr, expr.span),
+            ast::ExprKind::Cast { expr: inner, ty } => self.infer_cast(inner, ty, expr.span),
             ast::ExprKind::AssignOp { op, target, value } => {
                 self.infer_assign_op(*op, target, value, expr.span)
             }
-            ast::ExprKind::Unsafe(block) => {
-                self.infer_unsafe(block, expr.span)
-            }
-            ast::ExprKind::Unchecked { ref checks, ref when_condition, ref body } => {
+            ast::ExprKind::Unsafe(block) => self.infer_unsafe(block, expr.span),
+            ast::ExprKind::Unchecked {
+                ref checks,
+                ref when_condition,
+                ref body,
+            } => {
                 let expected = self.unifier.fresh_var();
                 let block_expr = self.check_block(body, &expected)?;
                 let result_ty = block_expr.ty.clone();
@@ -246,12 +309,20 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Heap(inner) => {
                 let inner_hir = self.infer_expr(inner)?;
                 let ty = inner_hir.ty.clone();
-                Ok(hir::Expr::new(hir::ExprKind::Heap(Box::new(inner_hir)), ty, expr.span))
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Heap(Box::new(inner_hir)),
+                    ty,
+                    expr.span,
+                ))
             }
             ast::ExprKind::Stack(inner) => {
                 let inner_hir = self.infer_expr(inner)?;
                 let ty = inner_hir.ty.clone();
-                Ok(hir::Expr::new(hir::ExprKind::Stack(Box::new(inner_hir)), ty, expr.span))
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Stack(Box::new(inner_hir)),
+                    ty,
+                    expr.span,
+                ))
             }
             ast::ExprKind::Region { name, body } => {
                 let expected = self.unifier.fresh_var();
@@ -272,19 +343,23 @@ impl<'a> TypeContext<'a> {
                     span: expr.span,
                 })
             }
-            ast::ExprKind::Range { start, end, inclusive } => {
-                self.infer_range(start.as_deref(), end.as_deref(), *inclusive, expr.span)
-            }
-            ast::ExprKind::Default => {
-                self.infer_default(expr.span)
-            }
-            ast::ExprKind::MacroCall { path, kind } => {
-                self.infer_macro_call(path, kind, expr.span)
-            }
-            ast::ExprKind::InlineHandle { body, effect, operations } => {
-                self.infer_inline_handle(body, effect, operations, expr.span)
-            }
-            ast::ExprKind::InlineWithDo { effect, operations, body } => {
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.infer_range(start.as_deref(), end.as_deref(), *inclusive, expr.span),
+            ast::ExprKind::Default => self.infer_default(expr.span),
+            ast::ExprKind::MacroCall { path, kind } => self.infer_macro_call(path, kind, expr.span),
+            ast::ExprKind::InlineHandle {
+                body,
+                effect,
+                operations,
+            } => self.infer_inline_handle(body, effect, operations, expr.span),
+            ast::ExprKind::InlineWithDo {
+                effect,
+                operations,
+                body,
+            } => {
                 // InlineWithDo is semantically equivalent to InlineHandle, just different syntax
                 self.infer_inline_handle(body, effect, operations, expr.span)
             }
@@ -307,13 +382,21 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a with...handle expression.
-    fn infer_with_handle(&mut self, handler: &ast::Expr, body: &ast::Expr, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    fn infer_with_handle(
+        &mut self,
+        handler: &ast::Expr,
+        body: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         // Type-check the handler expression first
         let handler_expr = self.infer_expr(handler)?;
 
         // Extract handler def_id and effect info from the type (handlers are ADTs)
         let handled_effect_info = match handler_expr.ty.kind() {
-            hir::TypeKind::Adt { def_id: handler_def_id, args } => {
+            hir::TypeKind::Adt {
+                def_id: handler_def_id,
+                args,
+            } => {
                 if let Some(handler_info) = self.handler_defs.get(handler_def_id) {
                     // Get the effect type args by substituting the handler's resolved type args
                     // into the effect's type parameter positions.
@@ -324,19 +407,21 @@ impl<'a> TypeContext<'a> {
                     // - args (from instantiation) = [i32]  (resolved from LocalState { state: 0 })
                     // - We need to substitute S -> i32 to get effect_type_args = [i32]
 
-                    let resolved_args: Vec<Type> = args.iter()
-                        .map(|ty| self.unifier.resolve(ty))
-                        .collect();
+                    let resolved_args: Vec<Type> =
+                        args.iter().map(|ty| self.unifier.resolve(ty)).collect();
 
                     // Create substitution from handler's generic params to resolved args
-                    let handler_subst: std::collections::HashMap<TyVarId, Type> =
-                        handler_info.generics.iter()
-                            .zip(resolved_args.iter())
-                            .map(|(&ty_var, ty)| (ty_var, ty.clone()))
-                            .collect();
+                    let handler_subst: std::collections::HashMap<TyVarId, Type> = handler_info
+                        .generics
+                        .iter()
+                        .zip(resolved_args.iter())
+                        .map(|(&ty_var, ty)| (ty_var, ty.clone()))
+                        .collect();
 
                     // Substitute to get concrete effect type args
-                    let effect_type_args: Vec<Type> = handler_info.effect_type_args.iter()
+                    let effect_type_args: Vec<Type> = handler_info
+                        .effect_type_args
+                        .iter()
                         .map(|ty| self.substitute_type_vars(ty, &handler_subst))
                         .collect();
 
@@ -350,7 +435,8 @@ impl<'a> TypeContext<'a> {
 
         // Push the handled effect with its type args onto the stack
         if let Some((effect_id, effect_type_args)) = &handled_effect_info {
-            self.handled_effects.push((*effect_id, effect_type_args.clone()));
+            self.handled_effects
+                .push((*effect_id, effect_type_args.clone()));
         }
 
         let body_block = match &body.kind {
@@ -376,7 +462,8 @@ impl<'a> TypeContext<'a> {
         if let Some((effect_id, _)) = &handled_effect_info {
             if let Some(effect_info) = self.effect_defs.get(effect_id).cloned() {
                 for op_info in &effect_info.operations {
-                    self.resolver.current_scope_mut()
+                    self.resolver
+                        .current_scope_mut()
                         .bindings
                         .insert(op_info.name.clone(), Binding::Def(op_info.def_id));
                 }
@@ -476,7 +563,9 @@ impl<'a> TypeContext<'a> {
             };
 
             // Look up the effect definition first so we know how many generics it has
-            let effect_id = self.effect_defs.iter()
+            let effect_id = self
+                .effect_defs
+                .iter()
                 .find(|(_, info)| info.name == effect_name)
                 .map(|(def_id, _)| *def_id);
 
@@ -502,43 +591,52 @@ impl<'a> TypeContext<'a> {
 
             // Extract type arguments from the effect, or create fresh inference variables
             // if none provided and the effect has generic parameters
-            let effect_type_args: Vec<Type> = if let Some(first_seg) = handler.effect.segments.first() {
-                if let Some(ref args) = first_seg.args {
-                    let explicit_args: Vec<Type> = args.args.iter()
-                        .filter_map(|arg| {
-                            if let ast::TypeArg::Type(ty) = arg {
-                                self.ast_type_to_hir_type(ty).ok()
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    if !explicit_args.is_empty() {
-                        explicit_args
+            let effect_type_args: Vec<Type> =
+                if let Some(first_seg) = handler.effect.segments.first() {
+                    if let Some(ref args) = first_seg.args {
+                        let explicit_args: Vec<Type> = args
+                            .args
+                            .iter()
+                            .filter_map(|arg| {
+                                if let ast::TypeArg::Type(ty) = arg {
+                                    self.ast_type_to_hir_type(ty).ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !explicit_args.is_empty() {
+                            explicit_args
+                        } else if !effect_info.generics.is_empty() {
+                            // No explicit args but effect has generics - create fresh inference vars
+                            effect_info
+                                .generics
+                                .iter()
+                                .map(|_| self.unifier.fresh_var())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
                     } else if !effect_info.generics.is_empty() {
-                        // No explicit args but effect has generics - create fresh inference vars
-                        effect_info.generics.iter()
+                        // No type args syntax but effect has generics - create fresh inference vars
+                        effect_info
+                            .generics
+                            .iter()
                             .map(|_| self.unifier.fresh_var())
                             .collect()
                     } else {
                         Vec::new()
                     }
                 } else if !effect_info.generics.is_empty() {
-                    // No type args syntax but effect has generics - create fresh inference vars
-                    effect_info.generics.iter()
+                    // No first segment but effect has generics - create fresh inference vars
+                    effect_info
+                        .generics
+                        .iter()
                         .map(|_| self.unifier.fresh_var())
                         .collect()
                 } else {
                     Vec::new()
-                }
-            } else if !effect_info.generics.is_empty() {
-                // No first segment but effect has generics - create fresh inference vars
-                effect_info.generics.iter()
-                    .map(|_| self.unifier.fresh_var())
-                    .collect()
-            } else {
-                Vec::new()
-            };
+                };
 
             // Look up the operation in this effect
             let op_name = self.symbol_to_string(handler.operation.node);
@@ -548,7 +646,10 @@ impl<'a> TypeContext<'a> {
                 None => {
                     return Err(Box::new(TypeError::new(
                         TypeErrorKind::UnsupportedFeature {
-                            feature: format!("Unknown operation `{}` on effect `{}`", op_name, effect_name),
+                            feature: format!(
+                                "Unknown operation `{}` on effect `{}`",
+                                op_name, effect_name
+                            ),
                         },
                         handler.operation.span,
                     )));
@@ -557,10 +658,16 @@ impl<'a> TypeContext<'a> {
 
             // Substitute type parameters in the operation's parameter types
             // Always use effect_type_args (which may be fresh inference vars)
-            let param_types: Vec<Type> = op_info.params.iter()
+            let param_types: Vec<Type> = op_info
+                .params
+                .iter()
                 .map(|ty| {
                     if !effect_type_args.is_empty() {
-                        self.substitute_effect_type_args(ty, &effect_info.generics, &effect_type_args)
+                        self.substitute_effect_type_args(
+                            ty,
+                            &effect_info.generics,
+                            &effect_type_args,
+                        )
                     } else {
                         ty.clone()
                     }
@@ -568,17 +675,29 @@ impl<'a> TypeContext<'a> {
                 .collect();
 
             let return_type = if !effect_type_args.is_empty() {
-                self.substitute_effect_type_args(&op_info.return_ty, &effect_info.generics, &effect_type_args)
+                self.substitute_effect_type_args(
+                    &op_info.return_ty,
+                    &effect_info.generics,
+                    &effect_type_args,
+                )
             } else {
                 op_info.return_ty.clone()
             };
 
-            handler_infos.push((effect_id, op_name, param_types, return_type, handler, effect_type_args.clone()));
+            handler_infos.push((
+                effect_id,
+                op_name,
+                param_types,
+                return_type,
+                handler,
+                effect_type_args.clone(),
+            ));
         }
 
         // Push all handled effects onto the stack (using the effect_type_args we computed/inferred)
         for (effect_id, _, _, _, _, effect_type_args) in &handler_infos {
-            self.handled_effects.push((*effect_id, effect_type_args.clone()));
+            self.handled_effects
+                .push((*effect_id, effect_type_args.clone()));
         }
 
         // Push a handler scope
@@ -601,7 +720,9 @@ impl<'a> TypeContext<'a> {
         // Type-check each handler's body and build HIR handlers
         let mut hir_handlers = Vec::new();
 
-        for (effect_id, op_name, param_types, return_type, handler, _effect_type_args) in handler_infos {
+        for (effect_id, op_name, param_types, return_type, handler, _effect_type_args) in
+            handler_infos
+        {
             // Create a handler scope for the handler clause (must be Handler, not Block, so resume is valid)
             self.resolver.push_scope(ScopeKind::Handler, handler.span);
 
@@ -621,7 +742,9 @@ impl<'a> TypeContext<'a> {
                 )));
             }
 
-            for (idx, (pattern, param_ty)) in handler.params.iter().zip(param_types.iter()).enumerate() {
+            for (idx, (pattern, param_ty)) in
+                handler.params.iter().zip(param_types.iter()).enumerate()
+            {
                 // Support identifier, wildcard, tuple, and parenthesized patterns
                 match &pattern.kind {
                     ast::PatternKind::Ident { name, .. } => {
@@ -634,14 +757,15 @@ impl<'a> TypeContext<'a> {
                             mutable: false,
                             span: pattern.span,
                         });
-                        self.resolver.current_scope_mut()
-                            .bindings
-                            .insert(local_name.clone(), Binding::Local {
+                        self.resolver.current_scope_mut().bindings.insert(
+                            local_name.clone(),
+                            Binding::Local {
                                 local_id,
                                 ty: param_ty.clone(),
                                 mutable: false,
                                 span: pattern.span,
-                            });
+                            },
+                        );
                         param_locals.push(local_id);
                         param_type_vec.push(param_ty.clone());
                     }
@@ -664,7 +788,9 @@ impl<'a> TypeContext<'a> {
                             _ => {
                                 self.resolver.pop_scope();
                                 return Err(Box::new(TypeError::new(
-                                    TypeErrorKind::NotATuple { ty: param_ty.clone() },
+                                    TypeErrorKind::NotATuple {
+                                        ty: param_ty.clone(),
+                                    },
                                     pattern.span,
                                 )));
                             }
@@ -699,9 +825,14 @@ impl<'a> TypeContext<'a> {
 
                         // Record tuple destructuring for MIR lowering
                         let element_locals: Vec<_> = (0..fields.len())
-                            .map(|i| hir::LocalId::new(tuple_local_id.index - fields.len() as u32 + i as u32))
+                            .map(|i| {
+                                hir::LocalId::new(
+                                    tuple_local_id.index - fields.len() as u32 + i as u32,
+                                )
+                            })
                             .collect();
-                        self.tuple_destructures.insert(tuple_local_id, element_locals);
+                        self.tuple_destructures
+                            .insert(tuple_local_id, element_locals);
 
                         param_locals.push(tuple_local_id);
                         param_type_vec.push(param_ty.clone());
@@ -721,14 +852,15 @@ impl<'a> TypeContext<'a> {
                                     mutable: false,
                                     span: inner.span,
                                 });
-                                self.resolver.current_scope_mut()
-                                    .bindings
-                                    .insert(local_name.clone(), Binding::Local {
+                                self.resolver.current_scope_mut().bindings.insert(
+                                    local_name.clone(),
+                                    Binding::Local {
                                         local_id,
                                         ty: param_ty.clone(),
                                         mutable: false,
                                         span: inner.span,
-                                    });
+                                    },
+                                );
                                 param_locals.push(local_id);
                                 param_type_vec.push(param_ty.clone());
                             }
@@ -833,7 +965,9 @@ impl<'a> TypeContext<'a> {
         };
 
         // Look up the effect definition
-        let effect_id = self.effect_defs.iter()
+        let effect_id = self
+            .effect_defs
+            .iter()
             .find(|(_, info)| info.name == effect_name)
             .map(|(def_id, _)| *def_id);
 
@@ -860,7 +994,9 @@ impl<'a> TypeContext<'a> {
         // Extract type arguments from the effect, or create fresh inference variables
         let effect_type_args: Vec<Type> = if let Some(first_seg) = effect_path.segments.first() {
             if let Some(ref args) = first_seg.args {
-                let explicit_args: Vec<Type> = args.args.iter()
+                let explicit_args: Vec<Type> = args
+                    .args
+                    .iter()
                     .filter_map(|arg| {
                         if let ast::TypeArg::Type(ty) = arg {
                             self.ast_type_to_hir_type(ty).ok()
@@ -872,14 +1008,18 @@ impl<'a> TypeContext<'a> {
                 if !explicit_args.is_empty() {
                     explicit_args
                 } else if !effect_info.generics.is_empty() {
-                    effect_info.generics.iter()
+                    effect_info
+                        .generics
+                        .iter()
                         .map(|_| self.unifier.fresh_var())
                         .collect()
                 } else {
                     Vec::new()
                 }
             } else if !effect_info.generics.is_empty() {
-                effect_info.generics.iter()
+                effect_info
+                    .generics
+                    .iter()
                     .map(|_| self.unifier.fresh_var())
                     .collect()
             } else {
@@ -890,7 +1030,8 @@ impl<'a> TypeContext<'a> {
         };
 
         // Push the handled effect onto the stack
-        self.handled_effects.push((effect_id, effect_type_args.clone()));
+        self.handled_effects
+            .push((effect_id, effect_type_args.clone()));
 
         // Record the current local ID counter before entering the handler scope.
         // Any local with ID >= this value was defined inside the handler.
@@ -902,7 +1043,8 @@ impl<'a> TypeContext<'a> {
 
         // Register the handled effect's operations in this scope
         for op_info in &effect_info.operations {
-            self.resolver.current_scope_mut()
+            self.resolver
+                .current_scope_mut()
                 .bindings
                 .insert(op_info.name.clone(), Binding::Def(op_info.def_id));
         }
@@ -945,12 +1087,19 @@ impl<'a> TypeContext<'a> {
             let op_name_str = self.symbol_to_string(op.name.node);
 
             // Find this operation in the effect
-            let op_info = match effect_info.operations.iter().find(|o| o.name == op_name_str) {
+            let op_info = match effect_info
+                .operations
+                .iter()
+                .find(|o| o.name == op_name_str)
+            {
                 Some(info) => info.clone(),
                 None => {
                     return Err(Box::new(TypeError::new(
                         TypeErrorKind::UnsupportedFeature {
-                            feature: format!("Unknown operation `{}` on effect `{}`", op_name_str, effect_name),
+                            feature: format!(
+                                "Unknown operation `{}` on effect `{}`",
+                                op_name_str, effect_name
+                            ),
                         },
                         op.name.span,
                     )));
@@ -961,10 +1110,16 @@ impl<'a> TypeContext<'a> {
             // First apply effect-level substitution (e.g., State<S> → State<i32>),
             // then erase operation-level generics to i64 (handler bodies receive
             // type-erased values through blood_perform).
-            let mut param_types: Vec<Type> = op_info.params.iter()
+            let mut param_types: Vec<Type> = op_info
+                .params
+                .iter()
                 .map(|ty| {
                     if !effect_type_args.is_empty() {
-                        self.substitute_effect_type_args(ty, &effect_info.generics, &effect_type_args)
+                        self.substitute_effect_type_args(
+                            ty,
+                            &effect_info.generics,
+                            &effect_type_args,
+                        )
                     } else {
                         ty.clone()
                     }
@@ -972,7 +1127,11 @@ impl<'a> TypeContext<'a> {
                 .collect();
 
             let mut effect_op_return_type = if !effect_type_args.is_empty() {
-                self.substitute_effect_type_args(&op_info.return_ty, &effect_info.generics, &effect_type_args)
+                self.substitute_effect_type_args(
+                    &op_info.return_ty,
+                    &effect_info.generics,
+                    &effect_type_args,
+                )
             } else {
                 op_info.return_ty.clone()
             };
@@ -981,13 +1140,17 @@ impl<'a> TypeContext<'a> {
             // The handler doesn't know T — it varies per perform call site.
             // At runtime, all values pass through blood_perform as i64.
             if !op_info.generics.is_empty() {
-                let erase_subst: std::collections::HashMap<TyVarId, Type> = op_info.generics.iter()
+                let erase_subst: std::collections::HashMap<TyVarId, Type> = op_info
+                    .generics
+                    .iter()
                     .map(|&var_id| (var_id, Type::i64()))
                     .collect();
-                param_types = param_types.iter()
+                param_types = param_types
+                    .iter()
                     .map(|ty| self.substitute_type_vars(ty, &erase_subst))
                     .collect();
-                effect_op_return_type = self.substitute_type_vars(&effect_op_return_type, &erase_subst);
+                effect_op_return_type =
+                    self.substitute_type_vars(&effect_op_return_type, &erase_subst);
             }
 
             // The inline handler can declare an explicit return type for documentation/checking
@@ -1029,17 +1192,20 @@ impl<'a> TypeContext<'a> {
                                 mutable: false,
                                 span: pattern.span,
                             });
-                            self.resolver.current_scope_mut()
-                                .bindings
-                                .insert(local_name, Binding::Local {
+                            self.resolver.current_scope_mut().bindings.insert(
+                                local_name,
+                                Binding::Local {
                                     local_id: resume_id,
                                     ty: resume_ty,
                                     mutable: false,
                                     span: pattern.span,
-                                });
+                                },
+                            );
                         } else {
                             // Regular parameter
-                            let param_ty = param_types.get(idx).cloned()
+                            let param_ty = param_types
+                                .get(idx)
+                                .cloned()
                                 .unwrap_or_else(|| self.unifier.fresh_var());
                             let local_id = self.resolver.next_local_id();
                             self.locals.push(hir::Local {
@@ -1049,20 +1215,23 @@ impl<'a> TypeContext<'a> {
                                 mutable: false,
                                 span: pattern.span,
                             });
-                            self.resolver.current_scope_mut()
-                                .bindings
-                                .insert(local_name, Binding::Local {
+                            self.resolver.current_scope_mut().bindings.insert(
+                                local_name,
+                                Binding::Local {
                                     local_id,
                                     ty: param_ty.clone(),
                                     mutable: false,
                                     span: pattern.span,
-                                });
+                                },
+                            );
                             param_locals.push(local_id);
                             param_type_vec.push(param_ty);
                         }
                     }
                     ast::PatternKind::Wildcard => {
-                        let param_ty = param_types.get(idx).cloned()
+                        let param_ty = param_types
+                            .get(idx)
+                            .cloned()
                             .unwrap_or_else(|| self.unifier.fresh_var());
                         let local_id = self.resolver.next_local_id();
                         self.locals.push(hir::Local {
@@ -1128,8 +1297,14 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Substitute effect type parameters with concrete types.
-    fn substitute_effect_type_args(&self, ty: &Type, type_params: &[TyVarId], type_args: &[Type]) -> Type {
-        let subst: std::collections::HashMap<TyVarId, Type> = type_params.iter()
+    fn substitute_effect_type_args(
+        &self,
+        ty: &Type,
+        type_params: &[TyVarId],
+        type_args: &[Type],
+    ) -> Type {
+        let subst: std::collections::HashMap<TyVarId, Type> = type_params
+            .iter()
             .zip(type_args.iter())
             .map(|(&var, ty)| (var, ty.clone()))
             .collect();
@@ -1165,33 +1340,45 @@ impl<'a> TypeContext<'a> {
                 let resolved_ty = self.unifier.resolve(&local_ty);
 
                 if self.is_type_linear(&resolved_ty) {
-                    return Err(Box::new(TypeError::new(
-                        TypeErrorKind::LinearValueInMultiShotHandler {
-                            operation: effect_name.to_string(),
-                            field_name: format!("captured variable (local {})", local_id.index()),
-                            field_type: resolved_ty.to_string(),
-                        },
-                        local_span,
-                    ).with_help(
-                        "linear values must be used exactly once, but deep handlers can \
+                    return Err(Box::new(
+                        TypeError::new(
+                            TypeErrorKind::LinearValueInMultiShotHandler {
+                                operation: effect_name.to_string(),
+                                field_name: format!(
+                                    "captured variable (local {})",
+                                    local_id.index()
+                                ),
+                                field_type: resolved_ty.to_string(),
+                            },
+                            local_span,
+                        )
+                        .with_help(
+                            "linear values must be used exactly once, but deep handlers can \
                          resume multiple times. Consider restructuring to avoid capturing \
-                         linear values, or use a shallow handler."
-                    )));
+                         linear values, or use a shallow handler.",
+                        ),
+                    ));
                 }
 
                 if self.is_type_affine(&resolved_ty) {
-                    return Err(Box::new(TypeError::new(
-                        TypeErrorKind::AffineValueInMultiShotHandler {
-                            operation: effect_name.to_string(),
-                            field_name: format!("captured variable (local {})", local_id.index()),
-                            field_type: resolved_ty.to_string(),
-                        },
-                        local_span,
-                    ).with_help(
-                        "affine values may be used at most once, but deep handlers can \
+                    return Err(Box::new(
+                        TypeError::new(
+                            TypeErrorKind::AffineValueInMultiShotHandler {
+                                operation: effect_name.to_string(),
+                                field_name: format!(
+                                    "captured variable (local {})",
+                                    local_id.index()
+                                ),
+                                field_type: resolved_ty.to_string(),
+                            },
+                            local_span,
+                        )
+                        .with_help(
+                            "affine values may be used at most once, but deep handlers can \
                          resume multiple times. Consider restructuring to avoid capturing \
-                         affine values, or use a shallow handler."
-                    )));
+                         affine values, or use a shallow handler.",
+                        ),
+                    ));
                 }
             }
         }
@@ -1213,7 +1400,9 @@ impl<'a> TypeContext<'a> {
             ExprKind::Block { stmts, expr: tail } => {
                 for stmt in stmts {
                     match stmt {
-                        hir::Stmt::Let { init: Some(init), .. } => self.collect_local_refs(init, locals),
+                        hir::Stmt::Let {
+                            init: Some(init), ..
+                        } => self.collect_local_refs(init, locals),
                         hir::Stmt::Let { init: None, .. } => {}
                         hir::Stmt::Expr(e) => self.collect_local_refs(e, locals),
                         hir::Stmt::Item(_) => {}
@@ -1224,7 +1413,11 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.collect_local_refs(condition, locals);
                 self.collect_local_refs(then_branch, locals);
                 if let Some(else_br) = else_branch {
@@ -1246,7 +1439,9 @@ impl<'a> TypeContext<'a> {
                 self.collect_local_refs(body, locals);
             }
 
-            ExprKind::While { condition, body, .. } => {
+            ExprKind::While {
+                condition, body, ..
+            } => {
                 self.collect_local_refs(condition, locals);
                 self.collect_local_refs(body, locals);
             }
@@ -1375,7 +1570,11 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            ExprKind::Handle { body, handler_instance, .. } => {
+            ExprKind::Handle {
+                body,
+                handler_instance,
+                ..
+            } => {
                 self.collect_local_refs(body, locals);
                 self.collect_local_refs(handler_instance, locals);
             }
@@ -1390,7 +1589,9 @@ impl<'a> TypeContext<'a> {
             ExprKind::Region { stmts, expr, .. } => {
                 for stmt in stmts {
                     match stmt {
-                        hir::Stmt::Let { init: Some(init), .. } => self.collect_local_refs(init, locals),
+                        hir::Stmt::Let {
+                            init: Some(init), ..
+                        } => self.collect_local_refs(init, locals),
                         hir::Stmt::Let { init: None, .. } => {}
                         hir::Stmt::Expr(e) => self.collect_local_refs(e, locals),
                         hir::Stmt::Item(_) => {}
@@ -1401,7 +1602,10 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) | ExprKind::Dbg(inner) => {
+            ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner)
+            | ExprKind::Dbg(inner) => {
                 self.collect_local_refs(inner, locals);
             }
             ExprKind::Unchecked { body, .. } => {
@@ -1415,7 +1619,9 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            ExprKind::MacroExpansion { args, named_args, .. } => {
+            ExprKind::MacroExpansion {
+                args, named_args, ..
+            } => {
                 for arg in args {
                     self.collect_local_refs(arg, locals);
                 }
@@ -1467,7 +1673,8 @@ impl<'a> TypeContext<'a> {
             // Extract type arguments from the first segment
             let type_args: Vec<Type> = if let Some(first_seg) = effect_path.segments.first() {
                 if let Some(ref args) = first_seg.args {
-                    args.args.iter()
+                    args.args
+                        .iter()
                         .filter_map(|arg| {
                             if let ast::TypeArg::Type(ty) = arg {
                                 self.ast_type_to_hir_type(ty).ok()
@@ -1484,7 +1691,9 @@ impl<'a> TypeContext<'a> {
             };
 
             // Look up the effect by name
-            let effect_def_id = self.effect_defs.iter()
+            let effect_def_id = self
+                .effect_defs
+                .iter()
                 .find(|(_, info)| info.name == effect_name)
                 .map(|(def_id, _)| *def_id);
 
@@ -1495,7 +1704,10 @@ impl<'a> TypeContext<'a> {
                     // 2. Current function's effect declaration (fn_effects)
                     let type_args = if type_args.is_empty() {
                         // First try handled_effects (from enclosing with...handle blocks)
-                        let from_handled = self.handled_effects.iter().rev()
+                        let from_handled = self
+                            .handled_effects
+                            .iter()
+                            .rev()
                             .find(|(effect_id, _)| *effect_id == eff_id)
                             .map(|(_, args)| args.clone());
 
@@ -1504,7 +1716,8 @@ impl<'a> TypeContext<'a> {
                         } else if let Some(fn_id) = self.current_fn {
                             // Fall back to function's effect declaration
                             if let Some(fn_effects) = self.fn_effects.get(&fn_id) {
-                                fn_effects.iter()
+                                fn_effects
+                                    .iter()
                                     .find(|er| er.def_id == eff_id)
                                     .map(|er| er.type_args.clone())
                                     .unwrap_or_default()
@@ -1522,13 +1735,18 @@ impl<'a> TypeContext<'a> {
                     match effect_info {
                         Some(info) => {
                             // Find the operation by name
-                            let op_result = info.operations.iter().enumerate()
+                            let op_result = info
+                                .operations
+                                .iter()
+                                .enumerate()
                                 .find(|(_, op)| op.name == op_name);
                             match op_result {
                                 Some((idx, op)) => (eff_id, idx as u32, op.def_id, type_args),
                                 None => {
                                     self.errors.push(TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("{}.{}", effect_name, op_name) },
+                                        TypeErrorKind::NotFound {
+                                            name: format!("{}.{}", effect_name, op_name),
+                                        },
                                         operation.span,
                                     ));
                                     return Ok(hir::Expr::new(
@@ -1544,11 +1762,7 @@ impl<'a> TypeContext<'a> {
                                 TypeErrorKind::TypeNotFound { name: effect_name },
                                 span,
                             ));
-                            return Ok(hir::Expr::new(
-                                hir::ExprKind::Error,
-                                Type::error(),
-                                span,
-                            ));
+                            return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
                         }
                     }
                 }
@@ -1557,11 +1771,7 @@ impl<'a> TypeContext<'a> {
                         TypeErrorKind::TypeNotFound { name: effect_name },
                         span,
                     ));
-                    return Ok(hir::Expr::new(
-                        hir::ExprKind::Error,
-                        Type::error(),
-                        span,
-                    ));
+                    return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
                 }
             }
         } else {
@@ -1577,7 +1787,10 @@ impl<'a> TypeContext<'a> {
                             let effect_info = self.effect_defs.get(&effect_def_id);
 
                             // Get type args - first from handled_effects, then from fn_effects
-                            let from_handled = self.handled_effects.iter().rev()
+                            let from_handled = self
+                                .handled_effects
+                                .iter()
+                                .rev()
                                 .find(|(effect_id, _)| *effect_id == effect_def_id)
                                 .map(|(_, args)| args.clone());
 
@@ -1585,7 +1798,8 @@ impl<'a> TypeContext<'a> {
                                 args
                             } else if let Some(fn_id) = self.current_fn {
                                 if let Some(fn_effects) = self.fn_effects.get(&fn_id) {
-                                    fn_effects.iter()
+                                    fn_effects
+                                        .iter()
                                         .find(|er| er.def_id == effect_def_id)
                                         .map(|er| er.type_args.clone())
                                         .unwrap_or_default()
@@ -1598,10 +1812,14 @@ impl<'a> TypeContext<'a> {
 
                             match effect_info {
                                 Some(info) => {
-                                    let op_idx = info.operations.iter()
+                                    let op_idx = info
+                                        .operations
+                                        .iter()
                                         .position(|op| op.def_id == op_def_id);
                                     match op_idx {
-                                        Some(idx) => (effect_def_id, idx as u32, op_def_id, type_args),
+                                        Some(idx) => {
+                                            (effect_def_id, idx as u32, op_def_id, type_args)
+                                        }
                                         None => {
                                             self.errors.push(TypeError::new(
                                                 TypeErrorKind::NotFound { name: op_name },
@@ -1633,11 +1851,7 @@ impl<'a> TypeContext<'a> {
                                 TypeErrorKind::NotFound { name: op_name },
                                 operation.span,
                             ));
-                            return Ok(hir::Expr::new(
-                                hir::ExprKind::Error,
-                                Type::error(),
-                                span,
-                            ));
+                            return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
                         }
                     }
                 }
@@ -1646,11 +1860,7 @@ impl<'a> TypeContext<'a> {
                         TypeErrorKind::NotFound { name: op_name },
                         operation.span,
                     ));
-                    return Ok(hir::Expr::new(
-                        hir::ExprKind::Error,
-                        Type::error(),
-                        span,
-                    ));
+                    return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
                 }
             }
         };
@@ -1664,13 +1874,17 @@ impl<'a> TypeContext<'a> {
                 if !type_args.is_empty() {
                     if let Some(info) = effect_info {
                         // Create substitution map from effect's generic params to provided type args
-                        let substitution: std::collections::HashMap<TyVarId, Type> = info.generics.iter()
+                        let substitution: std::collections::HashMap<TyVarId, Type> = info
+                            .generics
+                            .iter()
                             .zip(type_args.iter())
                             .map(|(&var_id, ty)| (var_id, ty.clone()))
                             .collect();
 
                         // Substitute in parameter types and return type
-                        let subst_params: Vec<Type> = sig.inputs.iter()
+                        let subst_params: Vec<Type> = sig
+                            .inputs
+                            .iter()
                             .map(|ty| self.substitute_type_vars(ty, &substitution))
                             .collect();
                         let subst_return = self.substitute_type_vars(&sig.output, &substitution);
@@ -1692,11 +1906,7 @@ impl<'a> TypeContext<'a> {
                              "effect_id" => effect_id,
                              "op_index" => op_index,
                              "note" => "effect resolution succeeded but operation lookup failed");
-                        return Ok(hir::Expr::new(
-                            hir::ExprKind::Error,
-                            Type::error(),
-                            span,
-                        ));
+                        return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
                     }
                 }
             }
@@ -1706,18 +1916,22 @@ impl<'a> TypeContext<'a> {
         // Each call site gets fresh inference variables for the operation's type params,
         // which are then inferred through unification with the actual arguments.
         let (param_types, return_ty) = {
-            let op_generics = self.effect_defs.get(&effect_id)
+            let op_generics = self
+                .effect_defs
+                .get(&effect_id)
                 .and_then(|info| info.operations.get(op_index as usize))
                 .map(|op| op.generics.clone())
                 .unwrap_or_default();
 
             if !op_generics.is_empty() {
-                let mut op_subst: std::collections::HashMap<TyVarId, Type> = std::collections::HashMap::new();
+                let mut op_subst: std::collections::HashMap<TyVarId, Type> =
+                    std::collections::HashMap::new();
                 for &op_ty_var in &op_generics {
                     let fresh = self.unifier.fresh_var();
                     op_subst.insert(op_ty_var, fresh);
                 }
-                let subst_params: Vec<Type> = param_types.iter()
+                let subst_params: Vec<Type> = param_types
+                    .iter()
                     .map(|ty| self.substitute_type_vars(ty, &op_subst))
                     .collect();
                 let subst_return = self.substitute_type_vars(&return_ty, &op_subst);
@@ -1748,9 +1962,13 @@ impl<'a> TypeContext<'a> {
         }
 
         // Validate that the effect is either handled by an enclosing handler or declared in the function signature
-        let is_handled = self.handled_effects.iter().any(|(eff_id, _)| *eff_id == effect_id);
+        let is_handled = self
+            .handled_effects
+            .iter()
+            .any(|(eff_id, _)| *eff_id == effect_id);
         let is_declared = if let Some(fn_id) = self.current_fn {
-            self.fn_effects.get(&fn_id)
+            self.fn_effects
+                .get(&fn_id)
                 .map(|effects| effects.iter().any(|er| er.def_id == effect_id))
                 .unwrap_or(false)
         } else {
@@ -1759,7 +1977,9 @@ impl<'a> TypeContext<'a> {
 
         if !is_handled && !is_declared {
             // Get effect name for error message
-            let effect_name = self.effect_defs.get(&effect_id)
+            let effect_name = self
+                .effect_defs
+                .get(&effect_id)
                 .map(|info| info.name.clone())
                 .unwrap_or_else(|| format!("effect@{:?}", effect_id));
             self.errors.push(TypeError::new(
@@ -1792,11 +2012,7 @@ impl<'a> TypeContext<'a> {
                 },
                 span,
             ));
-            return Ok(hir::Expr::new(
-                hir::ExprKind::Error,
-                Type::error(),
-                span,
-            ));
+            return Ok(hir::Expr::new(hir::ExprKind::Error, Type::error(), span));
         }
 
         // Increment resume count for linearity checking (shallow handlers)
@@ -1822,7 +2038,8 @@ impl<'a> TypeContext<'a> {
         // The type of the resume expression depends on the continuation's return type.
         // For deep handlers, this is the continuation result type set by the handler.
         // For shallow handlers (or if not tracked), default to a fresh variable.
-        let resume_ty = self.current_resume_result_type
+        let resume_ty = self
+            .current_resume_result_type
             .clone()
             .unwrap_or_else(|| self.unifier.fresh_var());
 
@@ -1860,35 +2077,62 @@ impl<'a> TypeContext<'a> {
         };
 
         // Check if receiver is Option<T>
-        if let TypeKind::Adt { def_id, args: type_args, .. } = receiver_ty.kind() {
+        if let TypeKind::Adt {
+            def_id,
+            args: type_args,
+            ..
+        } = receiver_ty.kind()
+        {
             if Some(*def_id) == self.option_def_id {
                 // Get T from Option<T>
                 let t_ty = type_args.first().cloned().unwrap_or_else(Type::unit);
 
                 match method_name {
                     "map" if args.len() == 1 => {
-                        return self.desugar_option_map(receiver_expr, &args[0], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_map(receiver_expr, &args[0], &t_ty, span)
+                            .map(Some);
                     }
                     "and_then" if args.len() == 1 => {
-                        return self.desugar_option_and_then(receiver_expr, &args[0], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_and_then(receiver_expr, &args[0], &t_ty, span)
+                            .map(Some);
                     }
                     "filter" if args.len() == 1 => {
-                        return self.desugar_option_filter(receiver_expr, &args[0], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_filter(receiver_expr, &args[0], &t_ty, span)
+                            .map(Some);
                     }
                     "map_or" if args.len() == 2 => {
-                        return self.desugar_option_map_or(receiver_expr, &args[0], &args[1], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_map_or(receiver_expr, &args[0], &args[1], &t_ty, span)
+                            .map(Some);
                     }
                     "map_or_else" if args.len() == 2 => {
-                        return self.desugar_option_map_or_else(receiver_expr, &args[0], &args[1], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_map_or_else(
+                                receiver_expr,
+                                &args[0],
+                                &args[1],
+                                &t_ty,
+                                span,
+                            )
+                            .map(Some);
                     }
                     "or_else" if args.len() == 1 => {
-                        return self.desugar_option_or_else(receiver_expr, &args[0], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_or_else(receiver_expr, &args[0], &t_ty, span)
+                            .map(Some);
                     }
                     "unwrap_or_else" if args.len() == 1 => {
-                        return self.desugar_option_unwrap_or_else(receiver_expr, &args[0], &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_unwrap_or_else(receiver_expr, &args[0], &t_ty, span)
+                            .map(Some);
                     }
                     "unwrap_or_default" if args.is_empty() => {
-                        return self.desugar_option_unwrap_or_default(receiver_expr, &t_ty, span).map(Some);
+                        return self
+                            .desugar_option_unwrap_or_default(receiver_expr, &t_ty, span)
+                            .map(Some);
                     }
                     _ => {}
                 }
@@ -1901,22 +2145,40 @@ impl<'a> TypeContext<'a> {
 
                 match method_name {
                     "map" if args.len() == 1 => {
-                        return self.desugar_result_map(receiver_expr, &args[0], &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_map(receiver_expr, &args[0], &t_ty, &e_ty, span)
+                            .map(Some);
                     }
                     "map_err" if args.len() == 1 => {
-                        return self.desugar_result_map_err(receiver_expr, &args[0], &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_map_err(receiver_expr, &args[0], &t_ty, &e_ty, span)
+                            .map(Some);
                     }
                     "and_then" if args.len() == 1 => {
-                        return self.desugar_result_and_then(receiver_expr, &args[0], &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_and_then(receiver_expr, &args[0], &t_ty, &e_ty, span)
+                            .map(Some);
                     }
                     "or_else" if args.len() == 1 => {
-                        return self.desugar_result_or_else(receiver_expr, &args[0], &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_or_else(receiver_expr, &args[0], &t_ty, &e_ty, span)
+                            .map(Some);
                     }
                     "unwrap_or_else" if args.len() == 1 => {
-                        return self.desugar_result_unwrap_or_else(receiver_expr, &args[0], &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_unwrap_or_else(
+                                receiver_expr,
+                                &args[0],
+                                &t_ty,
+                                &e_ty,
+                                span,
+                            )
+                            .map(Some);
                     }
                     "unwrap_or_default" if args.is_empty() => {
-                        return self.desugar_result_unwrap_or_default(receiver_expr, &t_ty, &e_ty, span).map(Some);
+                        return self
+                            .desugar_result_unwrap_or_default(receiver_expr, &t_ty, &e_ty, span)
+                            .map(Some);
                     }
                     _ => {}
                 }
@@ -1973,11 +2235,7 @@ impl<'a> TypeContext<'a> {
         };
 
         // Body for Some arm: Some(f(x))
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -2081,11 +2339,7 @@ impl<'a> TypeContext<'a> {
         };
 
         // Body: f(x) (returns Option<U>)
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -2179,11 +2433,7 @@ impl<'a> TypeContext<'a> {
         };
 
         // Guard: pred(&x)
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let local_borrow = hir::Expr::new(
             hir::ExprKind::Borrow {
                 mutable: false,
@@ -2289,11 +2539,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -2373,11 +2619,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -2460,11 +2702,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let some_result = hir::Expr::new(
             hir::ExprKind::Variant {
                 def_id: some_def_id,
@@ -2548,11 +2786,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
 
         let some_arm = hir::MatchArm {
             pattern: some_pattern,
@@ -2626,11 +2860,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
 
         let some_arm = hir::MatchArm {
             pattern: some_pattern,
@@ -2673,18 +2903,25 @@ impl<'a> TypeContext<'a> {
 
         // Look up the enum info to get variant def IDs
         if let Some(enum_info) = self.enum_defs.get(&option_def_id) {
-            let some_def_id = enum_info.variants.iter()
+            let some_def_id = enum_info
+                .variants
+                .iter()
                 .find(|v| v.name == "Some")
                 .map(|v| v.def_id)
                 .expect("Option must have Some variant");
-            let none_def_id = enum_info.variants.iter()
+            let none_def_id = enum_info
+                .variants
+                .iter()
                 .find(|v| v.name == "None")
                 .map(|v| v.def_id)
                 .expect("Option must have None variant");
             Ok((some_def_id, none_def_id))
         } else {
             // Fallback: use synthetic def IDs (this shouldn't happen in practice)
-            Ok((DefId::new(option_def_id.index() + 1), DefId::new(option_def_id.index() + 2)))
+            Ok((
+                DefId::new(option_def_id.index() + 1),
+                DefId::new(option_def_id.index() + 2),
+            ))
         }
     }
 
@@ -2693,17 +2930,24 @@ impl<'a> TypeContext<'a> {
         let result_def_id = self.result_def_id.expect("result_def_id must be set");
 
         if let Some(enum_info) = self.enum_defs.get(&result_def_id) {
-            let ok_def_id = enum_info.variants.iter()
+            let ok_def_id = enum_info
+                .variants
+                .iter()
                 .find(|v| v.name == "Ok")
                 .map(|v| v.def_id)
                 .expect("Result must have Ok variant");
-            let err_def_id = enum_info.variants.iter()
+            let err_def_id = enum_info
+                .variants
+                .iter()
                 .find(|v| v.name == "Err")
                 .map(|v| v.def_id)
                 .expect("Result must have Err variant");
             Ok((ok_def_id, err_def_id))
         } else {
-            Ok((DefId::new(result_def_id.index() + 1), DefId::new(result_def_id.index() + 2)))
+            Ok((
+                DefId::new(result_def_id.index() + 1),
+                DefId::new(result_def_id.index() + 2),
+            ))
         }
     }
 
@@ -2714,13 +2958,17 @@ impl<'a> TypeContext<'a> {
                 let lit = match prim {
                     hir::PrimitiveTy::Bool => hir::LiteralValue::Bool(false),
                     hir::PrimitiveTy::Char => hir::LiteralValue::Char('\0'),
-                    hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_) => hir::LiteralValue::Int(0),
+                    hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_) => {
+                        hir::LiteralValue::Int(0)
+                    }
                     hir::PrimitiveTy::Float(_) => hir::LiteralValue::Float(0.0),
-                    hir::PrimitiveTy::Unit => return Ok(hir::Expr::new(
-                        hir::ExprKind::Tuple(vec![]),
-                        Type::unit(),
-                        span,
-                    )),
+                    hir::PrimitiveTy::Unit => {
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Tuple(vec![]),
+                            Type::unit(),
+                            span,
+                        ))
+                    }
                     hir::PrimitiveTy::String => hir::LiteralValue::String("".to_string()),
                     hir::PrimitiveTy::Str => hir::LiteralValue::String("".to_string()),
                     hir::PrimitiveTy::Never => {
@@ -2738,13 +2986,11 @@ impl<'a> TypeContext<'a> {
                     span,
                 ))
             }
-            TypeKind::Tuple(elems) if elems.is_empty() => {
-                Ok(hir::Expr::new(
-                    hir::ExprKind::Tuple(vec![]),
-                    Type::unit(),
-                    span,
-                ))
-            }
+            TypeKind::Tuple(elems) if elems.is_empty() => Ok(hir::Expr::new(
+                hir::ExprKind::Tuple(vec![]),
+                Type::unit(),
+                span,
+            )),
             TypeKind::Adt { def_id, .. } if Some(*def_id) == self.option_def_id => {
                 // Option defaults to None
                 let (_, none_def_id) = self.get_option_variant_def_ids()?;
@@ -2761,11 +3007,7 @@ impl<'a> TypeContext<'a> {
             _ => {
                 // For types without a known default, use Default expression
                 // This will be handled at codegen time
-                Ok(hir::Expr::new(
-                    hir::ExprKind::Default,
-                    ty.clone(),
-                    span,
-                ))
+                Ok(hir::Expr::new(hir::ExprKind::Default, ty.clone(), span))
             }
         }
     }
@@ -2815,11 +3057,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let local_ref = hir::Expr::new(
-            hir::ExprKind::Local(tmp_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let local_ref = hir::Expr::new(hir::ExprKind::Local(tmp_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -2866,11 +3104,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let err_ref = hir::Expr::new(
-            hir::ExprKind::Local(err_local_id),
-            e_ty.clone(),
-            span,
-        );
+        let err_ref = hir::Expr::new(hir::ExprKind::Local(err_local_id), e_ty.clone(), span);
         let err_result = hir::Expr::new(
             hir::ExprKind::Variant {
                 def_id: err_def_id,
@@ -2940,11 +3174,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let ok_ref = hir::Expr::new(
-            hir::ExprKind::Local(ok_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let ok_ref = hir::Expr::new(hir::ExprKind::Local(ok_local_id), t_ty.clone(), span);
         let ok_result = hir::Expr::new(
             hir::ExprKind::Variant {
                 def_id: ok_def_id,
@@ -2983,11 +3213,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let err_ref = hir::Expr::new(
-            hir::ExprKind::Local(err_local_id),
-            e_ty.clone(),
-            span,
-        );
+        let err_ref = hir::Expr::new(hir::ExprKind::Local(err_local_id), e_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -3061,11 +3287,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let ok_ref = hir::Expr::new(
-            hir::ExprKind::Local(ok_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let ok_ref = hir::Expr::new(hir::ExprKind::Local(ok_local_id), t_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -3103,11 +3325,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let err_ref = hir::Expr::new(
-            hir::ExprKind::Local(err_local_id),
-            e_ty.clone(),
-            span,
-        );
+        let err_ref = hir::Expr::new(hir::ExprKind::Local(err_local_id), e_ty.clone(), span);
         let err_result = hir::Expr::new(
             hir::ExprKind::Variant {
                 def_id: err_def_id,
@@ -3173,11 +3391,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let ok_ref = hir::Expr::new(
-            hir::ExprKind::Local(ok_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let ok_ref = hir::Expr::new(hir::ExprKind::Local(ok_local_id), t_ty.clone(), span);
         let ok_result = hir::Expr::new(
             hir::ExprKind::Variant {
                 def_id: ok_def_id,
@@ -3216,11 +3430,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let err_ref = hir::Expr::new(
-            hir::ExprKind::Local(err_local_id),
-            e_ty.clone(),
-            span,
-        );
+        let err_ref = hir::Expr::new(hir::ExprKind::Local(err_local_id), e_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -3281,11 +3491,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let ok_ref = hir::Expr::new(
-            hir::ExprKind::Local(ok_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let ok_ref = hir::Expr::new(hir::ExprKind::Local(ok_local_id), t_ty.clone(), span);
 
         let ok_arm = hir::MatchArm {
             pattern: ok_pattern,
@@ -3315,11 +3521,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let err_ref = hir::Expr::new(
-            hir::ExprKind::Local(err_local_id),
-            e_ty.clone(),
-            span,
-        );
+        let err_ref = hir::Expr::new(hir::ExprKind::Local(err_local_id), e_ty.clone(), span);
         let closure_call = hir::Expr::new(
             hir::ExprKind::Call {
                 callee: Box::new(closure.clone()),
@@ -3379,11 +3581,7 @@ impl<'a> TypeContext<'a> {
             span,
         };
 
-        let ok_ref = hir::Expr::new(
-            hir::ExprKind::Local(ok_local_id),
-            t_ty.clone(),
-            span,
-        );
+        let ok_ref = hir::Expr::new(hir::ExprKind::Local(ok_local_id), t_ty.clone(), span);
 
         let ok_arm = hir::MatchArm {
             pattern: ok_pattern,
@@ -3446,7 +3644,9 @@ impl<'a> TypeContext<'a> {
         }
 
         // Try to desugar closure-accepting methods (needs preliminary args)
-        if let Some(desugared) = self.try_desugar_closure_method(&receiver_expr, &method_name, &preliminary_args, span)? {
+        if let Some(desugared) =
+            self.try_desugar_closure_method(&receiver_expr, &method_name, &preliminary_args, span)?
+        {
             return Ok(desugared);
         }
 
@@ -3498,7 +3698,10 @@ impl<'a> TypeContext<'a> {
             };
 
             match underlying_ty.kind() {
-                TypeKind::Adt { args: receiver_args, .. } => {
+                TypeKind::Adt {
+                    args: receiver_args,
+                    ..
+                } => {
                     for (tyvar, concrete_ty) in impl_generics.iter().zip(receiver_args.iter()) {
                         substitution.insert(*tyvar, concrete_ty.clone());
                     }
@@ -3522,7 +3725,9 @@ impl<'a> TypeContext<'a> {
         // This allows integer literals to be inferred as the correct type (e.g., u8 instead of i32).
         let hir_args = if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
             // Apply substitution to get concrete parameter types
-            let subst_inputs: Vec<Type> = sig.inputs.iter()
+            let subst_inputs: Vec<Type> = sig
+                .inputs
+                .iter()
                 .map(|ty| self.substitute_type_vars(ty, &substitution))
                 .collect();
 
@@ -3548,68 +3753,73 @@ impl<'a> TypeContext<'a> {
 
         // Build the callee type by substituting in the stored signature
         // Also compute the final return type with method generics substituted
-        let (callee_ty, final_return_ty) = if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
-            // Apply substitution to inputs and output
-            let subst_inputs: Vec<Type> = sig.inputs.iter()
-                .map(|ty| self.substitute_type_vars(ty, &substitution))
-                .collect();
-            let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+        let (callee_ty, final_return_ty) =
+            if let Some(sig) = self.fn_sigs.get(&method_def_id).cloned() {
+                // Apply substitution to inputs and output
+                let subst_inputs: Vec<Type> = sig
+                    .inputs
+                    .iter()
+                    .map(|ty| self.substitute_type_vars(ty, &substitution))
+                    .collect();
+                let subst_output = self.substitute_type_vars(&sig.output, &substitution);
 
-            // Unify substituted parameter types with actual argument types
-            // This infers method-level type parameters from arguments
-            // Skip the first (receiver) parameter, unify remaining with hir_args
-            for (i, arg) in hir_args.iter().enumerate() {
-                // subst_inputs[0] is receiver, subst_inputs[1..] are the rest
-                if let Some(param_ty) = subst_inputs.get(i + 1) {
-                    // Unify arg type with param type to infer type vars.
-                    // Blood copy-by-default: if arg is &T and param expects T, auto-deref.
-                    if let Err(_) = self.unifier.unify(param_ty, &arg.ty, arg.span) {
-                        let resolved_arg = self.unifier.resolve(&arg.ty);
-                        if let TypeKind::Ref { inner, .. } = resolved_arg.kind() {
-                            self.unifier.unify(param_ty, inner, arg.span).map_err(|_| {
-                                TypeError::new(
+                // Unify substituted parameter types with actual argument types
+                // This infers method-level type parameters from arguments
+                // Skip the first (receiver) parameter, unify remaining with hir_args
+                for (i, arg) in hir_args.iter().enumerate() {
+                    // subst_inputs[0] is receiver, subst_inputs[1..] are the rest
+                    if let Some(param_ty) = subst_inputs.get(i + 1) {
+                        // Unify arg type with param type to infer type vars.
+                        // Blood copy-by-default: if arg is &T and param expects T, auto-deref.
+                        if let Err(_) = self.unifier.unify(param_ty, &arg.ty, arg.span) {
+                            let resolved_arg = self.unifier.resolve(&arg.ty);
+                            if let TypeKind::Ref { inner, .. } = resolved_arg.kind() {
+                                self.unifier.unify(param_ty, inner, arg.span).map_err(|_| {
+                                    TypeError::new(
+                                        TypeErrorKind::Mismatch {
+                                            expected: self.unifier.resolve(param_ty),
+                                            found: arg.ty.clone(),
+                                        },
+                                        arg.span,
+                                    )
+                                })?;
+                            } else {
+                                return Err(Box::new(TypeError::new(
                                     TypeErrorKind::Mismatch {
                                         expected: self.unifier.resolve(param_ty),
                                         found: arg.ty.clone(),
                                     },
                                     arg.span,
-                                )
-                            })?;
-                        } else {
-                            return Err(Box::new(TypeError::new(
-                                TypeErrorKind::Mismatch {
-                                    expected: self.unifier.resolve(param_ty),
-                                    found: arg.ty.clone(),
-                                },
-                                arg.span,
-                            )));
+                                )));
+                            }
                         }
                     }
                 }
-            }
 
-            // Also substitute the return type from resolve_method
-            let subst_return_ty = self.substitute_type_vars(&return_ty, &substitution);
-            // Resolve to replace any unified type vars with their concrete types
-            let resolved_return_ty = self.unifier.resolve(&subst_return_ty);
-            (Type::function(subst_inputs, subst_output), resolved_return_ty)
-        } else {
-            // Fallback to inferred function type
-            let receiver_ty = if needs_auto_ref {
-                Type::reference(receiver_expr.ty.clone(), false)
+                // Also substitute the return type from resolve_method
+                let subst_return_ty = self.substitute_type_vars(&return_ty, &substitution);
+                // Resolve to replace any unified type vars with their concrete types
+                let resolved_return_ty = self.unifier.resolve(&subst_return_ty);
+                (
+                    Type::function(subst_inputs, subst_output),
+                    resolved_return_ty,
+                )
             } else {
-                receiver_expr.ty.clone()
+                // Fallback to inferred function type
+                let receiver_ty = if needs_auto_ref {
+                    Type::reference(receiver_expr.ty.clone(), false)
+                } else {
+                    receiver_expr.ty.clone()
+                };
+                let mut param_types = vec![receiver_ty];
+                param_types.extend(hir_args.iter().map(|a| a.ty.clone()));
+                (
+                    Type::function(param_types, return_ty.clone()),
+                    return_ty.clone(),
+                )
             };
-            let mut param_types = vec![receiver_ty];
-            param_types.extend(hir_args.iter().map(|a| a.ty.clone()));
-            (Type::function(param_types, return_ty.clone()), return_ty.clone())
-        };
 
-        let callee = hir::Expr::new(
-            hir::ExprKind::Def(method_def_id),
-            callee_ty,
-            span,
-        );
+        let callee = hir::Expr::new(hir::ExprKind::Def(method_def_id), callee_ty, span);
 
         // Build receiver expression, auto-borrowing or auto-derefing if needed
         let final_receiver = if needs_auto_ref {
@@ -3697,13 +3907,24 @@ impl<'a> TypeContext<'a> {
             MethodLookup::Found(def_id, ret_ty, first_param, impl_generics, method_generics) => {
                 // Check if we need to auto-ref the receiver
                 let needs_auto_ref = if let Some(ref param_ty) = first_param {
-                    matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
+                    matches!(param_ty.kind(), TypeKind::Ref { .. })
+                        && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
                 } else {
                     false
                 };
-                return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
+                return Ok((
+                    def_id,
+                    ret_ty,
+                    first_param,
+                    impl_generics,
+                    method_generics,
+                    needs_auto_ref,
+                ));
             }
-            MethodLookup::Ambiguous { method_name: name, candidates } => {
+            MethodLookup::Ambiguous {
+                method_name: name,
+                candidates,
+            } => {
                 return Err(Box::new(TypeError::new(
                     TypeErrorKind::AmbiguousDispatch { name, candidates },
                     span,
@@ -3717,10 +3938,26 @@ impl<'a> TypeContext<'a> {
         while let TypeKind::Ref { inner, .. } = deref_ty.kind() {
             let inner_resolved = self.unifier.resolve(inner);
             match self.find_method_for_type(&inner_resolved, method_name, args) {
-                MethodLookup::Found(def_id, ret_ty, first_param, impl_generics, method_generics) => {
-                    return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
+                MethodLookup::Found(
+                    def_id,
+                    ret_ty,
+                    first_param,
+                    impl_generics,
+                    method_generics,
+                ) => {
+                    return Ok((
+                        def_id,
+                        ret_ty,
+                        first_param,
+                        impl_generics,
+                        method_generics,
+                        false,
+                    ));
                 }
-                MethodLookup::Ambiguous { method_name: name, candidates } => {
+                MethodLookup::Ambiguous {
+                    method_name: name,
+                    candidates,
+                } => {
                     return Err(Box::new(TypeError::new(
                         TypeErrorKind::AmbiguousDispatch { name, candidates },
                         span,
@@ -3738,7 +3975,12 @@ impl<'a> TypeContext<'a> {
     /// Find a method for a specific type by searching impl blocks.
     /// Returns (method_def_id, substituted return type, substituted first param type, impl generics, method generics).
     /// Supports method overloading by matching argument types when multiple methods share the same name.
-    pub(crate) fn find_method_for_type(&self, ty: &Type, method_name: &str, args: &[hir::Expr]) -> MethodLookup {
+    pub(crate) fn find_method_for_type(
+        &self,
+        ty: &Type,
+        method_name: &str,
+        args: &[hir::Expr],
+    ) -> MethodLookup {
         // First, look for inherent impl methods (impl blocks without trait_ref)
         for impl_block in &self.impl_blocks {
             if impl_block.trait_ref.is_some() {
@@ -3752,14 +3994,17 @@ impl<'a> TypeContext<'a> {
                 }
                 HashMap::new()
             } else {
-                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty) {
+                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty)
+                {
                     Some(s) => s,
                     None => continue,
                 }
             };
 
             // Collect all methods with matching name for overload resolution
-            let matching_methods: Vec<_> = impl_block.methods.iter()
+            let matching_methods: Vec<_> = impl_block
+                .methods
+                .iter()
                 .filter(|m| m.name == method_name)
                 .collect();
 
@@ -3768,7 +4013,10 @@ impl<'a> TypeContext<'a> {
                 let method = matching_methods[0];
                 if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                     let subst_output = self.substitute_type_vars(&sig.output, &subst);
-                    let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                    let first_param = sig
+                        .inputs
+                        .first()
+                        .map(|p| self.substitute_type_vars(p, &subst));
                     return MethodLookup::Found(
                         method.def_id,
                         subst_output,
@@ -3780,11 +4028,20 @@ impl<'a> TypeContext<'a> {
             }
 
             // Multiple methods with same name - collect all applicable, then find most specific
-            let mut applicable: Vec<(DefId, Vec<Type>, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>)> = Vec::new();
+            let mut applicable: Vec<(
+                DefId,
+                Vec<Type>,
+                Type,
+                Option<Type>,
+                Vec<TyVarId>,
+                Vec<TyVarId>,
+            )> = Vec::new();
 
             for method in &matching_methods {
                 if let Some(sig) = self.fn_sigs.get(&method.def_id) {
-                    let subst_inputs: Vec<Type> = sig.inputs.iter()
+                    let subst_inputs: Vec<Type> = sig
+                        .inputs
+                        .iter()
                         .map(|t| self.substitute_type_vars(t, &subst))
                         .collect();
 
@@ -3805,7 +4062,10 @@ impl<'a> TypeContext<'a> {
 
                     if matches {
                         let subst_output = self.substitute_type_vars(&sig.output, &subst);
-                        let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                        let first_param = sig
+                            .inputs
+                            .first()
+                            .map(|p| self.substitute_type_vars(p, &subst));
                         applicable.push((
                             method.def_id,
                             subst_inputs,
@@ -3819,8 +4079,15 @@ impl<'a> TypeContext<'a> {
             }
 
             if applicable.len() == 1 {
-                let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().next().unwrap();
-                return MethodLookup::Found(def_id, output, first_param, impl_generics, method_generics);
+                let (def_id, _, output, first_param, impl_generics, method_generics) =
+                    applicable.into_iter().next().unwrap();
+                return MethodLookup::Found(
+                    def_id,
+                    output,
+                    first_param,
+                    impl_generics,
+                    method_generics,
+                );
             }
 
             if applicable.len() > 1 {
@@ -3831,9 +4098,17 @@ impl<'a> TypeContext<'a> {
                 for i in 0..applicable.len() {
                     let mut is_maximal = true;
                     for j in 0..applicable.len() {
-                        if i == j { continue; }
+                        if i == j {
+                            continue;
+                        }
                         // Check if j is more specific than i (pairwise subtype on params)
-                        if self.method_more_specific(&resolver, &applicable[j].1, &applicable[j].5, &applicable[i].1, &applicable[i].5) {
+                        if self.method_more_specific(
+                            &resolver,
+                            &applicable[j].1,
+                            &applicable[j].5,
+                            &applicable[i].1,
+                            &applicable[i].5,
+                        ) {
                             is_maximal = false;
                             break;
                         }
@@ -3841,11 +4116,11 @@ impl<'a> TypeContext<'a> {
                     if is_maximal {
                         if maximal_idx.is_some() {
                             // Multiple maximals = ambiguous
-                            let candidate_sigs: Vec<String> = applicable.iter()
+                            let candidate_sigs: Vec<String> = applicable
+                                .iter()
                                 .map(|(_, params, _, _, _, _)| {
-                                    let param_strs: Vec<String> = params.iter()
-                                        .map(|t| format!("{:?}", t))
-                                        .collect();
+                                    let param_strs: Vec<String> =
+                                        params.iter().map(|t| format!("{:?}", t)).collect();
                                     format!("({})", param_strs.join(", "))
                                 })
                                 .collect();
@@ -3859,8 +4134,15 @@ impl<'a> TypeContext<'a> {
                 }
 
                 if let Some(idx) = maximal_idx {
-                    let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().nth(idx).unwrap();
-                    return MethodLookup::Found(def_id, output, first_param, impl_generics, method_generics);
+                    let (def_id, _, output, first_param, impl_generics, method_generics) =
+                        applicable.into_iter().nth(idx).unwrap();
+                    return MethodLookup::Found(
+                        def_id,
+                        output,
+                        first_param,
+                        impl_generics,
+                        method_generics,
+                    );
                 }
             }
         }
@@ -3878,7 +4160,8 @@ impl<'a> TypeContext<'a> {
                 }
                 HashMap::new()
             } else {
-                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty) {
+                match self.extract_impl_substitution(&impl_block.generics, &impl_block.self_ty, ty)
+                {
                     Some(s) => s,
                     None => continue,
                 }
@@ -3889,7 +4172,10 @@ impl<'a> TypeContext<'a> {
                 if method.name == method_name {
                     if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                         let subst_output = self.substitute_type_vars(&sig.output, &subst);
-                        let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                        let first_param = sig
+                            .inputs
+                            .first()
+                            .map(|p| self.substitute_type_vars(p, &subst));
                         return MethodLookup::Found(
                             method.def_id,
                             subst_output,
@@ -3907,7 +4193,10 @@ impl<'a> TypeContext<'a> {
                     if trait_method.name == method_name && trait_method.has_default {
                         if let Some(sig) = self.fn_sigs.get(&trait_method.def_id) {
                             let subst_output = self.substitute_type_vars(&sig.output, &subst);
-                            let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
+                            let first_param = sig
+                                .inputs
+                                .first()
+                                .map(|p| self.substitute_type_vars(p, &subst));
                             return MethodLookup::Found(
                                 trait_method.def_id,
                                 subst_output,
@@ -4021,10 +4310,12 @@ impl<'a> TypeContext<'a> {
         if all_at_least && !some_strictly {
             // Tier 2: constraint-based specificity
             // m1 is more specific if its type params have strictly more bounds
-            let m1_bounds: Vec<&Vec<DefId>> = m1_generics.iter()
+            let m1_bounds: Vec<&Vec<DefId>> = m1_generics
+                .iter()
                 .filter_map(|tv| self.type_param_bounds.get(tv))
                 .collect();
-            let m2_bounds: Vec<&Vec<DefId>> = m2_generics.iter()
+            let m2_bounds: Vec<&Vec<DefId>> = m2_generics
+                .iter()
                 .filter_map(|tv| self.type_param_bounds.get(tv))
                 .collect();
 
@@ -4070,14 +4361,12 @@ impl<'a> TypeContext<'a> {
             TypeKind::Primitive(PrimitiveTy::Char) => Some(BuiltinMethodType::Char),
             TypeKind::Primitive(PrimitiveTy::String) => Some(BuiltinMethodType::String),
             TypeKind::Slice { .. } => Some(BuiltinMethodType::Slice),
-            TypeKind::Ref { inner, .. } => {
-                match inner.kind() {
-                    TypeKind::Primitive(PrimitiveTy::Str) => Some(BuiltinMethodType::StrRef),
-                    TypeKind::Primitive(PrimitiveTy::String) => Some(BuiltinMethodType::String),
-                    TypeKind::Slice { .. } => Some(BuiltinMethodType::Slice),
-                    _ => None,
-                }
-            }
+            TypeKind::Ref { inner, .. } => match inner.kind() {
+                TypeKind::Primitive(PrimitiveTy::Str) => Some(BuiltinMethodType::StrRef),
+                TypeKind::Primitive(PrimitiveTy::String) => Some(BuiltinMethodType::String),
+                TypeKind::Slice { .. } => Some(BuiltinMethodType::Slice),
+                _ => None,
+            },
             TypeKind::Adt { def_id, .. } => {
                 // Check if it's Option, Vec, Box, or Result
                 if Some(*def_id) == self.option_def_id {
@@ -4113,7 +4402,10 @@ impl<'a> TypeContext<'a> {
                                 if !args.is_empty() {
                                     let element_ty = args[0].clone();
                                     // For Option<T>.unwrap() and Option<T>.try_(), return type is T
-                                    if method_name == "unwrap" || method_name == "try_" || method_name == "expect" {
+                                    if method_name == "unwrap"
+                                        || method_name == "try_"
+                                        || method_name == "expect"
+                                    {
                                         element_ty
                                     } else if method_name == "unwrap_or" {
                                         // Option<T>.unwrap_or(default: T) -> T
@@ -4154,14 +4446,20 @@ impl<'a> TypeContext<'a> {
                             if let TypeKind::Adt { args, .. } = ty.kind() {
                                 if !args.is_empty() {
                                     let element_ty = args[0].clone();
-                                    if method_name == "get" || method_name == "first" || method_name == "last" {
+                                    if method_name == "get"
+                                        || method_name == "first"
+                                        || method_name == "last"
+                                    {
                                         // Vec<T>.get/first/last() returns Option<&T>
                                         let ref_elem = Type::reference(element_ty, false);
                                         Type::adt(
                                             self.option_def_id.expect("BUG: option_def_id not set"),
                                             vec![ref_elem],
                                         )
-                                    } else if method_name == "get_mut" || method_name == "first_mut" || method_name == "last_mut" {
+                                    } else if method_name == "get_mut"
+                                        || method_name == "first_mut"
+                                        || method_name == "last_mut"
+                                    {
                                         // Vec<T>.get_mut/first_mut/last_mut() returns Option<&mut T>
                                         let ref_mut_elem = Type::reference(element_ty, true);
                                         Type::adt(
@@ -4174,7 +4472,9 @@ impl<'a> TypeContext<'a> {
                                             self.option_def_id.expect("BUG: option_def_id not set"),
                                             vec![element_ty],
                                         )
-                                    } else if method_name == "remove" || method_name == "swap_remove" {
+                                    } else if method_name == "remove"
+                                        || method_name == "swap_remove"
+                                    {
                                         // Vec<T>.remove/swap_remove() returns T
                                         element_ty
                                     } else if method_name == "as_slice" {
@@ -4209,10 +4509,15 @@ impl<'a> TypeContext<'a> {
                                     let ok_ty = args[0].clone();
                                     let err_ty = args[1].clone();
                                     // unwrap(), try_(), expect() return T
-                                    if method_name == "unwrap" || method_name == "try_" || method_name == "expect" {
+                                    if method_name == "unwrap"
+                                        || method_name == "try_"
+                                        || method_name == "expect"
+                                    {
                                         ok_ty
                                     // unwrap_err(), expect_err() return E
-                                    } else if method_name == "unwrap_err" || method_name == "expect_err" {
+                                    } else if method_name == "unwrap_err"
+                                        || method_name == "expect_err"
+                                    {
                                         err_ty
                                     // unwrap_or(default: T) -> T
                                     } else if method_name == "unwrap_or" {
@@ -4272,7 +4577,10 @@ impl<'a> TypeContext<'a> {
                             };
 
                             // first(), last(), get() return Option<&T>
-                            if method_name == "first" || method_name == "last" || method_name == "get" {
+                            if method_name == "first"
+                                || method_name == "last"
+                                || method_name == "get"
+                            {
                                 let ref_elem = Type::reference(element_ty, false);
                                 Type::adt(
                                     self.option_def_id.expect("BUG: option_def_id not set"),
@@ -4324,7 +4632,11 @@ impl<'a> TypeContext<'a> {
 
     /// Find a builtin static method (e.g., String::new(), Vec::new()).
     /// Returns (method_def_id, function type).
-    fn find_builtin_static_method(&mut self, type_name: &str, method_name: &str) -> Option<(DefId, Type)> {
+    fn find_builtin_static_method(
+        &mut self,
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<(DefId, Type)> {
         use super::BuiltinMethodType;
 
         // Map type name to BuiltinMethodType
@@ -4348,7 +4660,13 @@ impl<'a> TypeContext<'a> {
                 if let Some(sig) = self.fn_sigs.get(&builtin_method.def_id).cloned() {
                     // For generic static methods like Vec::new(), Box::new(), instantiate with fresh vars
                     // The synthetic TyVarId(9000) placeholder needs to be replaced with fresh vars
-                    let needs_fresh_vars = matches!(&type_match, BuiltinMethodType::Vec | BuiltinMethodType::Option | BuiltinMethodType::Box | BuiltinMethodType::Result);
+                    let needs_fresh_vars = matches!(
+                        &type_match,
+                        BuiltinMethodType::Vec
+                            | BuiltinMethodType::Option
+                            | BuiltinMethodType::Box
+                            | BuiltinMethodType::Result
+                    );
 
                     let fn_ty = if needs_fresh_vars {
                         // Create a fresh type variable to substitute for the placeholder
@@ -4360,7 +4678,9 @@ impl<'a> TypeContext<'a> {
                         subst.insert(placeholder_id, fresh_var);
 
                         // Substitute in inputs and output
-                        let subst_inputs: Vec<Type> = sig.inputs.iter()
+                        let subst_inputs: Vec<Type> = sig
+                            .inputs
+                            .iter()
                             .map(|ty| self.substitute_type_vars(ty, &subst))
                             .collect();
                         let subst_output = self.substitute_type_vars(&sig.output, &subst);
@@ -4401,7 +4721,9 @@ impl<'a> TypeContext<'a> {
         }
 
         // Substitute in parameter types
-        let subst_inputs: Vec<Type> = sig.inputs.iter()
+        let subst_inputs: Vec<Type> = sig
+            .inputs
+            .iter()
             .map(|ty| self.substitute_type_vars(ty, &substitution))
             .collect();
 
@@ -4409,13 +4731,17 @@ impl<'a> TypeContext<'a> {
         let subst_output = self.substitute_type_vars(&sig.output, &substitution);
 
         // Substitute type variables in effect annotations
-        let subst_effects: Vec<hir::FnEffect> = effects.iter()
-            .map(|eff| hir::FnEffect::new(
-                eff.def_id,
-                eff.type_args.iter()
-                    .map(|arg| self.substitute_type_vars(arg, &substitution))
-                    .collect(),
-            ))
+        let subst_effects: Vec<hir::FnEffect> = effects
+            .iter()
+            .map(|eff| {
+                hir::FnEffect::new(
+                    eff.def_id,
+                    eff.type_args
+                        .iter()
+                        .map(|arg| self.substitute_type_vars(arg, &substitution))
+                        .collect(),
+                )
+            })
             .collect();
 
         Type::function_with_effects(subst_inputs, subst_output, subst_effects)
@@ -4424,33 +4750,48 @@ impl<'a> TypeContext<'a> {
     /// Substitute type variables in a type using the given mapping.
     pub(crate) fn substitute_type_vars(&self, ty: &Type, subst: &HashMap<TyVarId, Type>) -> Type {
         match ty.kind() {
-            TypeKind::Param(var_id) => {
-                subst.get(var_id).cloned().unwrap_or_else(|| ty.clone())
-            }
+            TypeKind::Param(var_id) => subst.get(var_id).cloned().unwrap_or_else(|| ty.clone()),
             TypeKind::Adt { def_id, args } => {
-                let subst_args: Vec<Type> = args.iter()
+                let subst_args: Vec<Type> = args
+                    .iter()
                     .map(|arg| self.substitute_type_vars(arg, subst))
                     .collect();
                 Type::adt(*def_id, subst_args)
             }
-            TypeKind::Fn { params, ret, effects, const_args } => {
-                let subst_params: Vec<Type> = params.iter()
+            TypeKind::Fn {
+                params,
+                ret,
+                effects,
+                const_args,
+            } => {
+                let subst_params: Vec<Type> = params
+                    .iter()
                     .map(|p| self.substitute_type_vars(p, subst))
                     .collect();
                 let subst_ret = self.substitute_type_vars(ret, subst);
                 // Also substitute type variables in effect annotations
-                let subst_effects: Vec<hir::FnEffect> = effects.iter()
-                    .map(|eff| hir::FnEffect::new(
-                        eff.def_id,
-                        eff.type_args.iter()
-                            .map(|arg| self.substitute_type_vars(arg, subst))
-                            .collect(),
-                    ))
+                let subst_effects: Vec<hir::FnEffect> = effects
+                    .iter()
+                    .map(|eff| {
+                        hir::FnEffect::new(
+                            eff.def_id,
+                            eff.type_args
+                                .iter()
+                                .map(|arg| self.substitute_type_vars(arg, subst))
+                                .collect(),
+                        )
+                    })
                     .collect();
-                Type::function_with_const_args(subst_params, subst_ret, subst_effects, const_args.clone())
+                Type::function_with_const_args(
+                    subst_params,
+                    subst_ret,
+                    subst_effects,
+                    const_args.clone(),
+                )
             }
             TypeKind::Tuple(elems) => {
-                let subst_elems: Vec<Type> = elems.iter()
+                let subst_elems: Vec<Type> = elems
+                    .iter()
                     .map(|e| self.substitute_type_vars(e, subst))
                     .collect();
                 Type::tuple(subst_elems)
@@ -4461,7 +4802,10 @@ impl<'a> TypeContext<'a> {
             }
             TypeKind::Ptr { mutable, inner } => {
                 let subst_inner = self.substitute_type_vars(inner, subst);
-                Type::new(TypeKind::Ptr { mutable: *mutable, inner: subst_inner })
+                Type::new(TypeKind::Ptr {
+                    mutable: *mutable,
+                    inner: subst_inner,
+                })
             }
             TypeKind::Array { element, size } => {
                 let subst_elem = self.substitute_type_vars(element, subst);
@@ -4482,7 +4826,9 @@ impl<'a> TypeContext<'a> {
             ast::TypeKind::Path(path) => {
                 if path.segments.is_empty() {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::TypeNotFound { name: "empty path".to_string() },
+                        TypeErrorKind::TypeNotFound {
+                            name: "empty path".to_string(),
+                        },
                         ty.span,
                     )));
                 }
@@ -4493,17 +4839,41 @@ impl<'a> TypeContext<'a> {
 
                     // Check for built-in types first
                     match name.as_str() {
-                        "i8" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))),
-                        "i16" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))),
+                        "i8" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8))))
+                        }
+                        "i16" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16))))
+                        }
                         "i32" => return Ok(Type::i32()),
                         "i64" => return Ok(Type::i64()),
-                        "i128" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
-                        "isize" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
-                        "u8" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
-                        "u16" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
+                        "i128" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(
+                                IntTy::I128,
+                            ))))
+                        }
+                        "isize" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Int(
+                                IntTy::Isize,
+                            ))))
+                        }
+                        "u8" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(
+                                UintTy::U8,
+                            ))))
+                        }
+                        "u16" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(
+                                UintTy::U16,
+                            ))))
+                        }
                         "u32" => return Ok(Type::u32()),
                         "u64" => return Ok(Type::u64()),
-                        "u128" => return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                        "u128" => {
+                            return Ok(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(
+                                UintTy::U128,
+                            ))))
+                        }
                         "usize" => return Ok(Type::usize()),
                         "f32" => return Ok(Type::f32()),
                         "f64" => return Ok(Type::f64()),
@@ -4524,7 +4894,9 @@ impl<'a> TypeContext<'a> {
                                 return Ok(self_ty.clone());
                             }
                             return Err(Box::new(TypeError::new(
-                                TypeErrorKind::TypeNotFound { name: "Self".to_string() },
+                                TypeErrorKind::TypeNotFound {
+                                    name: "Self".to_string(),
+                                },
                                 ty.span,
                             )));
                         }
@@ -4564,7 +4936,9 @@ impl<'a> TypeContext<'a> {
                         if let Some(alias_info) = self.type_aliases.get(&def_id).cloned() {
                             // If the alias has generic parameters, substitute them
                             if !alias_info.generics.is_empty() && !type_args.is_empty() {
-                                let subst: HashMap<TyVarId, Type> = alias_info.generics.iter()
+                                let subst: HashMap<TyVarId, Type> = alias_info
+                                    .generics
+                                    .iter()
                                     .zip(type_args.iter())
                                     .map(|(&var, ty)| (var, ty.clone()))
                                     .collect();
@@ -4664,7 +5038,9 @@ impl<'a> TypeContext<'a> {
                                     break;
                                 }
                             }
-                            if found_def_id.is_some() { break; }
+                            if found_def_id.is_some() {
+                                break;
+                            }
 
                             // Check type aliases - store the underlying type for expansion
                             for alias in &bridge_info.type_aliases {
@@ -4674,7 +5050,9 @@ impl<'a> TypeContext<'a> {
                                     break;
                                 }
                             }
-                            if found_def_id.is_some() { break; }
+                            if found_def_id.is_some() {
+                                break;
+                            }
 
                             // Check structs
                             for struct_info in &bridge_info.structs {
@@ -4683,7 +5061,9 @@ impl<'a> TypeContext<'a> {
                                     break;
                                 }
                             }
-                            if found_def_id.is_some() { break; }
+                            if found_def_id.is_some() {
+                                break;
+                            }
 
                             // Check enums
                             for enum_info in &bridge_info.enums {
@@ -4692,7 +5072,9 @@ impl<'a> TypeContext<'a> {
                                     break;
                                 }
                             }
-                            if found_def_id.is_some() { break; }
+                            if found_def_id.is_some() {
+                                break;
+                            }
 
                             // Check unions
                             for union_info in &bridge_info.unions {
@@ -4739,11 +5121,15 @@ impl<'a> TypeContext<'a> {
                                         match def_info.kind {
                                             hir::DefKind::Struct | hir::DefKind::Enum => {
                                                 // Extract type arguments if any
-                                                let type_args = if let Some(ref args) = path.segments[1].args {
+                                                let type_args = if let Some(ref args) =
+                                                    path.segments[1].args
+                                                {
                                                     let mut parsed_args = Vec::new();
                                                     for arg in &args.args {
                                                         if let ast::TypeArg::Type(arg_ty) = arg {
-                                                            parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
+                                                            parsed_args.push(
+                                                                self.ast_type_to_hir_type(arg_ty)?,
+                                                            );
                                                         }
                                                     }
                                                     parsed_args
@@ -4754,13 +5140,22 @@ impl<'a> TypeContext<'a> {
                                             }
                                             hir::DefKind::TypeAlias => {
                                                 // Look up the alias and return its underlying type
-                                                if let Some(alias_info) = self.type_aliases.get(&item_def_id).cloned() {
+                                                if let Some(alias_info) =
+                                                    self.type_aliases.get(&item_def_id).cloned()
+                                                {
                                                     // Parse type arguments if provided (e.g., `helper::Pair<i32>`)
-                                                    let type_args = if let Some(ref args) = path.segments[1].args {
+                                                    let type_args = if let Some(ref args) =
+                                                        path.segments[1].args
+                                                    {
                                                         let mut parsed_args = Vec::new();
                                                         for arg in &args.args {
-                                                            if let ast::TypeArg::Type(arg_ty) = arg {
-                                                                parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
+                                                            if let ast::TypeArg::Type(arg_ty) = arg
+                                                            {
+                                                                parsed_args.push(
+                                                                    self.ast_type_to_hir_type(
+                                                                        arg_ty,
+                                                                    )?,
+                                                                );
                                                             }
                                                         }
                                                         parsed_args
@@ -4769,12 +5164,20 @@ impl<'a> TypeContext<'a> {
                                                     };
 
                                                     // If the alias has generic parameters, substitute them
-                                                    if !alias_info.generics.is_empty() && !type_args.is_empty() {
-                                                        let subst: HashMap<TyVarId, Type> = alias_info.generics.iter()
-                                                            .zip(type_args.iter())
-                                                            .map(|(&var, ty)| (var, ty.clone()))
-                                                            .collect();
-                                                        return Ok(self.substitute_type_vars(&alias_info.ty, &subst));
+                                                    if !alias_info.generics.is_empty()
+                                                        && !type_args.is_empty()
+                                                    {
+                                                        let subst: HashMap<TyVarId, Type> =
+                                                            alias_info
+                                                                .generics
+                                                                .iter()
+                                                                .zip(type_args.iter())
+                                                                .map(|(&var, ty)| (var, ty.clone()))
+                                                                .collect();
+                                                        return Ok(self.substitute_type_vars(
+                                                            &alias_info.ty,
+                                                            &subst,
+                                                        ));
                                                     }
                                                     return Ok(alias_info.ty.clone());
                                                 }
@@ -4786,25 +5189,32 @@ impl<'a> TypeContext<'a> {
                                     }
                                 }
                             }
-
                         }
                     }
 
                     // Check re-exported items separately (from `pub use`)
                     // We need to extract the reexport info first to avoid borrow issues
-                    let reexport_match: Option<(DefId, hir::DefKind, Option<super::TypeAliasInfo>)> = {
+                    let reexport_match: Option<(
+                        DefId,
+                        hir::DefKind,
+                        Option<super::TypeAliasInfo>,
+                    )> = {
                         let mut result = None;
                         for mod_info in self.module_defs.values() {
                             if mod_info.name == module_name {
                                 for (reexport_name, reexport_def_id, _vis) in &mod_info.reexports {
                                     if reexport_name == &type_name {
-                                        if let Some(def_info) = self.resolver.def_info.get(reexport_def_id) {
-                                            let alias_info = if def_info.kind == hir::DefKind::TypeAlias {
-                                                self.type_aliases.get(reexport_def_id).cloned()
-                                            } else {
-                                                None
-                                            };
-                                            result = Some((*reexport_def_id, def_info.kind, alias_info));
+                                        if let Some(def_info) =
+                                            self.resolver.def_info.get(reexport_def_id)
+                                        {
+                                            let alias_info =
+                                                if def_info.kind == hir::DefKind::TypeAlias {
+                                                    self.type_aliases.get(reexport_def_id).cloned()
+                                                } else {
+                                                    None
+                                                };
+                                            result =
+                                                Some((*reexport_def_id, def_info.kind, alias_info));
                                             break;
                                         }
                                     }
@@ -4838,7 +5248,8 @@ impl<'a> TypeContext<'a> {
                                         let mut parsed_args = Vec::new();
                                         for arg in &args.args {
                                             if let ast::TypeArg::Type(arg_ty) = arg {
-                                                parsed_args.push(self.ast_type_to_hir_type(arg_ty)?);
+                                                parsed_args
+                                                    .push(self.ast_type_to_hir_type(arg_ty)?);
                                             }
                                         }
                                         parsed_args
@@ -4847,11 +5258,15 @@ impl<'a> TypeContext<'a> {
                                     };
 
                                     if !alias_info.generics.is_empty() && !type_args.is_empty() {
-                                        let subst: HashMap<TyVarId, Type> = alias_info.generics.iter()
+                                        let subst: HashMap<TyVarId, Type> = alias_info
+                                            .generics
+                                            .iter()
                                             .zip(type_args.iter())
                                             .map(|(&var, ty)| (var, ty.clone()))
                                             .collect();
-                                        return Ok(self.substitute_type_vars(&alias_info.ty, &subst));
+                                        return Ok(
+                                            self.substitute_type_vars(&alias_info.ty, &subst)
+                                        );
                                     }
                                     return Ok(alias_info.ty.clone());
                                 }
@@ -4877,20 +5292,28 @@ impl<'a> TypeContext<'a> {
                         return Ok(Type::adt(def_id, type_args));
                     }
 
-                    Err(self.error_type_not_found(&format!("{}::{}", module_name, type_name), ty.span))
+                    Err(self
+                        .error_type_not_found(&format!("{}::{}", module_name, type_name), ty.span))
                 } else {
                     // Multi-segment path: resolve through module hierarchy
                     // e.g., std::collections::Vec or foo::bar::Baz
                     self.resolve_multi_segment_type_path(path, ty.span)
                 }
             }
-            ast::TypeKind::Reference { mutable, lifetime: _, inner } => {
+            ast::TypeKind::Reference {
+                mutable,
+                lifetime: _,
+                inner,
+            } => {
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
                 Ok(Type::reference(inner_ty, *mutable))
             }
             ast::TypeKind::Pointer { mutable, inner } => {
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
-                Ok(Type::new(TypeKind::Ptr { mutable: *mutable, inner: inner_ty }))
+                Ok(Type::new(TypeKind::Ptr {
+                    mutable: *mutable,
+                    inner: inner_ty,
+                }))
             }
             ast::TypeKind::Array { element, size } => {
                 let elem_ty = self.ast_type_to_hir_type(element)?;
@@ -4903,7 +5326,10 @@ impl<'a> TypeContext<'a> {
                             // Check if it's a const generic parameter
                             if let Some(&const_param_id) = self.const_params.get(name) {
                                 // Return array type with const param
-                                return Ok(Type::array_with_const(elem_ty, hir::ConstValue::Param(const_param_id)));
+                                return Ok(Type::array_with_const(
+                                    elem_ty,
+                                    hir::ConstValue::Param(const_param_id),
+                                ));
                             }
                         }
                     }
@@ -4929,12 +5355,14 @@ impl<'a> TypeContext<'a> {
                 };
                 let size = const_eval::eval_const_expr_with_lookup(size, &lookup)?
                     .as_u64()
-                    .ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::ConstEvalError {
-                            reason: "array size must be a non-negative integer".to_string(),
-                        },
-                        ty.span,
-                    )))?;
+                    .ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::ConstEvalError {
+                                reason: "array size must be a non-negative integer".to_string(),
+                            },
+                            ty.span,
+                        ))
+                    })?;
                 Ok(Type::array(elem_ty, size))
             }
             ast::TypeKind::Slice { element } => {
@@ -4942,20 +5370,27 @@ impl<'a> TypeContext<'a> {
                 Ok(Type::slice(elem_ty))
             }
             ast::TypeKind::Tuple(elements) => {
-                let elem_types: Vec<Type> = elements.iter()
+                let elem_types: Vec<Type> = elements
+                    .iter()
                     .map(|e| self.ast_type_to_hir_type(e))
                     .collect::<Result<_, _>>()?;
                 Ok(Type::tuple(elem_types))
             }
-            ast::TypeKind::Function { params, return_type, effects } => {
-                let param_types: Vec<Type> = params.iter()
+            ast::TypeKind::Function {
+                params,
+                return_type,
+                effects,
+            } => {
+                let param_types: Vec<Type> = params
+                    .iter()
                     .map(|p| self.ast_type_to_hir_type(p))
                     .collect::<Result<_, _>>()?;
                 let ret_ty = self.ast_type_to_hir_type(return_type)?;
                 // Parse effect annotations and convert to FnEffect
                 let fn_effects = if let Some(effect_row) = effects {
                     let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
-                    effect_refs.into_iter()
+                    effect_refs
+                        .into_iter()
                         .map(|er| hir::FnEffect::new(er.def_id, er.type_args))
                         .collect()
                 } else {
@@ -4968,7 +5403,8 @@ impl<'a> TypeContext<'a> {
             ast::TypeKind::Paren(inner) => self.ast_type_to_hir_type(inner),
             ast::TypeKind::Record { fields, rest } => {
                 // Convert fields from AST to HIR
-                let hir_fields: Vec<hir::RecordField> = fields.iter()
+                let hir_fields: Vec<hir::RecordField> = fields
+                    .iter()
                     .map(|f| {
                         let field_ty = self.ast_type_to_hir_type(&f.ty)?;
                         Ok(hir::RecordField {
@@ -5020,7 +5456,10 @@ impl<'a> TypeContext<'a> {
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
                 Ok(Type::ownership(hir_qualifier, inner_ty))
             }
-            ast::TypeKind::DynTrait { trait_path, auto_traits } => {
+            ast::TypeKind::DynTrait {
+                trait_path,
+                auto_traits,
+            } => {
                 // Resolve the main trait path to a DefId
                 let trait_id = self.resolve_type_path_to_def_id(trait_path, ty.span)?;
                 // Check object safety before accepting dyn Trait
@@ -5056,34 +5495,46 @@ impl<'a> TypeContext<'a> {
         }
 
         // Multi-segment: resolve through modules
-        let segments: Vec<String> = path.segments.iter()
+        let segments: Vec<String> = path
+            .segments
+            .iter()
             .map(|s| self.symbol_to_string(s.name.node))
             .collect();
 
         let first_name = &segments[0];
-        let mut current_module_def_id = self.resolver.lookup_type(first_name)
+        let mut current_module_def_id = self
+            .resolver
+            .lookup_type(first_name)
             .or_else(|| {
-                self.module_defs.iter()
+                self.module_defs
+                    .iter()
                     .find(|(_, info)| info.name == *first_name)
                     .map(|(def_id, _)| *def_id)
             })
-            .ok_or_else(|| Box::new(TypeError::new(
-                TypeErrorKind::ModuleNotFound {
-                    name: first_name.clone(),
-                    searched_paths: vec![first_name.clone()],
-                },
-                span,
-            )))?;
-
-        // Navigate through intermediate segments
-        for segment_name in &segments[1..segments.len()-1] {
-            let module_info = self.module_defs.get(&current_module_def_id).cloned()
-                .ok_or_else(|| Box::new(TypeError::new(
-                    TypeErrorKind::TypeNotFound {
-                        name: format!("{} is not a module", segment_name),
+            .ok_or_else(|| {
+                Box::new(TypeError::new(
+                    TypeErrorKind::ModuleNotFound {
+                        name: first_name.clone(),
+                        searched_paths: vec![first_name.clone()],
                     },
                     span,
-                )))?;
+                ))
+            })?;
+
+        // Navigate through intermediate segments
+        for segment_name in &segments[1..segments.len() - 1] {
+            let module_info = self
+                .module_defs
+                .get(&current_module_def_id)
+                .cloned()
+                .ok_or_else(|| {
+                    Box::new(TypeError::new(
+                        TypeErrorKind::TypeNotFound {
+                            name: format!("{} is not a module", segment_name),
+                        },
+                        span,
+                    ))
+                })?;
             let mut found = false;
             for &item_def_id in &module_info.items {
                 if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
@@ -5107,7 +5558,7 @@ impl<'a> TypeContext<'a> {
         }
 
         // Look up final segment
-        let final_name = &segments[segments.len()-1];
+        let final_name = &segments[segments.len() - 1];
         if let Some(module_info) = self.module_defs.get(&current_module_def_id) {
             for &item_def_id in &module_info.items {
                 if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
@@ -5132,7 +5583,9 @@ impl<'a> TypeContext<'a> {
         path: &ast::TypePath,
         span: Span,
     ) -> Result<Type, Box<TypeError>> {
-        let segments: Vec<String> = path.segments.iter()
+        let segments: Vec<String> = path
+            .segments
+            .iter()
             .map(|s| self.symbol_to_string(s.name.node))
             .collect();
 
@@ -5143,30 +5596,40 @@ impl<'a> TypeContext<'a> {
 
         // Start by looking up the first segment as a module
         let first_name = &segments[0];
-        let mut current_module_def_id = self.resolver.lookup_type(first_name)
+        let mut current_module_def_id = self
+            .resolver
+            .lookup_type(first_name)
             .or_else(|| {
                 // Also check if it's a module by name
-                self.module_defs.iter()
+                self.module_defs
+                    .iter()
                     .find(|(_, info)| info.name == *first_name)
                     .map(|(def_id, _)| *def_id)
             })
-            .ok_or_else(|| Box::new(TypeError::new(
-                TypeErrorKind::ModuleNotFound {
-                    name: first_name.clone(),
-                    searched_paths: vec![first_name.clone()],
-                },
-                span,
-            )))?;
-
-        // Navigate through intermediate segments (all should be modules)
-        for segment_name in &segments[1..segments.len()-1] {
-            let module_info = self.module_defs.get(&current_module_def_id).cloned()
-                .ok_or_else(|| Box::new(TypeError::new(
-                    TypeErrorKind::TypeNotFound {
-                        name: format!("{} is not a module", segment_name),
+            .ok_or_else(|| {
+                Box::new(TypeError::new(
+                    TypeErrorKind::ModuleNotFound {
+                        name: first_name.clone(),
+                        searched_paths: vec![first_name.clone()],
                     },
                     span,
-                )))?;
+                ))
+            })?;
+
+        // Navigate through intermediate segments (all should be modules)
+        for segment_name in &segments[1..segments.len() - 1] {
+            let module_info = self
+                .module_defs
+                .get(&current_module_def_id)
+                .cloned()
+                .ok_or_else(|| {
+                    Box::new(TypeError::new(
+                        TypeErrorKind::TypeNotFound {
+                            name: format!("{} is not a module", segment_name),
+                        },
+                        span,
+                    ))
+                })?;
 
             // Find the next segment within this module's items
             let mut found = false;
@@ -5195,14 +5658,21 @@ impl<'a> TypeContext<'a> {
 
         // Now look up the final segment as a type within the last module
         // SAFETY: segments.len() >= 3 guaranteed by check at line 3817
-        let type_name = segments.last().expect("BUG: segments guaranteed non-empty by guard at function start");
-        let module_info = self.module_defs.get(&current_module_def_id).cloned()
-            .ok_or_else(|| Box::new(TypeError::new(
-                TypeErrorKind::TypeNotFound {
-                    name: segments.join("::"),
-                },
-                span,
-            )))?;
+        let type_name = segments
+            .last()
+            .expect("BUG: segments guaranteed non-empty by guard at function start");
+        let module_info = self
+            .module_defs
+            .get(&current_module_def_id)
+            .cloned()
+            .ok_or_else(|| {
+                Box::new(TypeError::new(
+                    TypeErrorKind::TypeNotFound {
+                        name: segments.join("::"),
+                    },
+                    span,
+                ))
+            })?;
 
         // Find the type in the module's items
         for &item_def_id in &module_info.items {
@@ -5212,7 +5682,9 @@ impl<'a> TypeContext<'a> {
                     match def_info.kind {
                         hir::DefKind::Struct | hir::DefKind::Enum => {
                             // Extract type arguments from the last segment
-                            let type_args = if let Some(args) = path.segments.last().and_then(|s| s.args.as_ref()) {
+                            let type_args = if let Some(args) =
+                                path.segments.last().and_then(|s| s.args.as_ref())
+                            {
                                 let mut parsed_args = Vec::new();
                                 for arg in &args.args {
                                     if let ast::TypeArg::Type(arg_ty) = arg {
@@ -5229,7 +5701,9 @@ impl<'a> TypeContext<'a> {
                             // Look up and return the aliased type
                             if let Some(alias_info) = self.type_aliases.get(&item_def_id).cloned() {
                                 // Extract type arguments from the last segment
-                                let type_args = if let Some(args) = path.segments.last().and_then(|s| s.args.as_ref()) {
+                                let type_args = if let Some(args) =
+                                    path.segments.last().and_then(|s| s.args.as_ref())
+                                {
                                     let mut parsed_args = Vec::new();
                                     for arg in &args.args {
                                         if let ast::TypeArg::Type(arg_ty) = arg {
@@ -5243,7 +5717,9 @@ impl<'a> TypeContext<'a> {
 
                                 // If the alias has generic parameters, substitute them
                                 if !alias_info.generics.is_empty() && !type_args.is_empty() {
-                                    let subst: HashMap<TyVarId, Type> = alias_info.generics.iter()
+                                    let subst: HashMap<TyVarId, Type> = alias_info
+                                        .generics
+                                        .iter()
                                         .zip(type_args.iter())
                                         .map(|(&var, ty)| (var, ty.clone()))
                                         .collect();
@@ -5285,7 +5761,9 @@ impl<'a> TypeContext<'a> {
             }
             _ => {
                 return Err(Box::new(TypeError::new(
-                    TypeErrorKind::NotIndexable { ty: index_expr.ty.clone() },
+                    TypeErrorKind::NotIndexable {
+                        ty: index_expr.ty.clone(),
+                    },
                     span,
                 )));
             }
@@ -5311,13 +5789,17 @@ impl<'a> TypeContext<'a> {
                         args[0].clone()
                     } else {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                            TypeErrorKind::NotIndexable {
+                                ty: base_expr.ty.clone(),
+                            },
                             span,
                         )));
                     }
                 } else {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                        TypeErrorKind::NotIndexable {
+                            ty: base_expr.ty.clone(),
+                        },
                         span,
                     )));
                 }
@@ -5335,20 +5817,26 @@ impl<'a> TypeContext<'a> {
                                 args[0].clone()
                             } else {
                                 return Err(Box::new(TypeError::new(
-                                    TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                                    TypeErrorKind::NotIndexable {
+                                        ty: base_expr.ty.clone(),
+                                    },
                                     span,
                                 )));
                             }
                         } else {
                             return Err(Box::new(TypeError::new(
-                                TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                                TypeErrorKind::NotIndexable {
+                                    ty: base_expr.ty.clone(),
+                                },
                                 span,
                             )));
                         }
                     }
                     _ => {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                            TypeErrorKind::NotIndexable {
+                                ty: base_expr.ty.clone(),
+                            },
                             span,
                         )));
                     }
@@ -5356,7 +5844,9 @@ impl<'a> TypeContext<'a> {
             }
             _ => {
                 return Err(Box::new(TypeError::new(
-                    TypeErrorKind::NotIndexable { ty: base_expr.ty.clone() },
+                    TypeErrorKind::NotIndexable {
+                        ty: base_expr.ty.clone(),
+                    },
                     span,
                 )));
             }
@@ -5411,13 +5901,16 @@ impl<'a> TypeContext<'a> {
                 let value_expr = self.infer_expr(value)?;
                 let count_expr = self.infer_expr(count)?;
 
-                self.unifier.unify(&count_expr.ty, &Type::i32(), count.span)?;
+                self.unifier
+                    .unify(&count_expr.ty, &Type::i32(), count.span)?;
 
                 let size = match const_eval::eval_const_expr(count) {
                     Ok(result) => result.as_u64().ok_or_else(|| {
                         TypeError::new(
                             TypeErrorKind::ConstEvalError {
-                                reason: "array size must be a non-negative integer that fits in u64".to_string(),
+                                reason:
+                                    "array size must be a non-negative integer that fits in u64"
+                                        .to_string(),
                             },
                             count.span,
                         )
@@ -5438,22 +5931,42 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a literal.
-    pub(crate) fn infer_literal(&mut self, lit: &ast::Literal, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_literal(
+        &mut self,
+        lit: &ast::Literal,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let (value, ty) = match &lit.kind {
             ast::LiteralKind::Int { value, suffix } => {
                 let ty = match suffix {
-                    Some(ast::IntSuffix::I8) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8))),
-                    Some(ast::IntSuffix::I16) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16))),
+                    Some(ast::IntSuffix::I8) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))
+                    }
+                    Some(ast::IntSuffix::I16) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))
+                    }
                     Some(ast::IntSuffix::I32) => Type::i32(),
                     Some(ast::IntSuffix::I64) => Type::i64(),
-                    Some(ast::IntSuffix::I128) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128))),
-                    Some(ast::IntSuffix::Isize) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize))),
-                    Some(ast::IntSuffix::U8) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8))),
-                    Some(ast::IntSuffix::U16) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16))),
+                    Some(ast::IntSuffix::I128) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))
+                    }
+                    Some(ast::IntSuffix::Isize) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))
+                    }
+                    Some(ast::IntSuffix::U8) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))
+                    }
+                    Some(ast::IntSuffix::U16) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))
+                    }
                     Some(ast::IntSuffix::U32) => Type::u32(),
                     Some(ast::IntSuffix::U64) => Type::u64(),
-                    Some(ast::IntSuffix::U128) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128))),
-                    Some(ast::IntSuffix::Usize) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))),
+                    Some(ast::IntSuffix::U128) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))
+                    }
+                    Some(ast::IntSuffix::Usize) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize)))
+                    }
                     None => Type::i32(),
                 };
                 (hir::LiteralValue::Int(*value as i128), ty)
@@ -5469,52 +5982,81 @@ impl<'a> TypeContext<'a> {
             ast::LiteralKind::Char(c) => (hir::LiteralValue::Char(*c), Type::char()),
             ast::LiteralKind::String(s) => {
                 // String literals are &str (reference to str), like in Rust
-                (hir::LiteralValue::String(s.clone()), Type::reference(Type::str(), false))
+                (
+                    hir::LiteralValue::String(s.clone()),
+                    Type::reference(Type::str(), false),
+                )
             }
             ast::LiteralKind::ByteString(bytes) => {
                 // Byte string literals are &[u8] (reference to u8 slice), like in Rust
                 let u8_ty = Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)));
                 let slice_ty = Type::slice(u8_ty);
-                (hir::LiteralValue::ByteString(bytes.clone()), Type::reference(slice_ty, false))
+                (
+                    hir::LiteralValue::ByteString(bytes.clone()),
+                    Type::reference(slice_ty, false),
+                )
             }
         };
 
-        Ok(hir::Expr::new(
-            hir::ExprKind::Literal(value),
-            ty,
-            span,
-        ))
+        Ok(hir::Expr::new(hir::ExprKind::Literal(value), ty, span))
     }
 
     /// Check a literal against an expected type.
     /// This allows unsuffixed numeric literals to be coerced to the expected type.
-    pub(crate) fn check_literal(&mut self, lit: &ast::Literal, expected: &Type, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn check_literal(
+        &mut self,
+        lit: &ast::Literal,
+        expected: &Type,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         use crate::hir::def::{FloatTy, IntTy, UintTy};
 
         let resolved_expected = self.unifier.resolve(expected);
         let (value, ty) = match &lit.kind {
             // For unsuffixed integer literals, use expected type if it's an integer type
-            ast::LiteralKind::Int { value, suffix: None } => {
+            ast::LiteralKind::Int {
+                value,
+                suffix: None,
+            } => {
                 let ty = match resolved_expected.kind() {
-                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8))),
-                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16))),
+                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))
+                    }
+                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))
+                    }
                     TypeKind::Primitive(PrimitiveTy::Int(IntTy::I32)) => Type::i32(),
                     TypeKind::Primitive(PrimitiveTy::Int(IntTy::I64)) => Type::i64(),
-                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128))),
-                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)) => Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize))),
-                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8))),
-                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16))),
+                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))
+                    }
+                    TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))
+                    }
+                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))
+                    }
+                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))
+                    }
                     TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U32)) => Type::u32(),
                     TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U64)) => Type::u64(),
-                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128))),
-                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize)) => Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))),
+                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))
+                    }
+                    TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize)) => {
+                        Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize)))
+                    }
                     // Default to i32 if expected type is not an integer type
                     _ => Type::i32(),
                 };
                 (hir::LiteralValue::Int(*value as i128), ty)
             }
             // For unsuffixed float literals, use expected type if it's a float type
-            ast::LiteralKind::Float { value, suffix: None } => {
+            ast::LiteralKind::Float {
+                value,
+                suffix: None,
+            } => {
                 let ty = match resolved_expected.kind() {
                     TypeKind::Primitive(PrimitiveTy::Float(FloatTy::F32)) => Type::f32(),
                     TypeKind::Primitive(PrimitiveTy::Float(FloatTy::F64)) => Type::f64(),
@@ -5535,15 +6077,15 @@ impl<'a> TypeContext<'a> {
         // The type is now compatible with expected, but unify anyway to catch edge cases
         self.unifier.unify(expected, &ty, span)?;
 
-        Ok(hir::Expr::new(
-            hir::ExprKind::Literal(value),
-            ty,
-            span,
-        ))
+        Ok(hir::Expr::new(hir::ExprKind::Literal(value), ty, span))
     }
 
     /// Infer type of a path (variable/function reference).
-    pub(crate) fn infer_path(&mut self, path: &ast::ExprPath, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_path(
+        &mut self,
+        path: &ast::ExprPath,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         if path.segments.len() == 1 {
             let name = self.symbol_to_string(path.segments[0].name.node);
 
@@ -5558,19 +6100,20 @@ impl<'a> TypeContext<'a> {
 
             match self.resolver.lookup(&name) {
                 Some(Binding::Local { local_id, ty, .. }) => {
-                    Ok(hir::Expr::new(
-                        hir::ExprKind::Local(local_id),
-                        ty,
-                        span,
-                    ))
+                    Ok(hir::Expr::new(hir::ExprKind::Local(local_id), ty, span))
                 }
                 Some(Binding::Def(def_id)) => {
                     if let Some(sig) = self.fn_sigs.get(&def_id).cloned() {
                         // Get effect annotations for this function
-                        let fn_effects: Vec<hir::FnEffect> = self.fn_effects.get(&def_id)
-                            .map(|effect_refs| effect_refs.iter()
-                                .map(|er| hir::FnEffect::new(er.def_id, er.type_args.clone()))
-                                .collect())
+                        let fn_effects: Vec<hir::FnEffect> = self
+                            .fn_effects
+                            .get(&def_id)
+                            .map(|effect_refs| {
+                                effect_refs
+                                    .iter()
+                                    .map(|er| hir::FnEffect::new(er.def_id, er.type_args.clone()))
+                                    .collect()
+                            })
                             .unwrap_or_default();
 
                         // Check for explicit type arguments (turbofish syntax)
@@ -5601,38 +6144,42 @@ impl<'a> TypeContext<'a> {
                         // If we have explicit const args, add them to the function type
                         let fn_ty = if !explicit_const_args.is_empty() {
                             match fn_ty.kind() {
-                                hir::TypeKind::Fn { params, ret, effects, .. } => {
-                                    Type::function_with_const_args(
-                                        params.clone(),
-                                        ret.clone(),
-                                        effects.clone(),
-                                        explicit_const_args,
-                                    )
-                                }
+                                hir::TypeKind::Fn {
+                                    params,
+                                    ret,
+                                    effects,
+                                    ..
+                                } => Type::function_with_const_args(
+                                    params.clone(),
+                                    ret.clone(),
+                                    effects.clone(),
+                                    explicit_const_args,
+                                ),
                                 _ => fn_ty,
                             }
                         } else {
                             fn_ty
                         };
 
-                        Ok(hir::Expr::new(
-                            hir::ExprKind::Def(def_id),
-                            fn_ty,
-                            span,
-                        ))
+                        Ok(hir::Expr::new(hir::ExprKind::Def(def_id), fn_ty, span))
                     } else if let Some(def_info) = self.resolver.def_info.get(&def_id).cloned() {
                         // Check if this is a variant constructor (e.g., Some, None, Ok, Err)
                         if def_info.kind == hir::DefKind::Variant {
                             if let Some(parent_def_id) = def_info.parent {
-                                if let Some(enum_info) = self.enum_defs.get(&parent_def_id).cloned() {
+                                if let Some(enum_info) = self.enum_defs.get(&parent_def_id).cloned()
+                                {
                                     // Find the variant info
-                                    if let Some(variant) = enum_info.variants.iter().find(|v| v.def_id == def_id) {
+                                    if let Some(variant) =
+                                        enum_info.variants.iter().find(|v| v.def_id == def_id)
+                                    {
                                         let variant_idx = variant.index;
                                         let variant_fields = variant.fields.clone();
 
                                         if variant_fields.is_empty() {
                                             // Unit variant (like None) - returns the enum type directly
-                                            let type_args: Vec<Type> = enum_info.generics.iter()
+                                            let type_args: Vec<Type> = enum_info
+                                                .generics
+                                                .iter()
                                                 .map(|_| self.unifier.fresh_var())
                                                 .collect();
                                             let enum_ty = Type::adt(parent_def_id, type_args);
@@ -5648,18 +6195,24 @@ impl<'a> TypeContext<'a> {
                                             ));
                                         } else {
                                             // Tuple variant (like Some(T)) - returns a function type
-                                            let type_args: Vec<Type> = enum_info.generics.iter()
+                                            let type_args: Vec<Type> = enum_info
+                                                .generics
+                                                .iter()
                                                 .map(|_| self.unifier.fresh_var())
                                                 .collect();
 
                                             // Build substitution map from generic params to fresh vars
-                                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
-                                                .zip(type_args.iter())
-                                                .map(|(&tyvar, ty)| (tyvar, ty.clone()))
-                                                .collect();
+                                            let subst: std::collections::HashMap<TyVarId, Type> =
+                                                enum_info
+                                                    .generics
+                                                    .iter()
+                                                    .zip(type_args.iter())
+                                                    .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                                                    .collect();
 
                                             // Substitute type parameters in field types
-                                            let field_types: Vec<Type> = variant_fields.iter()
+                                            let field_types: Vec<Type> = variant_fields
+                                                .iter()
                                                 .map(|f| self.substitute_type_vars(&f.ty, &subst))
                                                 .collect();
 
@@ -5683,11 +6236,7 @@ impl<'a> TypeContext<'a> {
                         } else {
                             self.unifier.fresh_var()
                         };
-                        Ok(hir::Expr::new(
-                            hir::ExprKind::Def(def_id),
-                            ty,
-                            span,
-                        ))
+                        Ok(hir::Expr::new(hir::ExprKind::Def(def_id), ty, span))
                     } else {
                         Err(self.error_name_not_found(&name, span))
                     }
@@ -5720,9 +6269,7 @@ impl<'a> TypeContext<'a> {
                         Err(self.error_name_not_found(&name, span))
                     }
                 }
-                None => {
-                    Err(self.error_name_not_found(&name, span))
-                }
+                None => Err(self.error_name_not_found(&name, span)),
             }
         } else if path.segments.len() == 2 {
             let first_name = self.symbol_to_string(path.segments[0].name.node);
@@ -5730,13 +6277,16 @@ impl<'a> TypeContext<'a> {
 
             if let Some(type_def_id) = self.resolver.lookup_type(&first_name) {
                 if let Some(enum_info) = self.enum_defs.get(&type_def_id).cloned() {
-                    if let Some(variant) = enum_info.variants.iter().find(|v| v.name == second_name) {
+                    if let Some(variant) = enum_info.variants.iter().find(|v| v.name == second_name)
+                    {
                         let variant_idx = variant.index;
                         let variant_def_id = variant.def_id;
                         let variant_fields = variant.fields.clone();
 
                         if variant_fields.is_empty() {
-                            let type_args: Vec<Type> = enum_info.generics.iter()
+                            let type_args: Vec<Type> = enum_info
+                                .generics
+                                .iter()
                                 .map(|_| self.unifier.fresh_var())
                                 .collect();
                             let enum_ty = Type::adt(type_def_id, type_args);
@@ -5752,18 +6302,23 @@ impl<'a> TypeContext<'a> {
                             ));
                         } else {
                             // Create fresh type variables for each generic parameter
-                            let type_args: Vec<Type> = enum_info.generics.iter()
+                            let type_args: Vec<Type> = enum_info
+                                .generics
+                                .iter()
                                 .map(|_| self.unifier.fresh_var())
                                 .collect();
 
                             // Build substitution map from generic params to fresh vars
-                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info
+                                .generics
+                                .iter()
                                 .zip(type_args.iter())
                                 .map(|(&tyvar, ty)| (tyvar, ty.clone()))
                                 .collect();
 
                             // Substitute type parameters in field types
-                            let field_types: Vec<Type> = variant_fields.iter()
+                            let field_types: Vec<Type> = variant_fields
+                                .iter()
                                 .map(|f| self.substitute_type_vars(&f.ty, &subst))
                                 .collect();
 
@@ -5797,7 +6352,8 @@ impl<'a> TypeContext<'a> {
                                 if method.name == second_name {
                                     // Found the associated function!
                                     if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
-                                        found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                        found_method =
+                                            Some((method.def_id, sig, impl_block.generics.clone()));
                                         break;
                                     }
                                 }
@@ -5810,7 +6366,8 @@ impl<'a> TypeContext<'a> {
                         // Process the found method outside the borrow
                         if let Some((method_def_id, sig, impl_generics)) = found_method {
                             // Combine impl-level and method-level generics for instantiation
-                            let all_generics: Vec<TyVarId> = impl_generics.iter()
+                            let all_generics: Vec<TyVarId> = impl_generics
+                                .iter()
                                 .chain(sig.generics.iter())
                                 .copied()
                                 .collect();
@@ -5826,12 +6383,15 @@ impl<'a> TypeContext<'a> {
                                 }
 
                                 // Substitute in parameter types
-                                let subst_inputs: Vec<Type> = sig.inputs.iter()
+                                let subst_inputs: Vec<Type> = sig
+                                    .inputs
+                                    .iter()
                                     .map(|ty| self.substitute_type_vars(ty, &substitution))
                                     .collect();
 
                                 // Substitute in return type
-                                let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+                                let subst_output =
+                                    self.substitute_type_vars(&sig.output, &substitution);
 
                                 Type::function(subst_inputs, subst_output)
                             };
@@ -5864,7 +6424,8 @@ impl<'a> TypeContext<'a> {
                             if method.name == second_name {
                                 // Found the associated function!
                                 if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
-                                    found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                    found_method =
+                                        Some((method.def_id, sig, impl_block.generics.clone()));
                                     break;
                                 }
                             }
@@ -5877,7 +6438,8 @@ impl<'a> TypeContext<'a> {
                     // Process the found method outside the borrow
                     if let Some((method_def_id, sig, impl_generics)) = found_method {
                         // Combine impl-level and method-level generics for instantiation
-                        let all_generics: Vec<TyVarId> = impl_generics.iter()
+                        let all_generics: Vec<TyVarId> = impl_generics
+                            .iter()
                             .chain(sig.generics.iter())
                             .copied()
                             .collect();
@@ -5893,12 +6455,15 @@ impl<'a> TypeContext<'a> {
                             }
 
                             // Substitute in parameter types
-                            let subst_inputs: Vec<Type> = sig.inputs.iter()
+                            let subst_inputs: Vec<Type> = sig
+                                .inputs
+                                .iter()
                                 .map(|ty| self.substitute_type_vars(ty, &substitution))
                                 .collect();
 
                             // Substitute in return type
-                            let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+                            let subst_output =
+                                self.substitute_type_vars(&sig.output, &substitution);
 
                             Type::function(subst_inputs, subst_output)
                         };
@@ -5910,7 +6475,9 @@ impl<'a> TypeContext<'a> {
                     }
 
                     // Type found but no impl block method - check builtin static methods
-                    if let Some((method_def_id, fn_ty)) = self.find_builtin_static_method(&first_name, &second_name) {
+                    if let Some((method_def_id, fn_ty)) =
+                        self.find_builtin_static_method(&first_name, &second_name)
+                    {
                         return Ok(hir::Expr::new(
                             hir::ExprKind::Def(method_def_id),
                             fn_ty,
@@ -5919,14 +6486,18 @@ impl<'a> TypeContext<'a> {
                     }
 
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
+                        TypeErrorKind::NotFound {
+                            name: format!("{}::{}", first_name, second_name),
+                        },
                         span,
                     )));
                 }
             }
 
             // Check for builtin type static methods (e.g., String::new(), Vec::new())
-            if let Some((method_def_id, fn_ty)) = self.find_builtin_static_method(&first_name, &second_name) {
+            if let Some((method_def_id, fn_ty)) =
+                self.find_builtin_static_method(&first_name, &second_name)
+            {
                 return Ok(hir::Expr::new(
                     hir::ExprKind::Def(method_def_id),
                     fn_ty,
@@ -5970,7 +6541,9 @@ impl<'a> TypeContext<'a> {
                     }
                     // Module found but item not found
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
+                        TypeErrorKind::NotFound {
+                            name: format!("{}::{}", first_name, second_name),
+                        },
                         span,
                     )));
                 }
@@ -5983,10 +6556,8 @@ impl<'a> TypeContext<'a> {
                     for fn_info in &bridge_info.extern_fns {
                         if fn_info.name == second_name {
                             // Found the FFI function - return it as a function expression
-                            let fn_ty = Type::function(
-                                fn_info.params.clone(),
-                                fn_info.return_ty.clone(),
-                            );
+                            let fn_ty =
+                                Type::function(fn_info.params.clone(), fn_info.return_ty.clone());
                             return Ok(hir::Expr::new(
                                 hir::ExprKind::Def(fn_info.def_id),
                                 fn_ty,
@@ -6006,14 +6577,18 @@ impl<'a> TypeContext<'a> {
                     }
                     // Bridge found but item not found
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
+                        TypeErrorKind::NotFound {
+                            name: format!("{}::{}", first_name, second_name),
+                        },
                         span,
                     )));
                 }
             }
 
             Err(Box::new(TypeError::new(
-                TypeErrorKind::NotFound { name: format!("{}::{}", first_name, second_name) },
+                TypeErrorKind::NotFound {
+                    name: format!("{}::{}", first_name, second_name),
+                },
                 span,
             )))
         } else if path.segments.len() == 3 {
@@ -6056,19 +6631,30 @@ impl<'a> TypeContext<'a> {
                                     if let Some(fn_sig) = self.fn_sigs.get(&item_def_id).cloned() {
                                         // Found the function!
                                         let fn_ty = if fn_sig.generics.is_empty() {
-                                            Type::function(fn_sig.inputs.clone(), fn_sig.output.clone())
+                                            Type::function(
+                                                fn_sig.inputs.clone(),
+                                                fn_sig.output.clone(),
+                                            )
                                         } else {
                                             // Create fresh type vars for generics
-                                            let mut substitution: HashMap<TyVarId, Type> = HashMap::new();
+                                            let mut substitution: HashMap<TyVarId, Type> =
+                                                HashMap::new();
                                             for &old_var in &fn_sig.generics {
                                                 let fresh_var = self.unifier.fresh_var();
                                                 substitution.insert(old_var, fresh_var);
                                             }
 
-                                            let subst_inputs: Vec<Type> = fn_sig.inputs.iter()
-                                                .map(|ty| self.substitute_type_vars(ty, &substitution))
+                                            let subst_inputs: Vec<Type> = fn_sig
+                                                .inputs
+                                                .iter()
+                                                .map(|ty| {
+                                                    self.substitute_type_vars(ty, &substitution)
+                                                })
                                                 .collect();
-                                            let subst_output = self.substitute_type_vars(&fn_sig.output, &substitution);
+                                            let subst_output = self.substitute_type_vars(
+                                                &fn_sig.output,
+                                                &substitution,
+                                            );
 
                                             Type::function(subst_inputs, subst_output)
                                         };
@@ -6088,7 +6674,9 @@ impl<'a> TypeContext<'a> {
                             if let Some(struct_info) = self.struct_defs.get(&item_def_id) {
                                 if struct_info.name == third_name {
                                     // Return the struct type (for use in expressions like type annotation)
-                                    let type_args: Vec<Type> = struct_info.generics.iter()
+                                    let type_args: Vec<Type> = struct_info
+                                        .generics
+                                        .iter()
                                         .map(|_| self.unifier.fresh_var())
                                         .collect();
                                     let struct_ty = Type::adt(item_def_id, type_args);
@@ -6117,7 +6705,9 @@ impl<'a> TypeContext<'a> {
 
                         // Item not found in submodule
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("{}::{}::{}", module_name, type_name, third_name) },
+                            TypeErrorKind::NotFound {
+                                name: format!("{}::{}::{}", module_name, type_name, third_name),
+                            },
                             span,
                         )));
                     }
@@ -6155,13 +6745,16 @@ impl<'a> TypeContext<'a> {
 
                 if let Some((enum_def_id, enum_info)) = enum_match {
                     // Found the enum, now look for the variant
-                    if let Some(variant) = enum_info.variants.iter().find(|v| v.name == third_name) {
+                    if let Some(variant) = enum_info.variants.iter().find(|v| v.name == third_name)
+                    {
                         let variant_idx = variant.index;
                         let variant_def_id = variant.def_id;
                         let variant_fields = variant.fields.clone();
 
                         if variant_fields.is_empty() {
-                            let type_args: Vec<Type> = enum_info.generics.iter()
+                            let type_args: Vec<Type> = enum_info
+                                .generics
+                                .iter()
                                 .map(|_| self.unifier.fresh_var())
                                 .collect();
                             let enum_ty = Type::adt(enum_def_id, type_args);
@@ -6177,16 +6770,21 @@ impl<'a> TypeContext<'a> {
                             ));
                         } else {
                             // Enum variant with fields - return as constructor function
-                            let type_args: Vec<Type> = enum_info.generics.iter()
+                            let type_args: Vec<Type> = enum_info
+                                .generics
+                                .iter()
                                 .map(|_| self.unifier.fresh_var())
                                 .collect();
 
-                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                            let subst: std::collections::HashMap<TyVarId, Type> = enum_info
+                                .generics
+                                .iter()
                                 .zip(type_args.iter())
                                 .map(|(&tyvar, ty)| (tyvar, ty.clone()))
                                 .collect();
 
-                            let field_types: Vec<Type> = variant_fields.iter()
+                            let field_types: Vec<Type> = variant_fields
+                                .iter()
                                 .map(|f| self.substitute_type_vars(&f.ty, &subst))
                                 .collect();
 
@@ -6261,7 +6859,8 @@ impl<'a> TypeContext<'a> {
                         for method in &impl_block.methods {
                             if method.name == method_name {
                                 if let Some(sig) = self.fn_sigs.get(&method.def_id).cloned() {
-                                    found_method = Some((method.def_id, sig, impl_block.generics.clone()));
+                                    found_method =
+                                        Some((method.def_id, sig, impl_block.generics.clone()));
                                     break;
                                 }
                             }
@@ -6273,7 +6872,8 @@ impl<'a> TypeContext<'a> {
 
                     if let Some((method_def_id, sig, impl_generics)) = found_method {
                         // Combine impl-level and method-level generics for instantiation
-                        let all_generics: Vec<TyVarId> = impl_generics.iter()
+                        let all_generics: Vec<TyVarId> = impl_generics
+                            .iter()
                             .chain(sig.generics.iter())
                             .copied()
                             .collect();
@@ -6288,10 +6888,13 @@ impl<'a> TypeContext<'a> {
                                 substitution.insert(old_var, fresh_var);
                             }
 
-                            let subst_inputs: Vec<Type> = sig.inputs.iter()
+                            let subst_inputs: Vec<Type> = sig
+                                .inputs
+                                .iter()
                                 .map(|ty| self.substitute_type_vars(ty, &substitution))
                                 .collect();
-                            let subst_output = self.substitute_type_vars(&sig.output, &substitution);
+                            let subst_output =
+                                self.substitute_type_vars(&sig.output, &substitution);
 
                             Type::function(subst_inputs, subst_output)
                         };
@@ -6304,25 +6907,28 @@ impl<'a> TypeContext<'a> {
 
                     // Type found but no matching method
                     Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}::{}", module_name, type_name, method_name) },
+                        TypeErrorKind::NotFound {
+                            name: format!("{}::{}::{}", module_name, type_name, method_name),
+                        },
                         span,
                     )))
                 } else {
                     // Type not found in module
-                    Err(self.error_type_not_found(
-                        &format!("{}::{}", module_name, type_name),
-                        span,
-                    ))
+                    Err(self.error_type_not_found(&format!("{}::{}", module_name, type_name), span))
                 }
             } else {
                 // Module not found
                 Err(Box::new(TypeError::new(
-                    TypeErrorKind::NotFound { name: format!("module '{}'", module_name) },
+                    TypeErrorKind::NotFound {
+                        name: format!("module '{}'", module_name),
+                    },
                     span,
                 )))
             }
         } else {
-            let path_str = path.segments.iter()
+            let path_str = path
+                .segments
+                .iter()
                 .map(|s| self.symbol_to_string(s.name.node))
                 .collect::<Vec<_>>()
                 .join("::");
@@ -6352,13 +6958,19 @@ impl<'a> TypeContext<'a> {
         };
 
         let result_ty = match op {
-            ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::Rem => {
+            ast::BinOp::Add
+            | ast::BinOp::Sub
+            | ast::BinOp::Mul
+            | ast::BinOp::Div
+            | ast::BinOp::Rem => {
                 self.unifier.unify(&left_expr.ty, &right_expr.ty, span)?;
                 // Verify the resolved type is numeric (not bool, str, etc.)
                 let resolved = self.unifier.resolve(&left_expr.ty);
                 match resolved.kind() {
                     // Numeric primitives are allowed
-                    TypeKind::Primitive(PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Float(_)) => {}
+                    TypeKind::Primitive(
+                        PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Float(_),
+                    ) => {}
                     // Inference variables and type params — allow (checked later or by monomorphization)
                     TypeKind::Infer(_) | TypeKind::Param(_) => {}
                     // Error type — don't cascade errors
@@ -6377,7 +6989,12 @@ impl<'a> TypeContext<'a> {
                 }
                 left_expr.ty.clone()
             }
-            ast::BinOp::Eq | ast::BinOp::Ne | ast::BinOp::Lt | ast::BinOp::Le | ast::BinOp::Gt | ast::BinOp::Ge => {
+            ast::BinOp::Eq
+            | ast::BinOp::Ne
+            | ast::BinOp::Lt
+            | ast::BinOp::Le
+            | ast::BinOp::Gt
+            | ast::BinOp::Ge => {
                 self.unifier.unify(&left_expr.ty, &right_expr.ty, span)?;
                 Type::bool()
             }
@@ -6458,7 +7075,9 @@ impl<'a> TypeContext<'a> {
                     }
                     None => {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotAFunction { ty: right_expr.ty.clone() },
+                            TypeErrorKind::NotAFunction {
+                                ty: right_expr.ty.clone(),
+                            },
                             span,
                         )));
                     }
@@ -6491,7 +7110,8 @@ impl<'a> TypeContext<'a> {
             ast::UnaryOp::Not => operand_expr.ty.clone(),
             ast::UnaryOp::Deref => {
                 // Check for custom Deref impl first (desugars to method call)
-                let is_builtin_deref = matches!(operand_expr.ty.kind(),
+                let is_builtin_deref = matches!(
+                    operand_expr.ty.kind(),
                     TypeKind::Ref { .. } | TypeKind::Ptr { .. }
                 ) || matches!(operand_expr.ty.kind(),
                     TypeKind::Adt { def_id, args, .. }
@@ -6501,7 +7121,9 @@ impl<'a> TypeContext<'a> {
                 );
 
                 if !is_builtin_deref {
-                    if let Some((target_ty, deref_method_id)) = self.resolve_deref_target(&operand_expr.ty) {
+                    if let Some((target_ty, deref_method_id)) =
+                        self.resolve_deref_target(&operand_expr.ty)
+                    {
                         // Desugar *expr into *(expr.deref())
                         // 1. Borrow the operand: &expr
                         let ref_ty = Type::reference(operand_expr.ty.clone(), false);
@@ -6517,11 +7139,8 @@ impl<'a> TypeContext<'a> {
                         // 2. Call deref(&expr) -> &Target
                         let ref_target_ty = Type::reference(target_ty.clone(), false);
                         let callee_ty = Type::function(vec![ref_ty], ref_target_ty.clone());
-                        let callee = hir::Expr::new(
-                            hir::ExprKind::Def(deref_method_id),
-                            callee_ty,
-                            span,
-                        );
+                        let callee =
+                            hir::Expr::new(hir::ExprKind::Def(deref_method_id), callee_ty, span);
                         let deref_call = hir::Expr::new(
                             hir::ExprKind::Call {
                                 callee: Box::new(callee),
@@ -6553,31 +7172,33 @@ impl<'a> TypeContext<'a> {
                                 args[0].clone()
                             } else {
                                 return Err(Box::new(TypeError::new(
-                                    TypeErrorKind::CannotDeref { ty: operand_expr.ty.clone() },
+                                    TypeErrorKind::CannotDeref {
+                                        ty: operand_expr.ty.clone(),
+                                    },
                                     span,
                                 )));
                             }
                         } else {
                             return Err(Box::new(TypeError::new(
-                                TypeErrorKind::CannotDeref { ty: operand_expr.ty.clone() },
+                                TypeErrorKind::CannotDeref {
+                                    ty: operand_expr.ty.clone(),
+                                },
                                 span,
                             )));
                         }
                     }
                     _ => {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::CannotDeref { ty: operand_expr.ty.clone() },
+                            TypeErrorKind::CannotDeref {
+                                ty: operand_expr.ty.clone(),
+                            },
                             span,
                         )));
                     }
                 }
             }
-            ast::UnaryOp::Ref => {
-                Type::reference(operand_expr.ty.clone(), false)
-            }
-            ast::UnaryOp::RefMut => {
-                Type::reference(operand_expr.ty.clone(), true)
-            }
+            ast::UnaryOp::Ref => Type::reference(operand_expr.ty.clone(), false),
+            ast::UnaryOp::RefMut => Type::reference(operand_expr.ty.clone(), true),
         };
 
         Ok(hir::Expr::new(
@@ -6600,36 +7221,40 @@ impl<'a> TypeContext<'a> {
         let callee_expr = self.infer_expr(callee)?;
 
         // Handle multiple dispatch: if callee is a MethodFamily, resolve to specific method
-        let callee_expr = if let hir::ExprKind::MethodFamily { name, candidates } = &callee_expr.kind {
-            self.resolve_method_family_dispatch(name, candidates, args, span)?
-        } else {
-            callee_expr
-        };
+        let callee_expr =
+            if let hir::ExprKind::MethodFamily { name, candidates } = &callee_expr.kind {
+                self.resolve_method_family_dispatch(name, candidates, args, span)?
+            } else {
+                callee_expr
+            };
 
         // Resolve the callee type to handle inference variables
         let resolved_callee_ty = self.unifier.resolve(&callee_expr.ty);
 
         // Handle forall types by instantiating them with fresh type variables
         // Keep track of type param -> fresh var mapping for trait bound checking later
-        let type_param_fresh_vars: Option<Vec<(hir::TyVarId, Type)>> = match resolved_callee_ty.kind() {
-            TypeKind::Forall { params, .. } => {
-                Some(params.iter().cloned()
-                    .map(|p| (p, self.unifier.fresh_var()))
-                    .collect())
-            }
-            _ => None,
-        };
+        let type_param_fresh_vars: Option<Vec<(hir::TyVarId, Type)>> =
+            match resolved_callee_ty.kind() {
+                TypeKind::Forall { params, .. } => Some(
+                    params
+                        .iter()
+                        .cloned()
+                        .map(|p| (p, self.unifier.fresh_var()))
+                        .collect(),
+                ),
+                _ => None,
+            };
 
         let instantiated_ty = match resolved_callee_ty.kind() {
             TypeKind::Forall { body, .. } => {
                 // Build substitution map from the captured mapping
                 // SAFETY: type_param_fresh_vars is Some when resolved_callee_ty is Forall (set at line 5071-5078)
-                let subst: std::collections::HashMap<hir::TyVarId, Type> =
-                    type_param_fresh_vars.as_ref()
-                        .expect("BUG: type_param_fresh_vars must be Some when callee is Forall type")
-                        .iter()
-                        .map(|(p, v)| (*p, v.clone()))
-                        .collect();
+                let subst: std::collections::HashMap<hir::TyVarId, Type> = type_param_fresh_vars
+                    .as_ref()
+                    .expect("BUG: type_param_fresh_vars must be Some when callee is Forall type")
+                    .iter()
+                    .map(|(p, v)| (*p, v.clone()))
+                    .collect();
 
                 // Substitute params in the body
                 self.substitute_type_vars(body, &subst)
@@ -6640,34 +7265,43 @@ impl<'a> TypeContext<'a> {
         // For generic function calls, create a mapping of type params to fresh vars
         // to check trait bounds after unification. This handles the case where
         // instantiate_fn_sig_with_effects was already called (no Forall type).
-        let generic_param_mapping: Option<Vec<(hir::TyVarId, Type)>> = if type_param_fresh_vars.is_none() {
-            if let hir::ExprKind::Def(def_id) = &callee_expr.kind {
-                if let Some(sig) = self.fn_sigs.get(def_id) {
-                    if !sig.generics.is_empty() {
-                        // The callee type has already been instantiated with fresh vars.
-                        // We need to extract those vars by re-instantiating and unifying.
-                        let mapping: Vec<(hir::TyVarId, Type)> = sig.generics.iter()
-                            .map(|&ty_var_id| {
-                                let fresh_var = self.unifier.fresh_var();
-                                (ty_var_id, fresh_var)
-                            })
-                            .collect();
+        let generic_param_mapping: Option<Vec<(hir::TyVarId, Type)>> =
+            if type_param_fresh_vars.is_none() {
+                if let hir::ExprKind::Def(def_id) = &callee_expr.kind {
+                    if let Some(sig) = self.fn_sigs.get(def_id) {
+                        if !sig.generics.is_empty() {
+                            // The callee type has already been instantiated with fresh vars.
+                            // We need to extract those vars by re-instantiating and unifying.
+                            let mapping: Vec<(hir::TyVarId, Type)> = sig
+                                .generics
+                                .iter()
+                                .map(|&ty_var_id| {
+                                    let fresh_var = self.unifier.fresh_var();
+                                    (ty_var_id, fresh_var)
+                                })
+                                .collect();
 
-                        // Build substitution and create the expected function type
-                        let subst: std::collections::HashMap<hir::TyVarId, Type> = mapping.iter()
-                            .map(|(p, v)| (*p, v.clone()))
-                            .collect();
-                        let expected_inputs: Vec<Type> = sig.inputs.iter()
-                            .map(|ty| self.substitute_type_vars(ty, &subst))
-                            .collect();
-                        let expected_output = self.substitute_type_vars(&sig.output, &subst);
-                        let expected_fn_ty = Type::function(expected_inputs, expected_output);
+                            // Build substitution and create the expected function type
+                            let subst: std::collections::HashMap<hir::TyVarId, Type> =
+                                mapping.iter().map(|(p, v)| (*p, v.clone())).collect();
+                            let expected_inputs: Vec<Type> = sig
+                                .inputs
+                                .iter()
+                                .map(|ty| self.substitute_type_vars(ty, &subst))
+                                .collect();
+                            let expected_output = self.substitute_type_vars(&sig.output, &subst);
+                            let expected_fn_ty = Type::function(expected_inputs, expected_output);
 
-                        // Unify with the callee's actual type to bind our fresh vars
-                        // to the same concrete types the callee was instantiated with
-                        let _ = self.unifier.unify(&expected_fn_ty, &resolved_callee_ty, span);
+                            // Unify with the callee's actual type to bind our fresh vars
+                            // to the same concrete types the callee was instantiated with
+                            let _ = self
+                                .unifier
+                                .unify(&expected_fn_ty, &resolved_callee_ty, span);
 
-                        Some(mapping)
+                            Some(mapping)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -6676,10 +7310,7 @@ impl<'a> TypeContext<'a> {
                 }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         // Combine both sources of type param mappings
         let effective_param_mapping = type_param_fresh_vars.or(generic_param_mapping);
@@ -6691,14 +7322,18 @@ impl<'a> TypeContext<'a> {
                 TypeKind::Fn { params, ret, .. } => (params.clone(), ret.clone()),
                 _ => {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotAFunction { ty: callee_expr.ty.clone() },
+                        TypeErrorKind::NotAFunction {
+                            ty: callee_expr.ty.clone(),
+                        },
                         span,
                     )));
                 }
             },
             _ => {
                 return Err(Box::new(TypeError::new(
-                    TypeErrorKind::NotAFunction { ty: callee_expr.ty.clone() },
+                    TypeErrorKind::NotAFunction {
+                        ty: callee_expr.ty.clone(),
+                    },
                     span,
                 )));
             }
@@ -6772,9 +7407,11 @@ impl<'a> TypeContext<'a> {
             if let Some(predicates) = self.fn_where_bounds.get(def_id).cloned() {
                 for predicate in &predicates {
                     // Resolve the subject type using the current substitution
-                    let resolved_subject = if let Some(ref param_mapping) = effective_param_mapping {
+                    let resolved_subject = if let Some(ref param_mapping) = effective_param_mapping
+                    {
                         // Build substitution from param mapping
-                        let subst: std::collections::HashMap<hir::TyVarId, Type> = param_mapping.iter()
+                        let subst: std::collections::HashMap<hir::TyVarId, Type> = param_mapping
+                            .iter()
                             .map(|(p, v)| (*p, self.unifier.resolve(v)))
                             .collect();
                         self.substitute_type_vars(&predicate.subject_ty, &subst)
@@ -6796,7 +7433,9 @@ impl<'a> TypeContext<'a> {
                     // Find the enum and variant index
                     if let Some(parent_id) = info.parent {
                         if let Some(enum_info) = self.enum_defs.get(&parent_id) {
-                            if let Some(variant) = enum_info.variants.iter().find(|v| v.def_id == *def_id) {
+                            if let Some(variant) =
+                                enum_info.variants.iter().find(|v| v.def_id == *def_id)
+                            {
                                 return Ok(hir::Expr::new(
                                     hir::ExprKind::Variant {
                                         def_id: parent_id,
@@ -6885,7 +7524,8 @@ impl<'a> TypeContext<'a> {
 
         // If no applicable methods, report error
         if applicable.is_empty() {
-            let arg_types: Vec<String> = inferred_arg_types.iter()
+            let arg_types: Vec<String> = inferred_arg_types
+                .iter()
                 .map(|t| format!("{:?}", t))
                 .collect();
             return Err(Box::new(TypeError::new(
@@ -6901,11 +7541,7 @@ impl<'a> TypeContext<'a> {
         if applicable.len() == 1 {
             let (def_id, sig) = applicable[0];
             let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
-            return Ok(hir::Expr::new(
-                hir::ExprKind::Def(def_id),
-                fn_ty,
-                span,
-            ));
+            return Ok(hir::Expr::new(hir::ExprKind::Def(def_id), fn_ty, span));
         }
 
         // Multiple applicable methods: find the most specific one
@@ -6935,19 +7571,14 @@ impl<'a> TypeContext<'a> {
 
         if let Some((def_id, sig, _)) = best {
             let fn_ty = Type::function(sig.inputs.clone(), sig.output.clone());
-            return Ok(hir::Expr::new(
-                hir::ExprKind::Def(def_id),
-                fn_ty,
-                span,
-            ));
+            return Ok(hir::Expr::new(hir::ExprKind::Def(def_id), fn_ty, span));
         }
 
         // Ambiguous dispatch - report error
-        let candidate_sigs: Vec<String> = applicable.iter()
+        let candidate_sigs: Vec<String> = applicable
+            .iter()
             .map(|(_, sig)| {
-                let params: Vec<String> = sig.inputs.iter()
-                    .map(|t| format!("{:?}", t))
-                    .collect();
+                let params: Vec<String> = sig.inputs.iter().map(|t| format!("{:?}", t)).collect();
                 format!("({})", params.join(", "))
             })
             .collect();
@@ -7017,12 +7648,8 @@ impl<'a> TypeContext<'a> {
 
         let else_expr = if let Some(else_branch) = else_branch {
             match else_branch {
-                ast::ElseBranch::Block(block) => {
-                    Some(Box::new(self.check_block(block, expected)?))
-                }
-                ast::ElseBranch::If(if_expr) => {
-                    Some(Box::new(self.check_expr(if_expr, expected)?))
-                }
+                ast::ElseBranch::Block(block) => Some(Box::new(self.check_block(block, expected)?)),
+                ast::ElseBranch::If(if_expr) => Some(Box::new(self.check_expr(if_expr, expected)?)),
             }
         } else {
             self.unifier.unify(expected, &Type::unit(), span)?;
@@ -7087,21 +7714,13 @@ impl<'a> TypeContext<'a> {
         // Create the wildcard (else) arm
         let else_body = if let Some(else_branch) = else_branch {
             match else_branch {
-                ast::ElseBranch::Block(block) => {
-                    self.check_block(block, &expected)?
-                }
-                ast::ElseBranch::If(if_expr) => {
-                    self.check_expr(if_expr, &expected)?
-                }
+                ast::ElseBranch::Block(block) => self.check_block(block, &expected)?,
+                ast::ElseBranch::If(if_expr) => self.check_expr(if_expr, &expected)?,
             }
         } else {
             // No else branch - result must be unit
             self.unifier.unify(&expected, &Type::unit(), span)?;
-            hir::Expr::new(
-                hir::ExprKind::Tuple(vec![]),
-                Type::unit(),
-                span,
-            )
+            hir::Expr::new(hir::ExprKind::Tuple(vec![]), Type::unit(), span)
         };
 
         let wildcard_arm = hir::MatchArm {
@@ -7128,10 +7747,15 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a return expression.
-    pub(crate) fn infer_return(&mut self, value: Option<&ast::Expr>, span: Span) -> Result<hir::Expr, Box<TypeError>> {
-        let return_type = self.return_type.clone().ok_or_else(|| {
-            TypeError::new(TypeErrorKind::ReturnOutsideFunction, span)
-        })?;
+    pub(crate) fn infer_return(
+        &mut self,
+        value: Option<&ast::Expr>,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
+        let return_type = self
+            .return_type
+            .clone()
+            .ok_or_else(|| TypeError::new(TypeErrorKind::ReturnOutsideFunction, span))?;
 
         let value_expr = if let Some(value) = value {
             Some(Box::new(self.check_expr(value, &return_type)?))
@@ -7148,7 +7772,11 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a tuple expression.
-    pub(crate) fn infer_tuple(&mut self, exprs: &[ast::Expr], span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_tuple(
+        &mut self,
+        exprs: &[ast::Expr],
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let mut hir_exprs = Vec::new();
         let mut types = Vec::new();
 
@@ -7166,17 +7794,27 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of an assignment.
-    pub(crate) fn infer_assign(&mut self, target: &ast::Expr, value: &ast::Expr, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_assign(
+        &mut self,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         // Check mutability for simple variable assignments
         if let ast::ExprKind::Path(path) = &target.kind {
             if path.segments.len() == 1 {
                 let name = self.symbol_to_string(path.segments[0].name.node);
                 if let Some(Binding::Local { mutable, .. }) = self.resolver.lookup(&name) {
                     if !mutable {
-                        return Err(Box::new(TypeError::new(
-                            TypeErrorKind::ImmutableAssign { name: name.clone() },
-                            span,
-                        ).with_help(format!("consider making `{name}` mutable: `let mut {name}`"))));
+                        return Err(Box::new(
+                            TypeError::new(
+                                TypeErrorKind::ImmutableAssign { name: name.clone() },
+                                span,
+                            )
+                            .with_help(format!(
+                                "consider making `{name}` mutable: `let mut {name}`"
+                            )),
+                        ));
                     }
                 }
             }
@@ -7196,7 +7834,12 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a loop.
-    pub(crate) fn infer_loop(&mut self, body: &ast::Block, label: Option<&Spanned<ast::Symbol>>, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_loop(
+        &mut self,
+        body: &ast::Block,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let label_str = label.map(|l| self.symbol_to_string(l.node));
         let loop_id = self.enter_loop(label_str.as_deref());
 
@@ -7218,7 +7861,13 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a while loop.
-    pub(crate) fn infer_while(&mut self, condition: &ast::Expr, body: &ast::Block, label: Option<&Spanned<ast::Symbol>>, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_while(
+        &mut self,
+        condition: &ast::Expr,
+        body: &ast::Block,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let label_str = label.map(|l| self.symbol_to_string(l.node));
         let loop_id = self.enter_loop(label_str.as_deref());
 
@@ -7345,7 +7994,12 @@ impl<'a> TypeContext<'a> {
         span: Span,
     ) -> Result<hir::Expr, Box<TypeError>> {
         // Try to match range expression first
-        if let ast::ExprKind::Range { start, end, inclusive } = &iter.kind {
+        if let ast::ExprKind::Range {
+            start,
+            end,
+            inclusive,
+        } = &iter.kind
+        {
             let start = start.as_ref().ok_or_else(|| {
                 TypeError::new(
                     TypeErrorKind::UnsupportedFeature {
@@ -7373,7 +8027,15 @@ impl<'a> TypeContext<'a> {
         match iter_ty.kind() {
             TypeKind::Array { element, size } => {
                 let array_size = size.as_u64().unwrap_or(0);
-                return self.infer_for_array(pattern, iter_expr, element.clone(), array_size, body, label, span);
+                return self.infer_for_array(
+                    pattern,
+                    iter_expr,
+                    element.clone(),
+                    array_size,
+                    body,
+                    label,
+                    span,
+                );
             }
             TypeKind::Ref { inner, mutable } => {
                 // Handle references to arrays: &[T; N] and &[T]
@@ -7381,17 +8043,40 @@ impl<'a> TypeContext<'a> {
                 match inner_ty.kind() {
                     TypeKind::Array { element, size } => {
                         let array_size = size.as_u64().unwrap_or(0);
-                        return self.infer_for_array(pattern, iter_expr, element.clone(), array_size, body, label, span);
+                        return self.infer_for_array(
+                            pattern,
+                            iter_expr,
+                            element.clone(),
+                            array_size,
+                            body,
+                            label,
+                            span,
+                        );
                     }
                     TypeKind::Slice { element } => {
                         // Slice iteration with runtime length check
-                        return self.infer_for_slice(pattern, iter_expr, element.clone(), body, label, span);
+                        return self.infer_for_slice(
+                            pattern,
+                            iter_expr,
+                            element.clone(),
+                            body,
+                            label,
+                            span,
+                        );
                     }
                     TypeKind::Adt { def_id, args } => {
                         // Handle &Vec<T> and &mut Vec<T>
                         if Some(*def_id) == self.vec_def_id {
                             if let Some(element_ty) = args.first() {
-                                return self.infer_for_vec(pattern, iter_expr, element_ty.clone(), *mutable, body, label, span);
+                                return self.infer_for_vec(
+                                    pattern,
+                                    iter_expr,
+                                    element_ty.clone(),
+                                    *mutable,
+                                    body,
+                                    label,
+                                    span,
+                                );
                             }
                         }
                     }
@@ -7400,14 +8085,28 @@ impl<'a> TypeContext<'a> {
             }
             TypeKind::Slice { element } => {
                 // Slice iteration with runtime length check
-                return self.infer_for_slice(pattern, iter_expr, element.clone(), body, label, span);
+                return self.infer_for_slice(
+                    pattern,
+                    iter_expr,
+                    element.clone(),
+                    body,
+                    label,
+                    span,
+                );
             }
             TypeKind::Adt { def_id, args } => {
                 // Handle Vec<T> directly (consuming iteration)
                 if Some(*def_id) == self.vec_def_id {
                     if let Some(element_ty) = args.first() {
                         // For owned Vec, we iterate by value (consuming)
-                        return self.infer_for_vec_owned(pattern, iter_expr, element_ty.clone(), body, label, span);
+                        return self.infer_for_vec_owned(
+                            pattern,
+                            iter_expr,
+                            element_ty.clone(),
+                            body,
+                            label,
+                            span,
+                        );
                     }
                 }
             }
@@ -7475,12 +8174,9 @@ impl<'a> TypeContext<'a> {
 
         // Register user's loop variable (only if not a wildcard pattern)
         let var_local_id = if let Some(ref name) = var_name {
-            let local_id = self.resolver.define_local(
-                name.clone(),
-                idx_ty.clone(),
-                false,
-                pattern.span,
-            )?;
+            let local_id =
+                self.resolver
+                    .define_local(name.clone(), idx_ty.clone(), false, pattern.span)?;
 
             self.locals.push(hir::Local {
                 id: local_id,
@@ -7501,7 +8197,11 @@ impl<'a> TypeContext<'a> {
         self.exit_loop(label_str.as_deref());
 
         // Build desugared while loop
-        let comparison_op = if inclusive { ast::BinOp::Le } else { ast::BinOp::Lt };
+        let comparison_op = if inclusive {
+            ast::BinOp::Le
+        } else {
+            ast::BinOp::Lt
+        };
         let condition = hir::Expr::new(
             hir::ExprKind::Binary {
                 op: comparison_op,
@@ -7656,7 +8356,11 @@ impl<'a> TypeContext<'a> {
 
         // Check if it's a wildcard pattern - we track this for generating the loop body
         let is_wildcard = matches!(pattern.kind, ast::PatternKind::Wildcard);
-        let var_local_id = if is_wildcard { None } else { Some(var_local_id) };
+        let var_local_id = if is_wildcard {
+            None
+        } else {
+            Some(var_local_id)
+        };
 
         let body_expr = self.check_block(body, &Type::unit())?;
 
@@ -7863,7 +8567,11 @@ impl<'a> TypeContext<'a> {
 
         // Check if it's a wildcard pattern - we track this for generating the loop body
         let is_wildcard = matches!(pattern.kind, ast::PatternKind::Wildcard);
-        let var_local_id = if is_wildcard { None } else { Some(var_local_id) };
+        let var_local_id = if is_wildcard {
+            None
+        } else {
+            Some(var_local_id)
+        };
 
         let body_expr = self.check_block(body, &Type::unit())?;
 
@@ -8087,7 +8795,11 @@ impl<'a> TypeContext<'a> {
 
         // Check if it's a wildcard pattern - we track this for generating the loop body
         let is_wildcard = matches!(pattern.kind, ast::PatternKind::Wildcard);
-        let var_local_id = if is_wildcard { None } else { Some(var_local_id) };
+        let var_local_id = if is_wildcard {
+            None
+        } else {
+            Some(var_local_id)
+        };
 
         let body_expr = self.check_block(body, &Type::unit())?;
 
@@ -8196,7 +8908,10 @@ impl<'a> TypeContext<'a> {
                         condition: Box::new(condition),
                         then_branch: Box::new(loop_body),
                         else_branch: Some(Box::new(hir::Expr::new(
-                            hir::ExprKind::Break { label: None, value: None },
+                            hir::ExprKind::Break {
+                                label: None,
+                                value: None,
+                            },
                             Type::never(),
                             span,
                         ))),
@@ -8217,11 +8932,8 @@ impl<'a> TypeContext<'a> {
         };
 
         // Get Vec length using VecLen operation
-        let vec_ref_for_len = hir::Expr::new(
-            hir::ExprKind::Local(vec_local_id),
-            vec_ty.clone(),
-            span,
-        );
+        let vec_ref_for_len =
+            hir::Expr::new(hir::ExprKind::Local(vec_local_id), vec_ty.clone(), span);
         let len_init_stmt = hir::Stmt::Let {
             local_id: len_local_id,
             init: Some(hir::Expr::new(
@@ -8265,16 +8977,26 @@ impl<'a> TypeContext<'a> {
     ) -> Result<hir::Expr, Box<TypeError>> {
         Err(Box::new(TypeError::new(
             TypeErrorKind::UnsupportedFeature {
-                feature: "Consuming iteration over Vec not supported. Use `&vec` or `&mut vec` instead.".into(),
+                feature:
+                    "Consuming iteration over Vec not supported. Use `&vec` or `&mut vec` instead."
+                        .into(),
             },
             span,
         )))
     }
 
     /// Infer type of a break.
-    pub(crate) fn infer_break(&mut self, value: Option<&ast::Expr>, label: Option<&Spanned<ast::Symbol>>, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_break(
+        &mut self,
+        value: Option<&ast::Expr>,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         if !self.resolver.in_loop() {
-            return Err(Box::new(TypeError::new(TypeErrorKind::BreakOutsideLoop, span)));
+            return Err(Box::new(TypeError::new(
+                TypeErrorKind::BreakOutsideLoop,
+                span,
+            )));
         }
 
         let label_str = label.map(|l| self.symbol_to_string(l.node));
@@ -8283,7 +9005,9 @@ impl<'a> TypeContext<'a> {
         // Check that the label exists
         if label.is_some() && loop_id.is_none() {
             return Err(Box::new(TypeError::new(
-                TypeErrorKind::UnresolvedName { name: label_str.unwrap_or_default() },
+                TypeErrorKind::UnresolvedName {
+                    name: label_str.unwrap_or_default(),
+                },
                 span,
             )));
         }
@@ -8312,9 +9036,16 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a continue.
-    pub(crate) fn infer_continue(&mut self, label: Option<&Spanned<ast::Symbol>>, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    pub(crate) fn infer_continue(
+        &mut self,
+        label: Option<&Spanned<ast::Symbol>>,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         if !self.resolver.in_loop() {
-            return Err(Box::new(TypeError::new(TypeErrorKind::ContinueOutsideLoop, span)));
+            return Err(Box::new(TypeError::new(
+                TypeErrorKind::ContinueOutsideLoop,
+                span,
+            )));
         }
 
         let label_str = label.map(|l| self.symbol_to_string(l.node));
@@ -8323,7 +9054,9 @@ impl<'a> TypeContext<'a> {
         // Check that the label exists
         if label.is_some() && loop_id.is_none() {
             return Err(Box::new(TypeError::new(
-                TypeErrorKind::UnresolvedName { name: label_str.unwrap_or_default() },
+                TypeErrorKind::UnresolvedName {
+                    name: label_str.unwrap_or_default(),
+                },
                 span,
             )));
         }
@@ -8382,11 +9115,8 @@ impl<'a> TypeContext<'a> {
 
         // Check for exhaustiveness
         let enum_info = self.get_enum_variant_info(&scrutinee_expr.ty);
-        let result = exhaustiveness::check_exhaustiveness(
-            &hir_arms,
-            &scrutinee_expr.ty,
-            enum_info.as_ref(),
-        );
+        let result =
+            exhaustiveness::check_exhaustiveness(&hir_arms, &scrutinee_expr.ty, enum_info.as_ref());
 
         if !result.is_exhaustive {
             return Err(Box::new(TypeError::new(
@@ -8400,10 +9130,8 @@ impl<'a> TypeContext<'a> {
         // Report unreachable patterns
         for idx in result.unreachable_arms {
             if let Some(arm) = arms.get(idx) {
-                self.errors.push(TypeError::new(
-                    TypeErrorKind::UnreachablePattern,
-                    arm.span,
-                ));
+                self.errors
+                    .push(TypeError::new(TypeErrorKind::UnreachablePattern, arm.span));
             }
         }
 
@@ -8468,11 +9196,8 @@ impl<'a> TypeContext<'a> {
 
         // Check for exhaustiveness
         let enum_info = self.get_enum_variant_info(&scrutinee_expr.ty);
-        let result = exhaustiveness::check_exhaustiveness(
-            &hir_arms,
-            &scrutinee_expr.ty,
-            enum_info.as_ref(),
-        );
+        let result =
+            exhaustiveness::check_exhaustiveness(&hir_arms, &scrutinee_expr.ty, enum_info.as_ref());
 
         if !result.is_exhaustive {
             return Err(Box::new(TypeError::new(
@@ -8486,10 +9211,8 @@ impl<'a> TypeContext<'a> {
         // Report unreachable patterns
         for idx in result.unreachable_arms {
             if let Some(arm) = arms.get(idx) {
-                self.errors.push(TypeError::new(
-                    TypeErrorKind::UnreachablePattern,
-                    arm.span,
-                ));
+                self.errors
+                    .push(TypeError::new(TypeErrorKind::UnreachablePattern, arm.span));
             }
         }
 
@@ -8537,7 +9260,9 @@ impl<'a> TypeContext<'a> {
                         (def_id, struct_info, result_ty)
                     } else {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
+                            TypeErrorKind::NotAStruct {
+                                ty: Type::adt(def_id, Vec::new()),
+                            },
                             span,
                         )));
                     }
@@ -8560,7 +9285,9 @@ impl<'a> TypeContext<'a> {
                             }
                         }
                     }
-                    if found_def_id.is_some() { break; }
+                    if found_def_id.is_some() {
+                        break;
+                    }
                 }
 
                 if let Some(def_id) = found_def_id {
@@ -8569,7 +9296,9 @@ impl<'a> TypeContext<'a> {
                         (def_id, struct_info.clone(), result_ty)
                     } else {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotAStruct { ty: Type::adt(def_id, Vec::new()) },
+                            TypeErrorKind::NotAStruct {
+                                ty: Type::adt(def_id, Vec::new()),
+                            },
                             span,
                         )));
                     }
@@ -8578,18 +9307,24 @@ impl<'a> TypeContext<'a> {
                     // This handles EnumName::Variant { field: value } syntax
                     if let Some(enum_def_id) = self.resolver.lookup_type(&module_name) {
                         if let Some(enum_info) = self.enum_defs.get(&enum_def_id).cloned() {
-                            if let Some(variant) = enum_info.variants.iter().find(|v| v.name == type_name) {
+                            if let Some(variant) =
+                                enum_info.variants.iter().find(|v| v.name == type_name)
+                            {
                                 // Found an enum variant - handle struct-like construction
                                 let variant_idx = variant.index;
                                 let variant_fields = variant.fields.clone();
 
                                 // Create fresh type variables for enum generics
-                                let type_args: Vec<Type> = enum_info.generics.iter()
+                                let type_args: Vec<Type> = enum_info
+                                    .generics
+                                    .iter()
                                     .map(|_| self.unifier.fresh_var())
                                     .collect();
 
                                 // Build substitution map from generic params to fresh vars
-                                let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                                let subst: std::collections::HashMap<TyVarId, Type> = enum_info
+                                    .generics
+                                    .iter()
                                     .zip(type_args.iter())
                                     .map(|(&tyvar, ty)| (tyvar, ty.clone()))
                                     .collect();
@@ -8600,7 +9335,10 @@ impl<'a> TypeContext<'a> {
                                     let field_name = self.symbol_to_string(field.name.node);
 
                                     // Find the corresponding variant field
-                                    let variant_field = match variant_fields.iter().find(|f| f.name == field_name) {
+                                    let variant_field = match variant_fields
+                                        .iter()
+                                        .find(|f| f.name == field_name)
+                                    {
                                         Some(f) => f,
                                         None => {
                                             let mut err = TypeError::new(
@@ -8610,7 +9348,9 @@ impl<'a> TypeContext<'a> {
                                                 },
                                                 field.span,
                                             );
-                                            if let Some(info) = self.resolver.def_info.get(&enum_def_id) {
+                                            if let Some(info) =
+                                                self.resolver.def_info.get(&enum_def_id)
+                                            {
                                                 err = err.with_secondary_label(
                                                     info.span,
                                                     format!("enum `{}` defined here", info.name),
@@ -8621,7 +9361,8 @@ impl<'a> TypeContext<'a> {
                                     };
 
                                     // Apply substitution to field type
-                                    let expected_ty = self.substitute_type_vars(&variant_field.ty, &subst);
+                                    let expected_ty =
+                                        self.substitute_type_vars(&variant_field.ty, &subst);
 
                                     // Handle shorthand syntax: `{ x }` means `{ x: x }`
                                     let value_expr = if let Some(value) = &field.value {
@@ -8629,7 +9370,10 @@ impl<'a> TypeContext<'a> {
                                         self.check_expr(value, &expected_ty).map_err(|_| {
                                             // Type::error() is acceptable here: a diagnostic is emitted
                                             // below. The found type is only used for the error message.
-                                            let found = self.infer_expr(value).map(|e| e.ty).unwrap_or_else(|_| Type::error());
+                                            let found = self
+                                                .infer_expr(value)
+                                                .map(|e| e.ty)
+                                                .unwrap_or_else(|_| Type::error());
                                             TypeError::new(
                                                 TypeErrorKind::Mismatch {
                                                     expected: self.unifier.resolve(&expected_ty),
@@ -8652,15 +9396,19 @@ impl<'a> TypeContext<'a> {
                                             span: field.span,
                                         };
                                         let inferred = self.infer_expr(&expr)?;
-                                        self.unifier.unify(&inferred.ty, &expected_ty, field.span).map_err(|_| {
-                                            TypeError::new(
-                                                TypeErrorKind::Mismatch {
-                                                    expected: self.unifier.resolve(&expected_ty),
-                                                    found: self.unifier.resolve(&inferred.ty),
-                                                },
-                                                field.span,
-                                            )
-                                        })?;
+                                        self.unifier
+                                            .unify(&inferred.ty, &expected_ty, field.span)
+                                            .map_err(|_| {
+                                                TypeError::new(
+                                                    TypeErrorKind::Mismatch {
+                                                        expected: self
+                                                            .unifier
+                                                            .resolve(&expected_ty),
+                                                        found: self.unifier.resolve(&inferred.ty),
+                                                    },
+                                                    field.span,
+                                                )
+                                            })?;
                                         inferred
                                     };
 
@@ -8669,12 +9417,12 @@ impl<'a> TypeContext<'a> {
 
                                 // Sort fields by index to ensure correct order in Variant
                                 hir_field_exprs.sort_by_key(|(idx, _)| *idx);
-                                let ordered_fields: Vec<hir::Expr> = hir_field_exprs.into_iter()
-                                    .map(|(_, expr)| expr)
-                                    .collect();
+                                let ordered_fields: Vec<hir::Expr> =
+                                    hir_field_exprs.into_iter().map(|(_, expr)| expr).collect();
 
                                 // Build result type with resolved type args
-                                let resolved_type_args: Vec<Type> = type_args.iter()
+                                let resolved_type_args: Vec<Type> = type_args
+                                    .iter()
                                     .map(|ty| self.unifier.resolve(ty))
                                     .collect();
                                 let enum_ty = Type::adt(enum_def_id, resolved_type_args);
@@ -8720,8 +9468,11 @@ impl<'a> TypeContext<'a> {
                             if found_struct.is_none() {
                                 for (reexport_name, reexport_def_id, _vis) in &mod_info.reexports {
                                     if reexport_name == &type_name {
-                                        if let Some(struct_info) = self.struct_defs.get(reexport_def_id) {
-                                            found_struct = Some((*reexport_def_id, struct_info.clone()));
+                                        if let Some(struct_info) =
+                                            self.struct_defs.get(reexport_def_id)
+                                        {
+                                            found_struct =
+                                                Some((*reexport_def_id, struct_info.clone()));
                                             break;
                                         }
                                     }
@@ -8748,7 +9499,9 @@ impl<'a> TypeContext<'a> {
             } else {
                 // Multi-segment path: resolve through module hierarchy
                 // e.g., std::collections::HashMap { ... } or module::Enum::Variant { ... }
-                let segments: Vec<String> = path.segments.iter()
+                let segments: Vec<String> = path
+                    .segments
+                    .iter()
                     .map(|s| self.symbol_to_string(s.name.node))
                     .collect();
 
@@ -8784,14 +9537,18 @@ impl<'a> TypeContext<'a> {
 
                         if let Some((enum_def_id, enum_info)) = found_enum {
                             // Find the variant
-                            if let Some(variant) = enum_info.variants.iter().find(|v| &v.name == variant_name) {
+                            if let Some(variant) =
+                                enum_info.variants.iter().find(|v| &v.name == variant_name)
+                            {
                                 // Found an enum variant - handle struct-like construction
                                 let variant_idx = variant.index;
                                 let variant_fields = variant.fields.clone();
 
                                 // Extract type arguments from the path if provided (e.g., module::Enum::<i32>::Variant)
                                 // For now, check the enum segment for type args
-                                let path_type_args: Vec<Type> = if let Some(args) = &path.segments[1].args {
+                                let path_type_args: Vec<Type> = if let Some(args) =
+                                    &path.segments[1].args
+                                {
                                     let mut parsed_args = Vec::new();
                                     for arg in &args.args {
                                         if let ast::TypeArg::Type(arg_ty) = arg {
@@ -8807,13 +9564,17 @@ impl<'a> TypeContext<'a> {
                                 let type_args: Vec<Type> = if !path_type_args.is_empty() {
                                     path_type_args
                                 } else {
-                                    enum_info.generics.iter()
+                                    enum_info
+                                        .generics
+                                        .iter()
                                         .map(|_| self.unifier.fresh_var())
                                         .collect()
                                 };
 
                                 // Build substitution map from generic params to type args
-                                let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                                let subst: std::collections::HashMap<TyVarId, Type> = enum_info
+                                    .generics
+                                    .iter()
                                     .copied()
                                     .zip(type_args.iter().cloned())
                                     .collect();
@@ -8824,7 +9585,10 @@ impl<'a> TypeContext<'a> {
                                     let field_name = self.symbol_to_string(field.name.node);
 
                                     // Find the corresponding variant field
-                                    let variant_field = match variant_fields.iter().find(|f| f.name == field_name) {
+                                    let variant_field = match variant_fields
+                                        .iter()
+                                        .find(|f| f.name == field_name)
+                                    {
                                         Some(f) => f,
                                         None => {
                                             let mut err = TypeError::new(
@@ -8834,7 +9598,9 @@ impl<'a> TypeContext<'a> {
                                                 },
                                                 field.span,
                                             );
-                                            if let Some(info) = self.resolver.def_info.get(&enum_def_id) {
+                                            if let Some(info) =
+                                                self.resolver.def_info.get(&enum_def_id)
+                                            {
                                                 err = err.with_secondary_label(
                                                     info.span,
                                                     format!("enum `{}` defined here", info.name),
@@ -8845,7 +9611,8 @@ impl<'a> TypeContext<'a> {
                                     };
 
                                     // Apply substitution to field type
-                                    let expected_ty = self.substitute_type_vars(&variant_field.ty, &subst);
+                                    let expected_ty =
+                                        self.substitute_type_vars(&variant_field.ty, &subst);
 
                                     // Handle shorthand syntax: `{ x }` means `{ x: x }`
                                     let value_expr = if let Some(value) = &field.value {
@@ -8853,7 +9620,10 @@ impl<'a> TypeContext<'a> {
                                         self.check_expr(value, &expected_ty).map_err(|_| {
                                             // Type::error() is acceptable here: a diagnostic is emitted
                                             // below. The found type is only used for the error message.
-                                            let found = self.infer_expr(value).map(|e| e.ty).unwrap_or_else(|_| Type::error());
+                                            let found = self
+                                                .infer_expr(value)
+                                                .map(|e| e.ty)
+                                                .unwrap_or_else(|_| Type::error());
                                             TypeError::new(
                                                 TypeErrorKind::Mismatch {
                                                     expected: self.unifier.resolve(&expected_ty),
@@ -8876,15 +9646,19 @@ impl<'a> TypeContext<'a> {
                                             span: field.span,
                                         };
                                         let inferred = self.infer_expr(&expr)?;
-                                        self.unifier.unify(&inferred.ty, &expected_ty, field.span).map_err(|_| {
-                                            TypeError::new(
-                                                TypeErrorKind::Mismatch {
-                                                    expected: self.unifier.resolve(&expected_ty),
-                                                    found: self.unifier.resolve(&inferred.ty),
-                                                },
-                                                field.span,
-                                            )
-                                        })?;
+                                        self.unifier
+                                            .unify(&inferred.ty, &expected_ty, field.span)
+                                            .map_err(|_| {
+                                                TypeError::new(
+                                                    TypeErrorKind::Mismatch {
+                                                        expected: self
+                                                            .unifier
+                                                            .resolve(&expected_ty),
+                                                        found: self.unifier.resolve(&inferred.ty),
+                                                    },
+                                                    field.span,
+                                                )
+                                            })?;
                                         inferred
                                     };
 
@@ -8893,12 +9667,12 @@ impl<'a> TypeContext<'a> {
 
                                 // Sort fields by index to ensure correct order in Variant
                                 hir_field_exprs.sort_by_key(|(idx, _)| *idx);
-                                let ordered_fields: Vec<hir::Expr> = hir_field_exprs.into_iter()
-                                    .map(|(_, expr)| expr)
-                                    .collect();
+                                let ordered_fields: Vec<hir::Expr> =
+                                    hir_field_exprs.into_iter().map(|(_, expr)| expr).collect();
 
                                 // Build result type with resolved type args
-                                let resolved_type_args: Vec<Type> = type_args.iter()
+                                let resolved_type_args: Vec<Type> = type_args
+                                    .iter()
                                     .map(|ty| self.unifier.resolve(ty))
                                     .collect();
                                 let enum_ty = Type::adt(enum_def_id, resolved_type_args);
@@ -8927,13 +9701,19 @@ impl<'a> TypeContext<'a> {
                 let struct_ty = self.ast_type_to_hir_type(&ast_type)?;
 
                 // Extract the DefId from the resolved type
-                if let TypeKind::Adt { def_id, args: type_args } = struct_ty.kind() {
+                if let TypeKind::Adt {
+                    def_id,
+                    args: type_args,
+                } = struct_ty.kind()
+                {
                     // Check if it's a struct
                     if let Some(struct_info) = self.struct_defs.get(def_id).cloned() {
                         let mut hir_fields = Vec::new();
 
                         // Build substitution map for generics
-                        let subst: std::collections::HashMap<hir::ty::TyVarId, Type> = struct_info.generics.iter()
+                        let subst: std::collections::HashMap<hir::ty::TyVarId, Type> = struct_info
+                            .generics
+                            .iter()
                             .cloned()
                             .zip(type_args.iter().cloned())
                             .collect();
@@ -8941,16 +9721,20 @@ impl<'a> TypeContext<'a> {
                         // Type-check each field
                         for field in fields {
                             let field_name = self.symbol_to_string(field.name.node);
-                            let expected_ty = struct_info.fields.iter()
+                            let expected_ty = struct_info
+                                .fields
+                                .iter()
                                 .find(|f| f.name == field_name)
                                 .map(|f| self.substitute_type_vars(&f.ty, &subst))
-                                .ok_or_else(|| Box::new(TypeError::new(
-                                    TypeErrorKind::Mismatch {
-                                        expected: struct_ty.clone(),
-                                        found: Type::error(),
-                                    },
-                                    field.span,
-                                )))?;
+                                .ok_or_else(|| {
+                                    Box::new(TypeError::new(
+                                        TypeErrorKind::Mismatch {
+                                            expected: struct_ty.clone(),
+                                            found: Type::error(),
+                                        },
+                                        field.span,
+                                    ))
+                                })?;
 
                             let value_expr = if let Some(value) = &field.value {
                                 self.check_expr(value, &expected_ty)?
@@ -8970,7 +9754,9 @@ impl<'a> TypeContext<'a> {
                                 self.check_expr(&expr, &expected_ty)?
                             };
 
-                            let field_idx = struct_info.fields.iter()
+                            let field_idx = struct_info
+                                .fields
+                                .iter()
                                 .position(|f| f.name == field_name)
                                 .unwrap_or(0) as u32;
 
@@ -9053,19 +9839,26 @@ impl<'a> TypeContext<'a> {
         // For structs/handlers with generics, create fresh type vars for the generics
         // and collect them so unification can determine concrete types from field values
         let type_args: Vec<Type> = if !struct_info.generics.is_empty() {
-            struct_info.generics.iter().map(|_| self.unifier.fresh_var()).collect()
+            struct_info
+                .generics
+                .iter()
+                .map(|_| self.unifier.fresh_var())
+                .collect()
         } else {
             Vec::new()
         };
 
         // Create a substitution map from generic type param ids to fresh type vars
-        let subst: std::collections::HashMap<TyVarId, Type> = struct_info.generics.iter()
+        let subst: std::collections::HashMap<TyVarId, Type> = struct_info
+            .generics
+            .iter()
             .zip(type_args.iter())
             .map(|(ty_var_id, ty)| (*ty_var_id, ty.clone()))
             .collect();
 
         // Collect explicitly provided field names for struct spread validation
-        let provided_field_names: std::collections::HashSet<String> = fields.iter()
+        let provided_field_names: std::collections::HashSet<String> = fields
+            .iter()
             .map(|f| self.symbol_to_string(f.name.node))
             .collect();
 
@@ -9076,7 +9869,10 @@ impl<'a> TypeContext<'a> {
 
             // Verify the base expression has the same struct type
             match base_ty.kind() {
-                TypeKind::Adt { def_id: base_def_id, args: base_args } => {
+                TypeKind::Adt {
+                    def_id: base_def_id,
+                    args: base_args,
+                } => {
                     if *base_def_id != def_id {
                         return Err(Box::new(TypeError::new(
                             TypeErrorKind::Mismatch {
@@ -9089,15 +9885,17 @@ impl<'a> TypeContext<'a> {
 
                     // Unify type arguments from base with our fresh type vars
                     for (base_arg, type_arg) in base_args.iter().zip(type_args.iter()) {
-                        self.unifier.unify(base_arg, type_arg, base_expr.span).map_err(|_| {
-                            TypeError::new(
-                                TypeErrorKind::Mismatch {
-                                    expected: type_arg.clone(),
-                                    found: base_arg.clone(),
-                                },
-                                base_expr.span,
-                            )
-                        })?;
+                        self.unifier
+                            .unify(base_arg, type_arg, base_expr.span)
+                            .map_err(|_| {
+                                TypeError::new(
+                                    TypeErrorKind::Mismatch {
+                                        expected: type_arg.clone(),
+                                        found: base_arg.clone(),
+                                    },
+                                    base_expr.span,
+                                )
+                            })?;
                     }
                 }
                 _ => {
@@ -9132,7 +9930,10 @@ impl<'a> TypeContext<'a> {
                 self.check_expr(value, &expected_ty).map_err(|_| {
                     // Type::error() is acceptable here: a diagnostic is emitted below.
                     // The found type is only used for the error message.
-                    let found = self.infer_expr(value).map(|e| e.ty).unwrap_or_else(|_| Type::error());
+                    let found = self
+                        .infer_expr(value)
+                        .map(|e| e.ty)
+                        .unwrap_or_else(|_| Type::error());
                     TypeError::new(
                         TypeErrorKind::Mismatch {
                             expected: self.unifier.resolve(&expected_ty),
@@ -9155,15 +9956,17 @@ impl<'a> TypeContext<'a> {
                     span: field.span,
                 };
                 let inferred = self.infer_expr(&expr)?;
-                self.unifier.unify(&inferred.ty, &expected_ty, field.span).map_err(|_| {
-                    TypeError::new(
-                        TypeErrorKind::Mismatch {
-                            expected: self.unifier.resolve(&expected_ty),
-                            found: self.unifier.resolve(&inferred.ty),
-                        },
-                        field.span,
-                    )
-                })?;
+                self.unifier
+                    .unify(&inferred.ty, &expected_ty, field.span)
+                    .map_err(|_| {
+                        TypeError::new(
+                            TypeErrorKind::Mismatch {
+                                expected: self.unifier.resolve(&expected_ty),
+                                found: self.unifier.resolve(&inferred.ty),
+                            },
+                            field.span,
+                        )
+                    })?;
                 inferred
             };
 
@@ -9196,7 +9999,8 @@ impl<'a> TypeContext<'a> {
         }
 
         // Build result type with resolved type args
-        let resolved_type_args: Vec<Type> = type_args.iter()
+        let resolved_type_args: Vec<Type> = type_args
+            .iter()
             .map(|ty| self.unifier.resolve(ty))
             .collect();
         let result_ty = Type::adt(def_id, resolved_type_args);
@@ -9248,7 +10052,11 @@ impl<'a> TypeContext<'a> {
 
     /// DEF-001: Try to resolve a qualified path from module chain segments.
     /// Returns Some(hir::Expr) if the chain resolves to a module item.
-    fn try_resolve_qualified_chain(&mut self, segments: &[String], span: Span) -> Option<Result<hir::Expr, Box<TypeError>>> {
+    fn try_resolve_qualified_chain(
+        &mut self,
+        segments: &[String],
+        span: Span,
+    ) -> Option<Result<hir::Expr, Box<TypeError>>> {
         if segments.len() < 2 {
             return None;
         }
@@ -9429,7 +10237,8 @@ impl<'a> TypeContext<'a> {
                             match self.infer_expr(&arg.value) {
                                 Ok(arg_expr) => {
                                     if i < param_types.len() {
-                                        let _ = self.unifier.unify(&arg_expr.ty, &param_types[i], span);
+                                        let _ =
+                                            self.unifier.unify(&arg_expr.ty, &param_types[i], span);
                                     }
                                     hir_args.push(arg_expr);
                                 }
@@ -9494,12 +10303,16 @@ impl<'a> TypeContext<'a> {
                 // Check ADT (struct) types
                 if let TypeKind::Adt { def_id, args } = inner_ty.kind() {
                     if let Some(struct_info) = self.struct_defs.get(def_id).cloned() {
-                        if let Some(field_info) = struct_info.fields.iter().find(|f| f.name == field_name) {
+                        if let Some(field_info) =
+                            struct_info.fields.iter().find(|f| f.name == field_name)
+                        {
                             // Build substitution map from struct's generic params to concrete args
                             // For example, if struct Pair<T> has field first: T, and we have Pair<i32>,
                             // we need to substitute T -> i32 in the field type.
                             let subst: std::collections::HashMap<crate::hir::ty::TyVarId, Type> =
-                                struct_info.generics.iter()
+                                struct_info
+                                    .generics
+                                    .iter()
                                     .zip(args.iter())
                                     .map(|(&tyvar, arg)| (tyvar, arg.clone()))
                                     .collect();
@@ -9526,7 +10339,10 @@ impl<'a> TypeContext<'a> {
                 }
 
                 // Check anonymous record types
-                if let TypeKind::Record { fields, row_var, .. } = inner_ty.kind() {
+                if let TypeKind::Record {
+                    fields, row_var, ..
+                } = inner_ty.kind()
+                {
                     for (idx, record_field) in fields.iter().enumerate() {
                         let record_field_name = self.symbol_to_string(record_field.name);
                         if record_field_name == field_name {
@@ -9598,7 +10414,12 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of a cast expression.
-    fn infer_cast(&mut self, inner: &ast::Expr, ty: &ast::Type, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    fn infer_cast(
+        &mut self,
+        inner: &ast::Expr,
+        ty: &ast::Type,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let inner_expr = self.infer_expr(inner)?;
         let target_ty = self.ast_type_to_hir_type(ty)?;
 
@@ -9616,7 +10437,9 @@ impl<'a> TypeContext<'a> {
         }
 
         // Check if this valid cast requires @unsafe context
-        if !self.in_unsafe_context && Self::cast_requires_unsafe_context(&source_ty, &resolved_target) {
+        if !self.in_unsafe_context
+            && Self::cast_requires_unsafe_context(&source_ty, &resolved_target)
+        {
             return Err(Box::new(TypeError::new(
                 TypeErrorKind::InvalidCast {
                     source: source_ty,
@@ -9648,17 +10471,31 @@ impl<'a> TypeContext<'a> {
 
             // Primitive → Primitive
             (TypeKind::Primitive(src), TypeKind::Primitive(dst)) => {
-                let is_numeric = |p: &PrimitiveTy| matches!(p,
-                    PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Float(_));
+                let is_numeric = |p: &PrimitiveTy| {
+                    matches!(
+                        p,
+                        PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Float(_)
+                    )
+                };
                 // Numeric ↔ numeric (widening, narrowing, int↔float, sign reinterpret)
-                if is_numeric(src) && is_numeric(dst) { return true; }
+                if is_numeric(src) && is_numeric(dst) {
+                    return true;
+                }
                 // Bool → numeric
-                if matches!(src, PrimitiveTy::Bool) && is_numeric(dst) { return true; }
+                if matches!(src, PrimitiveTy::Bool) && is_numeric(dst) {
+                    return true;
+                }
                 // Numeric → bool (0=false, nonzero=true)
-                if is_numeric(src) && matches!(dst, PrimitiveTy::Bool) { return true; }
+                if is_numeric(src) && matches!(dst, PrimitiveTy::Bool) {
+                    return true;
+                }
                 // Char ↔ numeric
-                if matches!(src, PrimitiveTy::Char) && is_numeric(dst) { return true; }
-                if is_numeric(src) && matches!(dst, PrimitiveTy::Char) { return true; }
+                if matches!(src, PrimitiveTy::Char) && is_numeric(dst) {
+                    return true;
+                }
+                if is_numeric(src) && matches!(dst, PrimitiveTy::Char) {
+                    return true;
+                }
                 false
             }
 
@@ -9672,17 +10509,32 @@ impl<'a> TypeContext<'a> {
             }
 
             // Ref → Ptr (&T → *const T, &mut T → *mut T, &mut T → *const T)
-            (TypeKind::Ref { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
-                !dst_mut || *src_mut
-            }
+            (
+                TypeKind::Ref {
+                    mutable: src_mut, ..
+                },
+                TypeKind::Ptr {
+                    mutable: dst_mut, ..
+                },
+            ) => !dst_mut || *src_mut,
             // Ptr → Ref (*const T → &T, *mut T → &mut T) — unsafe dereference
-            (TypeKind::Ptr { mutable: src_mut, .. }, TypeKind::Ref { mutable: dst_mut, .. }) => {
-                !dst_mut || *src_mut
-            }
+            (
+                TypeKind::Ptr {
+                    mutable: src_mut, ..
+                },
+                TypeKind::Ref {
+                    mutable: dst_mut, ..
+                },
+            ) => !dst_mut || *src_mut,
             // Ptr → Ptr (pointer coercion, respects mutability)
-            (TypeKind::Ptr { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
-                !dst_mut || *src_mut
-            }
+            (
+                TypeKind::Ptr {
+                    mutable: src_mut, ..
+                },
+                TypeKind::Ptr {
+                    mutable: dst_mut, ..
+                },
+            ) => !dst_mut || *src_mut,
 
             // Fn → integer (function pointer to integer — static, no info lost)
             (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))) => true,
@@ -9691,13 +10543,22 @@ impl<'a> TypeContext<'a> {
 
             // Trait object coercion: &T → &dyn Trait or T → dyn Trait
             (_, TypeKind::DynTrait { .. }) => true,
-            (_, TypeKind::Ref { inner, .. }) if matches!(inner.kind(), TypeKind::DynTrait { .. }) => true,
-            (TypeKind::Ref { inner: src_inner, .. }, TypeKind::Ref { inner: dst_inner, .. })
-                if matches!(dst_inner.kind(), TypeKind::DynTrait { .. }) => {
+            (_, TypeKind::Ref { inner, .. })
+                if matches!(inner.kind(), TypeKind::DynTrait { .. }) =>
+            {
+                true
+            }
+            (
+                TypeKind::Ref {
+                    inner: src_inner, ..
+                },
+                TypeKind::Ref {
+                    inner: dst_inner, ..
+                },
+            ) if matches!(dst_inner.kind(), TypeKind::DynTrait { .. }) => {
                 // &T → &dyn Trait: source inner must be a concrete type implementing the trait
                 // (actual trait impl check deferred — the cast will fail at link time if wrong)
-                !matches!(src_inner.kind(), TypeKind::DynTrait { .. })
-                    || true // dyn Trait → dyn Trait pass-through
+                !matches!(src_inner.kind(), TypeKind::DynTrait { .. }) || true // dyn Trait → dyn Trait pass-through
             }
 
             // Ownership wrappers — check inner type
@@ -9725,8 +10586,12 @@ impl<'a> TypeContext<'a> {
             (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U64))) => true,
             (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Int(IntTy::I64))) => true,
             // Ownership wrappers — check inner
-            (TypeKind::Ownership { inner, .. }, _) => Self::cast_requires_unsafe_context(inner, target),
-            (_, TypeKind::Ownership { inner, .. }) => Self::cast_requires_unsafe_context(source, inner),
+            (TypeKind::Ownership { inner, .. }, _) => {
+                Self::cast_requires_unsafe_context(inner, target)
+            }
+            (_, TypeKind::Ownership { inner, .. }) => {
+                Self::cast_requires_unsafe_context(source, inner)
+            }
             _ => false,
         }
     }
@@ -9745,10 +10610,15 @@ impl<'a> TypeContext<'a> {
                 let name = self.symbol_to_string(path.segments[0].name.node);
                 if let Some(Binding::Local { mutable, .. }) = self.resolver.lookup(&name) {
                     if !mutable {
-                        return Err(Box::new(TypeError::new(
-                            TypeErrorKind::ImmutableAssign { name: name.clone() },
-                            span,
-                        ).with_help(format!("consider making `{name}` mutable: `let mut {name}`"))));
+                        return Err(Box::new(
+                            TypeError::new(
+                                TypeErrorKind::ImmutableAssign { name: name.clone() },
+                                span,
+                            )
+                            .with_help(format!(
+                                "consider making `{name}` mutable: `let mut {name}`"
+                            )),
+                        ));
                     }
                 }
             }
@@ -9778,7 +10648,11 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Infer type of an unsafe block.
-    fn infer_unsafe(&mut self, block: &ast::Block, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+    fn infer_unsafe(
+        &mut self,
+        block: &ast::Block,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
         let prev = self.in_unsafe_context;
         self.in_unsafe_context = true;
         let expected = self.unifier.fresh_var();
@@ -9806,7 +10680,11 @@ impl<'a> TypeContext<'a> {
                 let start_expr = self.infer_expr(s)?;
                 let element_ty = start_expr.ty.clone();
                 let end_expr = self.check_expr(e, &element_ty)?;
-                (Some(Box::new(start_expr)), Some(Box::new(end_expr)), element_ty)
+                (
+                    Some(Box::new(start_expr)),
+                    Some(Box::new(end_expr)),
+                    element_ty,
+                )
             }
             (Some(s), None) => {
                 let start_expr = self.infer_expr(s)?;
@@ -9852,13 +10730,16 @@ impl<'a> TypeContext<'a> {
     ) -> Result<hir::Expr, Box<TypeError>> {
         // The range must be a Range expression
         let (start, end, inclusive) = match &range.kind {
-            ast::ExprKind::Range { start, end, inclusive } => {
-                (start.as_deref(), end.as_deref(), *inclusive)
-            }
+            ast::ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => (start.as_deref(), end.as_deref(), *inclusive),
             _ => {
                 return Err(Box::new(TypeError::new(
                     TypeErrorKind::UnsupportedFeature {
-                        feature: "'in' operator requires a range expression (e.g., x in lo..hi)".into(),
+                        feature: "'in' operator requires a range expression (e.g., x in lo..hi)"
+                            .into(),
                     },
                     range.span,
                 )));
@@ -9894,7 +10775,11 @@ impl<'a> TypeContext<'a> {
         // Build upper bound check: value < end (half-open) or value <= end (inclusive)
         let upper_check = if let Some(end_ast) = end {
             let end_expr = self.check_expr(end_ast, &val_ty)?;
-            let cmp_op = if inclusive { ast::BinOp::Le } else { ast::BinOp::Lt };
+            let cmp_op = if inclusive {
+                ast::BinOp::Le
+            } else {
+                ast::BinOp::Lt
+            };
             hir::Expr::new(
                 hir::ExprKind::Binary {
                     op: cmp_op,
@@ -9934,20 +10819,27 @@ impl<'a> TypeContext<'a> {
         span: Span,
     ) -> Result<hir::Expr, Box<TypeError>> {
         // Get the macro name for dispatch
-        let macro_name = path.segments.last()
-            .map(|seg| self.interner.resolve(seg.name.node).unwrap_or("").to_string())
+        let macro_name = path
+            .segments
+            .last()
+            .map(|seg| {
+                self.interner
+                    .resolve(seg.name.node)
+                    .unwrap_or("")
+                    .to_string()
+            })
             .unwrap_or_default();
 
         match kind {
             // Format-style macros
-            ast::MacroCallKind::Format { format_str, args, named_args } => {
-                self.expand_format_macro(&macro_name, format_str, args, named_args, span)
-            }
+            ast::MacroCallKind::Format {
+                format_str,
+                args,
+                named_args,
+            } => self.expand_format_macro(&macro_name, format_str, args, named_args, span),
 
             // vec! macro
-            ast::MacroCallKind::Vec(vec_args) => {
-                self.expand_vec_macro(vec_args, span)
-            }
+            ast::MacroCallKind::Vec(vec_args) => self.expand_vec_macro(vec_args, span),
 
             // assert! macro
             ast::MacroCallKind::Assert { condition, message } => {
@@ -9955,9 +10847,7 @@ impl<'a> TypeContext<'a> {
             }
 
             // dbg! macro
-            ast::MacroCallKind::Dbg(expr) => {
-                self.expand_dbg_macro(expr, span)
-            }
+            ast::MacroCallKind::Dbg(expr) => self.expand_dbg_macro(expr, span),
 
             // matches! macro
             ast::MacroCallKind::Matches { expr, pattern } => {
@@ -9965,14 +10855,12 @@ impl<'a> TypeContext<'a> {
             }
 
             // Custom/user-defined macros - not yet supported
-            ast::MacroCallKind::Custom { .. } => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: format!("user-defined macro `{}!`", macro_name),
-                    },
-                    span,
-                )))
-            }
+            ast::MacroCallKind::Custom { .. } => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: format!("user-defined macro `{}!`", macro_name),
+                },
+                span,
+            ))),
         }
     }
 
@@ -10081,9 +10969,7 @@ impl<'a> TypeContext<'a> {
                 // Since we only support constant literals, we don't strictly require usize type
                 let count_is_int = matches!(
                     count_expr.ty.kind(),
-                    hir::TypeKind::Primitive(
-                        hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_)
-                    )
+                    hir::TypeKind::Primitive(hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_))
                 );
                 if !count_is_int {
                     return Err(Box::new(TypeError::new(
@@ -10115,12 +11001,16 @@ impl<'a> TypeContext<'a> {
                     }
                     None => {
                         // Count is not a constant - for now, error
-                        Err(Box::new(TypeError::new(
-                            TypeErrorKind::UnsupportedFeature {
-                                feature: "vec! repeat count must be a constant integer literal".to_string(),
-                            },
-                            span,
-                        ).with_help("use a literal like `vec![0; 10]` instead of a variable")))
+                        Err(Box::new(
+                            TypeError::new(
+                                TypeErrorKind::UnsupportedFeature {
+                                    feature: "vec! repeat count must be a constant integer literal"
+                                        .to_string(),
+                                },
+                                span,
+                            )
+                            .with_help("use a literal like `vec![0; 10]` instead of a variable"),
+                        ))
                     }
                 }
             }
@@ -10138,7 +11028,8 @@ impl<'a> TypeContext<'a> {
 
         // Condition must be bool
         let bool_ty = Type::new(hir::TypeKind::Primitive(hir::PrimitiveTy::Bool));
-        self.unifier.unify(&bool_ty, &cond_expr.ty, condition.span)?;
+        self.unifier
+            .unify(&bool_ty, &cond_expr.ty, condition.span)?;
 
         let msg_expr = if let Some(msg) = message {
             Some(Box::new(self.infer_expr(msg)?))

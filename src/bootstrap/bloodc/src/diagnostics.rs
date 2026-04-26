@@ -193,14 +193,20 @@ impl ErrorCode {
             ErrorCode::UnsupportedSyntax => "unsupported syntax from another language",
             ErrorCode::InvalidMacroFragment => "invalid macro fragment specifier",
             // Pointer/Memory warnings
-            ErrorCode::DeeplyNestedBox => "deeply nested box type causes multiple generation checks",
-            ErrorCode::PointerHeavyStruct => "struct has high pointer density (>75% pointer fields)",
+            ErrorCode::DeeplyNestedBox => {
+                "deeply nested box type causes multiple generation checks"
+            }
+            ErrorCode::PointerHeavyStruct => {
+                "struct has high pointer density (>75% pointer fields)"
+            }
             ErrorCode::LinkedListPattern => "linked list pattern detected",
             ErrorCode::PointerArrayPattern => "array of pointers detected",
             ErrorCode::ExcessiveIndirection => "excessive pointer indirection (>3 levels)",
             // Effect/Handler warnings
             ErrorCode::DeeplyNestedHandlers => "deeply nested effect handlers add lookup overhead",
-            ErrorCode::LargeHandlerDefinition => "handler with many operations may impact readability",
+            ErrorCode::LargeHandlerDefinition => {
+                "handler with many operations may impact readability"
+            }
             // Syntax/Parser warnings
             ErrorCode::IgnoredAttributeOnUse => "attributes on use declarations are ignored",
             ErrorCode::DeprecatedSyntax => "deprecated syntax usage",
@@ -434,16 +440,18 @@ impl<'a> DiagnosticEmitter<'a> {
     /// Emit a diagnostic to stderr.
     pub fn emit(&self, diagnostic: &Diagnostic) {
         // Use the diagnostic's source file if provided, otherwise use the emitter's default
-        let (filename, source): (&str, &str) = match (&diagnostic.source_file, &diagnostic.source_content) {
-            (Some(path), Some(content)) => {
-                // Leak the strings to get 'static lifetimes - this is OK since diagnostics
-                // are only emitted once and the program will exit shortly after errors
-                let path_str: &'static str = Box::leak(path.display().to_string().into_boxed_str());
-                let content_str: &'static str = Box::leak(content.clone().into_boxed_str());
-                (path_str, content_str)
-            }
-            _ => (self.filename, self.source),
-        };
+        let (filename, source): (&str, &str) =
+            match (&diagnostic.source_file, &diagnostic.source_content) {
+                (Some(path), Some(content)) => {
+                    // Leak the strings to get 'static lifetimes - this is OK since diagnostics
+                    // are only emitted once and the program will exit shortly after errors
+                    let path_str: &'static str =
+                        Box::leak(path.display().to_string().into_boxed_str());
+                    let content_str: &'static str = Box::leak(content.clone().into_boxed_str());
+                    (path_str, content_str)
+                }
+                _ => (self.filename, self.source),
+            };
 
         let mut builder = Report::build(
             diagnostic.kind.to_report_kind(),
@@ -489,9 +497,9 @@ impl<'a> DiagnosticEmitter<'a> {
         let report = builder.finish();
 
         // Write to stderr
-        report
-            .eprint((filename, Source::from(source)))
-            .expect("BUG: failed to write diagnostic to stderr - terminal may be in an invalid state");
+        report.eprint((filename, Source::from(source))).expect(
+            "BUG: failed to write diagnostic to stderr - terminal may be in an invalid state",
+        );
     }
 }
 
@@ -637,8 +645,9 @@ impl Ice {
 
     /// Convert to a Diagnostic for integration with the diagnostic system.
     pub fn to_diagnostic(&self, span: Span) -> Diagnostic {
-        let mut diag = Diagnostic::error(format!("internal compiler error: {}", self.message), span)
-            .with_code("E9000");
+        let mut diag =
+            Diagnostic::error(format!("internal compiler error: {}", self.message), span)
+                .with_code("E9000");
 
         diag = diag.with_suggestion(format!(
             "This is a bug in the Blood compiler ({}:{}). Please report it.",

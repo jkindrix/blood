@@ -60,7 +60,8 @@ impl<'a> Printer<'a> {
 
     /// Writes indentation at the current level.
     fn write_indent(&mut self) {
-        self.output.push_str(&self.config.indent_at(self.indent_level));
+        self.output
+            .push_str(&self.config.indent_at(self.indent_level));
     }
 
     /// Increases the indentation level.

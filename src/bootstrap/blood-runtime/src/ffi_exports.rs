@@ -31,15 +31,15 @@ extern "C" {
     fn longjmp(env: *mut c_void, val: c_int) -> !;
 }
 
-use crate::memory::{
-    BloodPtr, PointerMetadata, generation, get_slot_generation, Region,
-    size_class_for, slot_size_for_class, SIZE_CLASS_LARGE, unregister_allocation, register_allocation,
-    register_allocation_with_region, get_slot_info, record_system_alloc, record_system_free,
-    system_alloc_stats, system_alloc_live_bytes, collect_cycles,
-};
 use crate::continuation::{
-    ContinuationRef, Continuation, EffectContext,
-    register_continuation, take_continuation, has_continuation,
+    has_continuation, register_continuation, take_continuation, Continuation, ContinuationRef,
+    EffectContext,
+};
+use crate::memory::{
+    collect_cycles, generation, get_slot_generation, get_slot_info, record_system_alloc,
+    record_system_free, register_allocation, register_allocation_with_region, size_class_for,
+    slot_size_for_class, system_alloc_live_bytes, system_alloc_stats, unregister_allocation,
+    BloodPtr, PointerMetadata, Region, SIZE_CLASS_LARGE,
 };
 
 /// Fiber handle for continuation capture.
@@ -66,7 +66,9 @@ fn regions_disabled() -> bool {
     INIT.call_once(|| {
         if std::env::var("BLOOD_NO_REGIONS").is_ok() {
             REGIONS_DISABLED.store(true, AtomicOrdering::Relaxed);
-            eprintln!("[runtime] BLOOD_NO_REGIONS=1: region allocation disabled, using system allocator");
+            eprintln!(
+                "[runtime] BLOOD_NO_REGIONS=1: region allocation disabled, using system allocator"
+            );
         }
     });
     REGIONS_DISABLED.load(AtomicOrdering::Relaxed)
@@ -107,9 +109,11 @@ static ALLOC_HIST_BYTES: [AtomicU64; ALLOC_HIST_BUCKETS] = {
 
 #[inline]
 fn alloc_hist_bucket(size: usize) -> usize {
-    if size == 0 { return 0; }
+    if size == 0 {
+        return 0;
+    }
     let bits = (usize::BITS - size.leading_zeros()) as usize; // ceil(log2(size)) + 1
-    // bits=1 for size=1, bits=4 for size=8..15, bits=14 for 8192..16383
+                                                              // bits=1 for size=1, bits=4 for size=8..15, bits=14 for 8192..16383
     let bucket = if bits <= 3 { 0 } else { bits - 3 }; // 0 for 1-8, 1 for 9-16, etc.
     bucket.min(ALLOC_HIST_BUCKETS - 1)
 }
@@ -152,7 +156,9 @@ static ALLOC_TAG_ENABLED: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 fn record_alloc_tag(size: usize) {
-    if ALLOC_TAG_ENABLED.load(AtomicOrdering::Relaxed) == 0 { return; }
+    if ALLOC_TAG_ENABLED.load(AtomicOrdering::Relaxed) == 0 {
+        return;
+    }
     let tag = ALLOC_TAG.load(AtomicOrdering::Relaxed) as usize;
     if tag < MAX_ALLOC_TAGS {
         TAG_COUNTS[tag].fetch_add(1, AtomicOrdering::Relaxed);
@@ -228,7 +234,10 @@ pub unsafe extern "C" fn blood_set_was_resumed() {
 pub unsafe extern "C" fn blood_handler_push_abort_target(jmpbuf_ptr: *mut u8) {
     let depth = ABORT_DEPTH.with(|d| d.get());
     if depth >= MAX_ABORT_TARGETS {
-        eprintln!("BLOOD RUNTIME ERROR: handler abort target stack overflow (depth {})", depth);
+        eprintln!(
+            "BLOOD RUNTIME ERROR: handler abort target stack overflow (depth {})",
+            depth
+        );
         std::process::abort();
     }
     ABORT_TARGETS.with(|targets| {
@@ -295,9 +304,7 @@ fn current_active_region() -> u64 {
     if regions_disabled() {
         return 0;
     }
-    ACTIVE_REGION_STACK.with(|stack| {
-        stack.borrow().last().copied().unwrap_or(0)
-    })
+    ACTIVE_REGION_STACK.with(|stack| stack.borrow().last().copied().unwrap_or(0))
 }
 
 /// Region-aware allocation. When a region is active, allocates from it.
@@ -333,7 +340,11 @@ unsafe fn runtime_dealloc(ptr: *mut u8, layout: std::alloc::Layout) {
 /// Fallback: allocates new space and copies. The old buffer is abandoned (not
 /// freed) because Blood lacks a borrow checker — other code may still reference
 /// old buffer contents through dangling pointers.
-unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+unsafe fn runtime_realloc(
+    ptr: *mut u8,
+    old_layout: std::alloc::Layout,
+    new_size: usize,
+) -> *mut u8 {
     let region_id = current_active_region();
     if region_id != 0 {
         // If the old pointer was allocated from the system heap (not any region),
@@ -385,7 +396,8 @@ unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size
                         );
                     }
                     REALLOC_INPLACE_ELIGIBLE.fetch_add(1, AtomicOrdering::Relaxed);
-                    REALLOC_INPLACE_SAVED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
+                    REALLOC_INPLACE_SAVED_BYTES
+                        .fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
                     return ptr; // Same pointer, buffer extended in place
                 }
             }
@@ -414,7 +426,9 @@ pub extern "C" fn blood_region_activate(region_id: u64) {
 /// region (or global allocation if the stack is empty).
 #[no_mangle]
 pub extern "C" fn blood_region_deactivate() {
-    ACTIVE_REGION_STACK.with(|stack| { stack.borrow_mut().pop(); });
+    ACTIVE_REGION_STACK.with(|stack| {
+        stack.borrow_mut().pop();
+    });
 }
 
 /// Deactivate the current region and return its handle.
@@ -530,7 +544,11 @@ pub unsafe extern "C" fn string_len(s: *const BloodString) -> i64 {
 /// `s` must be a valid pointer to a BloodString.
 #[no_mangle]
 pub unsafe extern "C" fn string_is_empty(s: *const BloodString) -> i32 {
-    if (*s).len == 0 { 1 } else { 0 }
+    if (*s).len == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Push a character to a String.
@@ -634,7 +652,11 @@ pub unsafe extern "C" fn string_push_str(s: *mut BloodString, other: *const Bloo
         return;
     }
     debug_assert!(((*s).len as usize) + (bytes_len as usize) <= (*s).capacity as usize);
-    std::ptr::copy_nonoverlapping((*other).ptr, (*s).ptr.add((*s).len as usize), bytes_len as usize);
+    std::ptr::copy_nonoverlapping(
+        (*other).ptr,
+        (*s).ptr.add((*s).len as usize),
+        bytes_len as usize,
+    );
     (*s).len = new_len;
 }
 
@@ -871,7 +893,7 @@ pub unsafe extern "C" fn str_eq(a: BloodStr, b: BloodStr) -> bool {
         return false;
     }
     if a.len == 0 {
-        return true;  // Both empty
+        return true; // Both empty
     }
     if a.ptr.is_null() || b.ptr.is_null() {
         return a.ptr.is_null() && b.ptr.is_null();
@@ -892,7 +914,10 @@ pub unsafe extern "C" fn blood_str_concat(a: BloodStr, b: BloodStr) -> BloodStr 
     let total_len = len_a + len_b;
 
     if total_len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     // Allocate buffer for concatenated string
@@ -953,7 +978,10 @@ pub unsafe extern "C" fn str_char_at(s: *const BloodStr, index: u64) -> BloodOpt
     if let Ok(str_val) = std::str::from_utf8(slice) {
         // Get the character at the byte index
         if let Some(ch) = str_val.get(index as usize..).and_then(|s| s.chars().next()) {
-            return BloodOptionChar { tag: 1, value: ch as i32 };
+            return BloodOptionChar {
+                tag: 1,
+                value: ch as i32,
+            };
         }
     }
     BloodOptionChar { tag: 0, value: 0 }
@@ -979,7 +1007,10 @@ pub unsafe extern "C" fn str_char_at_index(s: *const BloodStr, char_index: u64) 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
     if let Ok(str_val) = std::str::from_utf8(slice) {
         if let Some(ch) = str_val.chars().nth(char_index as usize) {
-            return BloodOptionChar { tag: 1, value: ch as i32 };
+            return BloodOptionChar {
+                tag: 1,
+                value: ch as i32,
+            };
         }
     }
     BloodOptionChar { tag: 0, value: 0 }
@@ -1010,10 +1041,16 @@ pub unsafe extern "C" fn string_char_at(s: *const BloodStr, index: u64) -> Blood
 #[no_mangle]
 pub unsafe extern "C" fn str_as_bytes(s: *const BloodStr) -> BloodStr {
     if s.is_null() {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
     // Return the same {ptr, len} - str bytes ARE the byte slice
-    BloodStr { ptr: (*s).ptr, len: (*s).len }
+    BloodStr {
+        ptr: (*s).ptr,
+        len: (*s).len,
+    }
 }
 
 /// Convert a String to a byte slice.
@@ -1091,7 +1128,11 @@ pub unsafe extern "C" fn string_contains(s: *const BloodStr, pattern: *const Blo
 
     if s.ptr.is_null() || s.len == 0 {
         // Empty string only contains empty pattern
-        return if pattern.ptr.is_null() || pattern.len == 0 { 1 } else { 0 };
+        return if pattern.ptr.is_null() || pattern.len == 0 {
+            1
+        } else {
+            0
+        };
     }
     if pattern.ptr.is_null() || pattern.len == 0 {
         return 1; // Empty pattern is in every string
@@ -1105,7 +1146,7 @@ pub unsafe extern "C" fn string_contains(s: *const BloodStr, pattern: *const Blo
         return 0;
     }
     for i in 0..=(s_slice.len() - p_slice.len()) {
-        if &s_slice[i..i+p_slice.len()] == p_slice {
+        if &s_slice[i..i + p_slice.len()] == p_slice {
             return 1;
         }
     }
@@ -1144,7 +1185,11 @@ pub unsafe extern "C" fn string_starts_with(s: *const BloodStr, prefix: *const B
     let s_slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
     let p_slice = std::slice::from_raw_parts(prefix.ptr, prefix.len as usize);
 
-    if s_slice.starts_with(p_slice) { 1 } else { 0 }
+    if s_slice.starts_with(p_slice) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Check if a String ends with a suffix.
@@ -1179,7 +1224,11 @@ pub unsafe extern "C" fn string_ends_with(s: *const BloodStr, suffix: *const Blo
     let s_slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
     let p_slice = std::slice::from_raw_parts(suffix.ptr, suffix.len as usize);
 
-    if s_slice.ends_with(p_slice) { 1 } else { 0 }
+    if s_slice.ends_with(p_slice) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Find the first occurrence of a substring in a String.
@@ -1234,7 +1283,7 @@ pub unsafe extern "C" fn string_find(s: *const BloodStr, pattern: *const BloodSt
     }
 
     for i in 0..=(s_slice.len() - p_slice.len()) {
-        if &s_slice[i..i+p_slice.len()] == p_slice {
+        if &s_slice[i..i + p_slice.len()] == p_slice {
             *out_tag = 1; // Some(i)
             *out_payload = i as i64;
             return;
@@ -1295,7 +1344,7 @@ pub unsafe extern "C" fn string_rfind(s: *const BloodStr, pattern: *const BloodS
 
     // Search from end
     for i in (0..=(s_slice.len() - p_slice.len())).rev() {
-        if &s_slice[i..i+p_slice.len()] == p_slice {
+        if &s_slice[i..i + p_slice.len()] == p_slice {
             *out_tag = 1; // Some(i)
             *out_payload = i as i64;
             return;
@@ -1319,11 +1368,17 @@ pub unsafe extern "C" fn string_rfind(s: *const BloodStr, pattern: *const BloodS
 #[no_mangle]
 pub unsafe extern "C" fn string_trim(s: *const BloodStr) -> BloodStr {
     if s.is_null() {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
     let s = &*s;
     if s.ptr.is_null() || s.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
@@ -1359,11 +1414,17 @@ pub unsafe extern "C" fn string_trim(s: *const BloodStr) -> BloodStr {
 #[no_mangle]
 pub unsafe extern "C" fn string_trim_start(s: *const BloodStr) -> BloodStr {
     if s.is_null() {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
     let s = &*s;
     if s.ptr.is_null() || s.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
@@ -1393,11 +1454,17 @@ pub unsafe extern "C" fn string_trim_start(s: *const BloodStr) -> BloodStr {
 #[no_mangle]
 pub unsafe extern "C" fn string_trim_end(s: *const BloodStr) -> BloodStr {
     if s.is_null() {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
     let s = &*s;
     if s.ptr.is_null() || s.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
@@ -1427,17 +1494,31 @@ pub unsafe extern "C" fn string_trim_end(s: *const BloodStr) -> BloodStr {
 #[no_mangle]
 pub unsafe extern "C" fn string_to_uppercase(s: *const BloodStr) -> BloodVec {
     if s.is_null() {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
     let s = &*s;
     if s.ptr.is_null() || s.len == 0 {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
     let str_slice = match std::str::from_utf8(slice) {
         Ok(s) => s,
-        Err(_) => return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 },
+        Err(_) => {
+            return BloodVec {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
     };
     let upper = str_slice.to_uppercase();
     let bytes = upper.into_bytes();
@@ -1469,17 +1550,31 @@ pub unsafe extern "C" fn string_to_uppercase(s: *const BloodStr) -> BloodVec {
 #[no_mangle]
 pub unsafe extern "C" fn string_to_lowercase(s: *const BloodStr) -> BloodVec {
     if s.is_null() {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
     let s = &*s;
     if s.ptr.is_null() || s.len == 0 {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s.ptr, s.len as usize);
     let str_slice = match std::str::from_utf8(slice) {
         Ok(s) => s,
-        Err(_) => return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 },
+        Err(_) => {
+            return BloodVec {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
     };
     let lower = str_slice.to_lowercase();
     let bytes = lower.into_bytes();
@@ -1517,17 +1612,31 @@ pub unsafe extern "C" fn string_replace(
     to: *const BloodStr,
 ) -> BloodVec {
     if s.is_null() {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
     let s_ref = &*s;
     if s_ref.ptr.is_null() || s_ref.len == 0 {
-        return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 };
+        return BloodVec {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
     }
 
     let slice = std::slice::from_raw_parts(s_ref.ptr, s_ref.len as usize);
     let str_slice = match std::str::from_utf8(slice) {
         Ok(s) => s,
-        Err(_) => return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 },
+        Err(_) => {
+            return BloodVec {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
     };
 
     // Get the from pattern
@@ -1538,11 +1647,18 @@ pub unsafe extern "C" fn string_replace(
         if from_ref.ptr.is_null() || from_ref.len == 0 {
             ""
         } else {
-            match std::str::from_utf8(
-                std::slice::from_raw_parts(from_ref.ptr, from_ref.len as usize)
-            ) {
+            match std::str::from_utf8(std::slice::from_raw_parts(
+                from_ref.ptr,
+                from_ref.len as usize,
+            )) {
                 Ok(s) => s,
-                Err(_) => return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 },
+                Err(_) => {
+                    return BloodVec {
+                        ptr: std::ptr::null_mut(),
+                        len: 0,
+                        capacity: 0,
+                    }
+                }
             }
         }
     };
@@ -1555,11 +1671,15 @@ pub unsafe extern "C" fn string_replace(
         if to_ref.ptr.is_null() || to_ref.len == 0 {
             ""
         } else {
-            match std::str::from_utf8(
-                std::slice::from_raw_parts(to_ref.ptr, to_ref.len as usize)
-            ) {
+            match std::str::from_utf8(std::slice::from_raw_parts(to_ref.ptr, to_ref.len as usize)) {
                 Ok(s) => s,
-                Err(_) => return BloodVec { ptr: std::ptr::null_mut(), len: 0, capacity: 0 },
+                Err(_) => {
+                    return BloodVec {
+                        ptr: std::ptr::null_mut(),
+                        len: 0,
+                        capacity: 0,
+                    }
+                }
             }
         }
     };
@@ -1650,8 +1770,8 @@ fn is_ascii_whitespace(b: u8) -> bool {
 /// On EOF or error, returns an empty string (ptr=null, len=0).
 #[no_mangle]
 pub extern "C" fn read_line() -> BloodStr {
-    use std::io::BufRead;
     use std::cell::RefCell;
+    use std::io::BufRead;
 
     // Thread-local buffer for holding the read line.
     // Using thread_local avoids the unsafety of static mut.
@@ -1667,7 +1787,10 @@ pub extern "C" fn read_line() -> BloodStr {
         buf.clear();
 
         match handle.read_until(b'\n', &mut buf) {
-            Ok(0) => BloodStr { ptr: std::ptr::null(), len: 0 }, // EOF
+            Ok(0) => BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }, // EOF
             Ok(n) => {
                 // Strip trailing newline if present
                 let len = if n > 0 && buf[n - 1] == b'\n' {
@@ -1686,7 +1809,10 @@ pub extern "C" fn read_line() -> BloodStr {
                     len: len as u64,
                 }
             }
-            Err(_) => BloodStr { ptr: std::ptr::null(), len: 0 },
+            Err(_) => BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            },
         }
     })
 }
@@ -1784,13 +1910,21 @@ fn validate_and_canonicalize_path(path_str: &str) -> Option<std::path::PathBuf> 
 #[no_mangle]
 pub unsafe extern "C" fn path_canonicalize(path: BloodStr) -> BloodStr {
     if path.ptr.is_null() || path.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let path_slice = std::slice::from_raw_parts(path.ptr, path.len as usize);
     let path_str = match std::str::from_utf8(path_slice) {
         Ok(s) => s,
-        Err(_) => return BloodStr { ptr: std::ptr::null(), len: 0 },
+        Err(_) => {
+            return BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }
+        }
     };
 
     match validate_and_canonicalize_path(path_str) {
@@ -1798,7 +1932,10 @@ pub unsafe extern "C" fn path_canonicalize(path: BloodStr) -> BloodStr {
             let canonical_str = canonical.to_string_lossy().into_owned();
             string_to_blood_str(canonical_str)
         }
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -1945,9 +2082,20 @@ pub unsafe extern "C" fn file_open(path: BloodStr, mode: BloodStr) -> i64 {
     let file_result = match mode_str {
         "r" => File::open(&canonical_path),
         "w" => File::create(&canonical_path),
-        "a" => OpenOptions::new().append(true).create(true).open(&canonical_path),
-        "rw" => OpenOptions::new().read(true).write(true).open(&canonical_path),
-        "rw+" => OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&canonical_path),
+        "a" => OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&canonical_path),
+        "rw" => OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&canonical_path),
+        "rw+" => OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&canonical_path),
         _ => return -1,
     };
 
@@ -1972,8 +2120,8 @@ pub unsafe extern "C" fn file_open(path: BloodStr, mode: BloodStr) -> i64 {
 /// The buffer must be valid for `count` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn file_read(fd: i64, buf: *mut u8, count: u64) -> i64 {
-    use std::os::unix::io::FromRawFd;
     use std::io::Read;
+    use std::os::unix::io::FromRawFd;
 
     if fd < 0 || buf.is_null() {
         return -1;
@@ -2004,8 +2152,8 @@ pub unsafe extern "C" fn file_read(fd: i64, buf: *mut u8, count: u64) -> i64 {
 /// The buffer must be valid for `count` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn file_write(fd: i64, buf: *const u8, count: u64) -> i64 {
-    use std::os::unix::io::FromRawFd;
     use std::io::Write;
+    use std::os::unix::io::FromRawFd;
 
     if fd < 0 || buf.is_null() {
         return -1;
@@ -2062,24 +2210,40 @@ pub unsafe extern "C" fn file_read_to_string(path: BloodStr) -> BloodStr {
     use std::fs;
 
     if path.ptr.is_null() || path.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let path_slice = std::slice::from_raw_parts(path.ptr, path.len as usize);
     let path_str = match std::str::from_utf8(path_slice) {
         Ok(s) => s,
-        Err(_) => return BloodStr { ptr: std::ptr::null(), len: 0 },
+        Err(_) => {
+            return BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }
+        }
     };
 
     // Validate path for traversal attacks
     let canonical_path = match validate_and_canonicalize_path(path_str) {
         Some(p) => p,
-        None => return BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => {
+            return BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }
+        }
     };
 
     match fs::read_to_string(&canonical_path) {
         Ok(contents) => string_to_blood_str(contents),
-        Err(_) => BloodStr { ptr: std::ptr::null(), len: 0 },
+        Err(_) => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -2171,7 +2335,11 @@ pub unsafe extern "C" fn file_append_string(path: BloodStr, content: BloodStr) -
         }
     };
 
-    match OpenOptions::new().append(true).create(true).open(&canonical_path) {
+    match OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&canonical_path)
+    {
         Ok(mut file) => file.write_all(content_str.as_bytes()).is_ok(),
         Err(_) => false,
     }
@@ -2291,12 +2459,15 @@ pub unsafe extern "C" fn file_size(path: BloodStr) -> i64 {
 
 /// Registry of open temporary files.
 /// Maps handle IDs to (File, PathBuf, delete_on_close) tuples.
-static TEMP_FILE_REGISTRY: OnceLock<Mutex<HashMap<u64, (std::fs::File, std::path::PathBuf, bool)>>> = OnceLock::new();
+static TEMP_FILE_REGISTRY: OnceLock<
+    Mutex<HashMap<u64, (std::fs::File, std::path::PathBuf, bool)>>,
+> = OnceLock::new();
 
 /// Counter for generating unique temp file handles.
 static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-fn get_temp_file_registry() -> &'static Mutex<HashMap<u64, (std::fs::File, std::path::PathBuf, bool)>> {
+fn get_temp_file_registry(
+) -> &'static Mutex<HashMap<u64, (std::fs::File, std::path::PathBuf, bool)>> {
     TEMP_FILE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -2347,8 +2518,11 @@ pub unsafe extern "C" fn temp_file_create(
     };
 
     // Validate prefix and suffix don't contain path separators (security)
-    if prefix_str.contains('/') || prefix_str.contains('\\') ||
-       suffix_str.contains('/') || suffix_str.contains('\\') {
+    if prefix_str.contains('/')
+        || prefix_str.contains('\\')
+        || suffix_str.contains('/')
+        || suffix_str.contains('\\')
+    {
         return 0;
     }
 
@@ -2369,7 +2543,11 @@ pub unsafe extern "C" fn temp_file_create(
                 .unwrap_or(0);
             let counter = TEMP_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             // Mix time with counter and process ID for uniqueness
-            nanos.wrapping_mul(31).wrapping_add(counter).wrapping_mul(17).wrapping_add(std::process::id() as u64)
+            nanos
+                .wrapping_mul(31)
+                .wrapping_add(counter)
+                .wrapping_mul(17)
+                .wrapping_add(std::process::id() as u64)
         };
 
         let filename = format!("{}{:016x}{}", prefix_str, random_component, suffix_str);
@@ -2382,8 +2560,8 @@ pub unsafe extern "C" fn temp_file_create(
             OpenOptions::new()
                 .read(true)
                 .write(true)
-                .create_new(true)  // O_EXCL - fail if exists
-                .mode(0o600)       // Owner read/write only
+                .create_new(true) // O_EXCL - fail if exists
+                .mode(0o600) // Owner read/write only
                 .open(&path)
         };
 
@@ -2392,7 +2570,7 @@ pub unsafe extern "C" fn temp_file_create(
             OpenOptions::new()
                 .read(true)
                 .write(true)
-                .create_new(true)  // Fail if exists
+                .create_new(true) // Fail if exists
                 .open(&path)
         };
 
@@ -2539,7 +2717,10 @@ pub extern "C" fn temp_file_seek(handle: u64, position: u64) -> i64 {
 #[no_mangle]
 pub extern "C" fn temp_file_path(handle: u64) -> BloodStr {
     if handle == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let registry = get_temp_file_registry();
@@ -2547,7 +2728,12 @@ pub extern "C" fn temp_file_path(handle: u64) -> BloodStr {
 
     let entry = match guard.get(&handle) {
         Some(e) => e,
-        None => return BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => {
+            return BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }
+        }
     };
 
     let path_str = entry.1.to_string_lossy().into_owned();
@@ -2690,18 +2876,29 @@ pub unsafe extern "C" fn system(cmd: BloodStr) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn env_get(name: BloodStr) -> BloodStr {
     if name.ptr.is_null() || name.len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     let name_slice = std::slice::from_raw_parts(name.ptr, name.len as usize);
     let name_str = match std::str::from_utf8(name_slice) {
         Ok(s) => s,
-        Err(_) => return BloodStr { ptr: std::ptr::null(), len: 0 },
+        Err(_) => {
+            return BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            }
+        }
     };
 
     match std::env::var(name_str) {
         Ok(value) => string_to_blood_str(value),
-        Err(_) => BloodStr { ptr: std::ptr::null(), len: 0 },
+        Err(_) => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -2775,7 +2972,10 @@ pub extern "C" fn args_count() -> i32 {
 #[no_mangle]
 pub extern "C" fn args_get(index: i32) -> BloodStr {
     if index < 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     match ARGS.get() {
@@ -2786,10 +2986,16 @@ pub extern "C" fn args_get(index: i32) -> BloodStr {
                     len: arg.len() as u64,
                 }
             } else {
-                BloodStr { ptr: std::ptr::null(), len: 0 }
+                BloodStr {
+                    ptr: std::ptr::null(),
+                    len: 0,
+                }
             }
         }
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -2805,7 +3011,10 @@ pub extern "C" fn args_join() -> BloodStr {
             let joined = args.join(" ");
             string_to_blood_str(joined)
         }
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -3029,7 +3238,10 @@ fn string_to_blood_str(s: String) -> BloodStr {
     let len = bytes.len();
 
     if len == 0 {
-        return BloodStr { ptr: std::ptr::null(), len: 0 };
+        return BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
     }
 
     // Allocate buffer for the string
@@ -3099,11 +3311,7 @@ pub unsafe extern "C" fn blood_alloc(
     let gen = register_allocation(address, size);
 
     // Create a BloodPtr with the assigned generation (region allocation)
-    let blood_ptr = BloodPtr::new(
-        ptr as usize,
-        gen,
-        PointerMetadata::REGION,
-    );
+    let blood_ptr = BloodPtr::new(ptr as usize, gen, PointerMetadata::REGION);
 
     *out_addr = blood_ptr.address() as u64;
     *out_gen_meta = ((blood_ptr.generation() as u64) << 32) | (blood_ptr.metadata().bits() as u64);
@@ -3127,10 +3335,7 @@ pub unsafe extern "C" fn blood_alloc(
 ///
 /// `out_generation` must be a valid pointer to a writable u32 location.
 #[no_mangle]
-pub unsafe extern "C" fn blood_alloc_or_abort(
-    size: usize,
-    out_generation: *mut u32,
-) -> u64 {
+pub unsafe extern "C" fn blood_alloc_or_abort(size: usize, out_generation: *mut u32) -> u64 {
     if out_generation.is_null() {
         blood_panic(c"blood_alloc_or_abort: null out_generation pointer".as_ptr());
     }
@@ -3148,7 +3353,9 @@ pub unsafe extern "C" fn blood_alloc_or_abort(
         let align = 16.max(std::mem::align_of::<usize>());
         let header_addr = blood_region_alloc(region_id, total_size, align);
         if header_addr == 0 {
-            blood_panic(c"blood_alloc_or_abort: region allocation failed (out of region memory)".as_ptr());
+            blood_panic(
+                c"blood_alloc_or_abort: region allocation failed (out of region memory)".as_ptr(),
+            );
         }
         // Register with region_id for invalidation on region destroy
         let gen = register_allocation_with_region(header_addr, total_size, region_id);
@@ -3227,10 +3434,7 @@ pub unsafe extern "C" fn blood_free(addr: u64, size: usize) {
 ///
 /// Returns 1 if valid, 0 if stale.
 #[no_mangle]
-pub extern "C" fn blood_check_generation(
-    expected_gen: u32,
-    slot_gen: u32,
-) -> c_int {
+pub extern "C" fn blood_check_generation(expected_gen: u32, slot_gen: u32) -> c_int {
     // Persistent objects always valid
     if expected_gen == generation::PERSISTENT {
         return 1;
@@ -3439,9 +3643,9 @@ pub unsafe extern "C" fn blood_evidence_get(ev: EvidenceHandle, index: usize) ->
 #[repr(C)]
 struct EffectHandlerEntry {
     effect_id: i64,
-    operations: Vec<*const c_void>,  // Function pointers for each operation
-    state: *mut c_void,               // Handler state (for State<T> effect)
-    is_deep: bool,                    // Deep handler re-wraps continuation on resume
+    operations: Vec<*const c_void>, // Function pointers for each operation
+    state: *mut c_void,             // Handler state (for State<T> effect)
+    is_deep: bool,                  // Deep handler re-wraps continuation on resume
 }
 
 // Safety: The raw pointers are only accessed through the mutex,
@@ -3581,9 +3785,7 @@ pub unsafe extern "C" fn blood_evidence_get_state(ev: EvidenceHandle, index: i64
 /// or null if no handler is active.
 #[no_mangle]
 pub extern "C" fn blood_evidence_current() -> EvidenceHandle {
-    CURRENT_EVIDENCE.with(|ev| {
-        ev.borrow().unwrap_or(std::ptr::null_mut())
-    })
+    CURRENT_EVIDENCE.with(|ev| ev.borrow().unwrap_or(std::ptr::null_mut()))
 }
 
 /// Set the current thread's evidence vector.
@@ -3688,7 +3890,8 @@ pub unsafe extern "C" fn blood_perform(
                                 }
 
                                 // Use extern "C" ABI matching compiled handler signatures
-                                type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
+                                type OpHandler =
+                                    unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
                                 let handler: OpHandler = std::mem::transmute(op_fn);
 
                                 // For non-tail-resumptive effects (continuation != 0),
@@ -3711,7 +3914,8 @@ pub unsafe extern "C" fn blood_perform(
 
                                 // If handler didn't resume a non-tail-resumptive effect,
                                 // abort back to the with-handle block
-                                if continuation != 0 && !WAS_RESUMED.with(|f| f.get())
+                                if continuation != 0
+                                    && !WAS_RESUMED.with(|f| f.get())
                                     && ABORT_DEPTH.with(|d| d.get()) > 0
                                 {
                                     blood_handler_abort(result);
@@ -3810,8 +4014,7 @@ pub unsafe extern "C" fn blood_perform(
 
         // If handler didn't resume a non-tail-resumptive effect,
         // abort back to the with-handle block
-        if continuation != 0 && !WAS_RESUMED.with(|f| f.get())
-            && ABORT_DEPTH.with(|d| d.get()) > 0
+        if continuation != 0 && !WAS_RESUMED.with(|f| f.get()) && ABORT_DEPTH.with(|d| d.get()) > 0
         {
             blood_handler_abort(result);
             // Never reaches here
@@ -4052,7 +4255,10 @@ pub unsafe extern "C" fn blood_snapshot_get_parent(snapshot: SnapshotHandle) -> 
 /// # Safety
 /// The snapshot handle must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn blood_snapshot_set_parent(snapshot: SnapshotHandle, parent: SnapshotHandle) {
+pub unsafe extern "C" fn blood_snapshot_set_parent(
+    snapshot: SnapshotHandle,
+    parent: SnapshotHandle,
+) {
     if snapshot.is_null() {
         return;
     }
@@ -4116,7 +4322,10 @@ pub unsafe extern "C" fn blood_snapshot_add_entry(
     }
 
     let snap = &mut *(snapshot as *mut GenerationSnapshot);
-    snap.entries.push(SnapshotEntry { address, generation });
+    snap.entries.push(SnapshotEntry {
+        address,
+        generation,
+    });
 }
 
 /// Validate a generation snapshot against current memory state.
@@ -4333,7 +4542,9 @@ pub unsafe extern "C" fn blood_snapshot_get_stale_entry(
 // Slot Registry FFI (for allocation tracking)
 // ============================================================================
 
-use crate::memory::{persistent_alloc, persistent_increment, persistent_decrement, persistent_is_alive};
+use crate::memory::{
+    persistent_alloc, persistent_decrement, persistent_increment, persistent_is_alive,
+};
 
 /// Register a new allocation in the slot registry.
 ///
@@ -4599,7 +4810,11 @@ pub unsafe extern "C" fn blood_persistent_alloc(
 /// * `id` - The slot ID returned by `blood_persistent_alloc`
 #[no_mangle]
 pub extern "C" fn blood_persistent_increment(id: u64) -> c_int {
-    if persistent_increment(id) { 1 } else { 0 }
+    if persistent_increment(id) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Decrement the reference count for a persistent slot.
@@ -4621,7 +4836,11 @@ pub extern "C" fn blood_persistent_decrement(id: u64) {
 /// * `id` - The slot ID to check
 #[no_mangle]
 pub extern "C" fn blood_persistent_is_alive(id: u64) -> c_int {
-    if persistent_is_alive(id) { 1 } else { 0 }
+    if persistent_is_alive(id) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Trigger a cycle collection pass to detect and collect circular references
@@ -4827,7 +5046,11 @@ pub extern "C" fn blood_region_is_suspended(region_id: u64) -> c_int {
     let reg = registry.lock();
 
     if let Some(region) = reg.get(&region_id) {
-        if region.is_suspended() { 1 } else { 0 }
+        if region.is_suspended() {
+            1
+        } else {
+            0
+        }
     } else {
         0
     }
@@ -4840,7 +5063,11 @@ pub extern "C" fn blood_region_is_pending_deallocation(region_id: u64) -> c_int 
     let reg = registry.lock();
 
     if let Some(region) = reg.get(&region_id) {
-        if region.is_pending_deallocation() { 1 } else { 0 }
+        if region.is_pending_deallocation() {
+            1
+        } else {
+            0
+        }
     } else {
         0
     }
@@ -4879,7 +5106,10 @@ pub extern "C" fn blood_region_alloc_count(region_id: u64) -> u64 {
     let reg = registry.lock();
 
     if let Some(region) = reg.get(&region_id) {
-        region.stats().allocations.load(std::sync::atomic::Ordering::Relaxed)
+        region
+            .stats()
+            .allocations
+            .load(std::sync::atomic::Ordering::Relaxed)
     } else {
         0
     }
@@ -4893,7 +5123,9 @@ pub extern "C" fn blood_region_alloc_count(region_id: u64) -> u64 {
 /// [0] realloc_count, [1] wasted_bytes, [2] inplace_eligible, [3] inplace_saved_bytes
 #[no_mangle]
 pub extern "C" fn blood_realloc_stats(out: *mut u64) {
-    if out.is_null() { return; }
+    if out.is_null() {
+        return;
+    }
     unsafe {
         *out = REALLOC_COUNT.load(AtomicOrdering::Relaxed);
         *out.add(1) = REALLOC_WASTED_BYTES.load(AtomicOrdering::Relaxed);
@@ -4946,7 +5178,9 @@ pub extern "C" fn blood_realloc_diag_offset_delta() -> u64 {
 /// Output buffer must hold at least 36 u64 values (18 counts + 18 bytes).
 #[no_mangle]
 pub extern "C" fn blood_alloc_hist_get(out: *mut u64) {
-    if out.is_null() { return; }
+    if out.is_null() {
+        return;
+    }
     unsafe {
         for i in 0..ALLOC_HIST_BUCKETS {
             *out.add(i) = ALLOC_HIST_COUNT[i].load(AtomicOrdering::Relaxed);
@@ -4969,9 +5203,24 @@ pub extern "C" fn blood_alloc_hist_reset() {
 #[no_mangle]
 pub extern "C" fn blood_print_alloc_hist() {
     let labels = [
-        "1-8B", "9-16B", "17-32B", "33-64B", "65-128B", "129-256B",
-        "257-512B", "513B-1K", "1K-2K", "2K-4K", "4K-8K", "8K-16K",
-        "16K-32K", "32K-64K", "64K-128K", "128K-256K", "256K-512K", ">512K",
+        "1-8B",
+        "9-16B",
+        "17-32B",
+        "33-64B",
+        "65-128B",
+        "129-256B",
+        "257-512B",
+        "513B-1K",
+        "1K-2K",
+        "2K-4K",
+        "4K-8K",
+        "8K-16K",
+        "16K-32K",
+        "32K-64K",
+        "64K-128K",
+        "128K-256K",
+        "256K-512K",
+        ">512K",
     ];
     let mut total_count: u64 = 0;
     let mut total_bytes: u64 = 0;
@@ -4982,12 +5231,21 @@ pub extern "C" fn blood_print_alloc_hist() {
         total_bytes += bytes;
         if count > 0 {
             let avg = if count > 0 { bytes / count } else { 0 };
-            eprintln!("    {:>12}  count={:>12}  bytes={:>14}  avg={:>6}",
-                labels[i], format_count(count), format_bytes(bytes), avg);
+            eprintln!(
+                "    {:>12}  count={:>12}  bytes={:>14}  avg={:>6}",
+                labels[i],
+                format_count(count),
+                format_bytes(bytes),
+                avg
+            );
         }
     }
-    eprintln!("    {:>12}  count={:>12}  bytes={:>14}",
-        "TOTAL", format_count(total_count), format_bytes(total_bytes));
+    eprintln!(
+        "    {:>12}  count={:>12}  bytes={:>14}",
+        "TOTAL",
+        format_count(total_count),
+        format_bytes(total_bytes)
+    );
     blood_alloc_hist_reset();
 }
 
@@ -5032,19 +5290,29 @@ pub extern "C" fn blood_alloc_tag_report() {
         if count > 0 {
             total_count += count;
             total_bytes += bytes;
-            eprintln!("    tag {:>4}  count={:>12}  bytes={:>14}",
-                i, format_count(count), format_bytes(bytes));
+            eprintln!(
+                "    tag {:>4}  count={:>12}  bytes={:>14}",
+                i,
+                format_count(count),
+                format_bytes(bytes)
+            );
         }
     }
-    eprintln!("    {:>8}  count={:>12}  bytes={:>14}",
-        "TOTAL", format_count(total_count), format_bytes(total_bytes));
+    eprintln!(
+        "    {:>8}  count={:>12}  bytes={:>14}",
+        "TOTAL",
+        format_count(total_count),
+        format_bytes(total_bytes)
+    );
 }
 
 /// Get allocation count for a specific tag.
 #[no_mangle]
 pub extern "C" fn blood_alloc_tag_count(tag: u64) -> u64 {
     let idx = tag as usize;
-    if idx >= MAX_ALLOC_TAGS { return 0; }
+    if idx >= MAX_ALLOC_TAGS {
+        return 0;
+    }
     TAG_COUNTS[idx].load(AtomicOrdering::Relaxed)
 }
 
@@ -5052,22 +5320,34 @@ pub extern "C" fn blood_alloc_tag_count(tag: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn blood_alloc_tag_bytes(tag: u64) -> u64 {
     let idx = tag as usize;
-    if idx >= MAX_ALLOC_TAGS { return 0; }
+    if idx >= MAX_ALLOC_TAGS {
+        return 0;
+    }
     TAG_BYTES[idx].load(AtomicOrdering::Relaxed)
 }
 
 fn format_count(n: u64) -> String {
-    if n >= 1_000_000_000 { format!("{:.2}B", n as f64 / 1e9) }
-    else if n >= 1_000_000 { format!("{:.2}M", n as f64 / 1e6) }
-    else if n >= 1_000 { format!("{:.1}K", n as f64 / 1e3) }
-    else { format!("{}", n) }
+    if n >= 1_000_000_000 {
+        format!("{:.2}B", n as f64 / 1e9)
+    } else if n >= 1_000_000 {
+        format!("{:.2}M", n as f64 / 1e6)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1e3)
+    } else {
+        format!("{}", n)
+    }
 }
 
 fn format_bytes(b: u64) -> String {
-    if b >= 1_073_741_824 { format!("{:.2} GB", b as f64 / 1_073_741_824.0) }
-    else if b >= 1_048_576 { format!("{:.2} MB", b as f64 / 1_048_576.0) }
-    else if b >= 1024 { format!("{:.1} KB", b as f64 / 1024.0) }
-    else { format!("{} B", b) }
+    if b >= 1_073_741_824 {
+        format!("{:.2} GB", b as f64 / 1_073_741_824.0)
+    } else if b >= 1_048_576 {
+        format!("{:.2} MB", b as f64 / 1_048_576.0)
+    } else if b >= 1024 {
+        format!("{:.1} KB", b as f64 / 1024.0)
+    } else {
+        format!("{} B", b)
+    }
 }
 
 /// Trim a region's committed pages above the current allocation offset.
@@ -5121,10 +5401,7 @@ fn get_continuation_regions() -> &'static Mutex<HashMap<u64, Vec<u64>>> {
 /// allocations in a region. It increments the region's suspend count
 /// and tracks the region ID for later restoration on resume.
 #[no_mangle]
-pub extern "C" fn blood_continuation_add_suspended_region(
-    continuation_id: u64,
-    region_id: u64,
-) {
+pub extern "C" fn blood_continuation_add_suspended_region(continuation_id: u64, region_id: u64) {
     // First suspend the region
     blood_region_suspend(region_id);
 
@@ -5286,9 +5563,7 @@ pub extern "C" fn blood_continuation_resume(continuation: ContinuationHandle, va
         // re-push it onto the evidence vector before running the continuation.
         // This ensures subsequent performs of the same effect within the resumed
         // computation are caught by the same handler (deep semantics).
-        let deep_entry = DEEP_HANDLER_STACK.with(|s| {
-            s.borrow().last().copied()
-        });
+        let deep_entry = DEEP_HANDLER_STACK.with(|s| s.borrow().last().copied());
 
         if let Some(entry) = deep_entry {
             let ev = blood_evidence_current();
@@ -5384,9 +5659,12 @@ impl ContinuationCallback {
 /// This stores the original callback/context so continuations can be cloned.
 /// For single-shot continuations, the callback is consumed on resume.
 /// For multi-shot continuations, we keep the callback here for cloning.
-static MULTISHOT_CALLBACKS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>>> = std::sync::OnceLock::new();
+static MULTISHOT_CALLBACKS: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>>,
+> = std::sync::OnceLock::new();
 
-fn get_multishot_registry() -> &'static parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>> {
+fn get_multishot_registry(
+) -> &'static parking_lot::Mutex<std::collections::HashMap<u64, ContinuationCallback>> {
     MULTISHOT_CALLBACKS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -5413,9 +5691,7 @@ pub unsafe extern "C" fn blood_continuation_create_multishot(
 
     // Create the continuation
     let cb_clone = cb;
-    let k = Continuation::new(move |value: i64| -> i64 {
-        cb_clone.call(value)
-    });
+    let k = Continuation::new(move |value: i64| -> i64 { cb_clone.call(value) });
 
     let id = k.id().as_u64();
 
@@ -5441,7 +5717,9 @@ pub unsafe extern "C" fn blood_continuation_create_multishot(
 /// # Safety
 /// The original continuation must have been created with `blood_continuation_create_multishot`.
 #[no_mangle]
-pub unsafe extern "C" fn blood_continuation_clone(handle: ContinuationHandle) -> ContinuationHandle {
+pub unsafe extern "C" fn blood_continuation_clone(
+    handle: ContinuationHandle,
+) -> ContinuationHandle {
     // Look up the callback in the multi-shot registry
     let cb = {
         let registry = get_multishot_registry().lock();
@@ -5449,14 +5727,15 @@ pub unsafe extern "C" fn blood_continuation_clone(handle: ContinuationHandle) ->
     };
 
     let Some(cb) = cb else {
-        eprintln!("BLOOD RUNTIME ERROR: Cannot clone continuation {} - not found in multi-shot registry", handle);
+        eprintln!(
+            "BLOOD RUNTIME ERROR: Cannot clone continuation {} - not found in multi-shot registry",
+            handle
+        );
         return 0;
     };
 
     // Create a new continuation with the same callback
-    let k = Continuation::new(move |value: i64| -> i64 {
-        cb.call(value)
-    });
+    let k = Continuation::new(move |value: i64| -> i64 { cb.call(value) });
 
     let new_id = k.id().as_u64();
 
@@ -5524,9 +5803,7 @@ pub unsafe extern "C" fn blood_continuation_create(
     let cb = ContinuationCallback { callback, context };
 
     // Create a continuation that wraps the callback
-    let k = Continuation::new(move |value: i64| -> i64 {
-        cb.call(value)
-    });
+    let k = Continuation::new(move |value: i64| -> i64 { cb.call(value) });
 
     let k_ref = register_continuation(k);
     k_ref.id
@@ -5561,7 +5838,10 @@ pub extern "C" fn blood_effect_context_end() {
 pub extern "C" fn blood_effect_is_tail_resumptive() -> bool {
     EFFECT_CONTEXT.with(|ctx| {
         let ctx_ref = ctx.borrow();
-        ctx_ref.as_ref().map(|c| c.is_tail_resumptive).unwrap_or(true)
+        ctx_ref
+            .as_ref()
+            .map(|c| c.is_tail_resumptive)
+            .unwrap_or(true)
     })
 }
 
@@ -5692,9 +5972,7 @@ pub unsafe extern "C" fn blood_scheduler_spawn(
 /// # Safety
 /// The function pointer must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn blood_scheduler_spawn_simple(
-    task_fn: extern "C" fn(),
-) -> u64 {
+pub unsafe extern "C" fn blood_scheduler_spawn_simple(task_fn: extern "C" fn()) -> u64 {
     let scheduler = get_or_init_scheduler();
     let sched = scheduler.lock();
 
@@ -5807,7 +6085,11 @@ pub extern "C" fn blood_scheduler_runnable_fibers() -> usize {
 pub extern "C" fn blood_scheduler_is_running() -> c_int {
     if let Some(scheduler) = GLOBAL_SCHEDULER.get() {
         let sched = scheduler.lock();
-        if sched.is_shutting_down() { 0 } else { 1 }
+        if sched.is_shutting_down() {
+            0
+        } else {
+            1
+        }
     } else {
         0
     }
@@ -5882,7 +6164,10 @@ pub extern "C" fn blood_stale_reference_panic(expected: u32, actual: u32) -> ! {
 /// - If not null, `snapshot` must not be concurrently modified or freed.
 /// - `stale_index` should be a positive value returned from `blood_snapshot_validate`.
 #[no_mangle]
-pub unsafe extern "C" fn blood_snapshot_stale_panic(snapshot: SnapshotHandle, stale_index: i64) -> ! {
+pub unsafe extern "C" fn blood_snapshot_stale_panic(
+    snapshot: SnapshotHandle,
+    stale_index: i64,
+) -> ! {
     if !snapshot.is_null() && stale_index > 0 {
         let snap = &*(snapshot as *const GenerationSnapshot);
         let idx = (stale_index - 1) as usize;
@@ -5937,7 +6222,10 @@ pub extern "C" fn blood_panic_div_zero() -> ! {
 /// Called when an index is out of bounds for an array, slice, or Vec.
 #[no_mangle]
 pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! {
-    eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
+    eprintln!(
+        "BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}",
+        index, length
+    );
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
     std::process::abort();
@@ -5948,13 +6236,20 @@ pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! 
 /// # Safety
 /// `location` must be a valid C string pointer.
 #[no_mangle]
-pub unsafe extern "C" fn blood_panic_index_out_of_bounds_loc(index: i64, length: i64, location: *const c_char) -> ! {
+pub unsafe extern "C" fn blood_panic_index_out_of_bounds_loc(
+    index: i64,
+    length: i64,
+    location: *const c_char,
+) -> ! {
     let loc = if location.is_null() {
         "<unknown>"
     } else {
         CStr::from_ptr(location).to_str().unwrap_or("<invalid>")
     };
-    eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
+    eprintln!(
+        "BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}",
+        index, length
+    );
     eprintln!("  at: {}", loc);
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
@@ -6084,7 +6379,9 @@ pub unsafe extern "C" fn runtime_config_from_env(out: *mut RuntimeConfigHandle) 
         max_heap_size: config.memory.max_heap_size as u64,
         max_region_size: config.memory.max_region_size as u64,
         gc_threshold: config.memory.gc_threshold as u64,
-        default_timeout_ms: config.timeout.default_timeout
+        default_timeout_ms: config
+            .timeout
+            .default_timeout
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
         graceful_shutdown_ms: config.timeout.graceful_shutdown.as_millis() as u64,
@@ -6100,7 +6397,7 @@ pub unsafe extern "C" fn runtime_config_from_env(out: *mut RuntimeConfigHandle) 
 /// `config` must be a valid pointer to a RuntimeConfigHandle.
 #[no_mangle]
 pub unsafe extern "C" fn runtime_init_with_config(config: *const RuntimeConfigHandle) -> c_int {
-    use crate::config::{RuntimeConfig, LogLevel};
+    use crate::config::{LogLevel, RuntimeConfig};
     use std::time::Duration;
 
     if config.is_null() {
@@ -6149,7 +6446,9 @@ pub unsafe extern "C" fn runtime_init_with_config(config: *const RuntimeConfigHa
 
     // Initialize the scheduler with the config
     let scheduler_config = config.to_scheduler_config();
-    let _ = GLOBAL_SCHEDULER.set(Mutex::new(crate::scheduler::Scheduler::new(scheduler_config)));
+    let _ = GLOBAL_SCHEDULER.set(Mutex::new(crate::scheduler::Scheduler::new(
+        scheduler_config,
+    )));
 
     0
 }
@@ -6188,7 +6487,9 @@ pub unsafe extern "C" fn runtime_config_get_int(key: BloodStr) -> i64 {
             "max_region_size" => return config.memory.max_region_size as i64,
             "gc_threshold" => return config.memory.gc_threshold as i64,
             "default_timeout_ms" => {
-                return config.timeout.default_timeout
+                return config
+                    .timeout
+                    .default_timeout
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
             }
@@ -6236,7 +6537,11 @@ pub type SignalType = u8;
 /// Returns 1 if handlers were installed, 0 if already installed.
 #[no_mangle]
 pub extern "C" fn signal_install_handlers() -> c_int {
-    if crate::signal::install_handlers() { 1 } else { 0 }
+    if crate::signal::install_handlers() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Check if shutdown has been requested.
@@ -6244,7 +6549,11 @@ pub extern "C" fn signal_install_handlers() -> c_int {
 /// Returns 1 if shutdown was requested (SIGTERM or SIGINT received), 0 otherwise.
 #[no_mangle]
 pub extern "C" fn signal_shutdown_requested() -> c_int {
-    if crate::signal::shutdown_requested() { 1 } else { 0 }
+    if crate::signal::shutdown_requested() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Request graceful shutdown.
@@ -6317,13 +6626,15 @@ pub extern "C" fn signal_reset() {
 pub type CancellationHandle = u64;
 
 /// Registry for cancellation sources (owned by Blood code).
-static CANCELLATION_REGISTRY: OnceLock<Mutex<HashMap<u64, crate::cancellation::CancellationSource>>> =
-    OnceLock::new();
+static CANCELLATION_REGISTRY: OnceLock<
+    Mutex<HashMap<u64, crate::cancellation::CancellationSource>>,
+> = OnceLock::new();
 
 /// Counter for cancellation handles.
 static CANCELLATION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-fn get_cancellation_registry() -> &'static Mutex<HashMap<u64, crate::cancellation::CancellationSource>> {
+fn get_cancellation_registry(
+) -> &'static Mutex<HashMap<u64, crate::cancellation::CancellationSource>> {
     CANCELLATION_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -6387,7 +6698,10 @@ pub extern "C" fn cancellation_cancel(handle: CancellationHandle) {
 /// # Safety
 /// `reason` must be a valid BloodStr.
 #[no_mangle]
-pub unsafe extern "C" fn cancellation_cancel_with_reason(handle: CancellationHandle, reason: BloodStr) {
+pub unsafe extern "C" fn cancellation_cancel_with_reason(
+    handle: CancellationHandle,
+    reason: BloodStr,
+) {
     let reason_str = if reason.ptr.is_null() || reason.len == 0 {
         None
     } else {
@@ -6445,7 +6759,11 @@ pub extern "C" fn cancellation_wait(handle: CancellationHandle, timeout_ms: u64)
         Duration::from_millis(timeout_ms)
     };
 
-    if token.wait(timeout) { 1 } else { 0 }
+    if token.wait(timeout) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Free a cancellation source.
@@ -6519,7 +6837,11 @@ pub extern "C" fn memory_live_bytes() -> u64 {
 /// Returns 1 if allowed, 0 if it would exceed the limit.
 #[no_mangle]
 pub extern "C" fn memory_check_allowed(size: u64) -> c_int {
-    if crate::memory::check_allocation_allowed(size as usize) { 1 } else { 0 }
+    if crate::memory::check_allocation_allowed(size as usize) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Memory usage summary for FFI.
@@ -6608,7 +6930,11 @@ pub extern "C" fn panic_count() -> u64 {
 /// Returns 1 if at least one panic has occurred, 0 otherwise.
 #[no_mangle]
 pub extern "C" fn panic_has_occurred() -> c_int {
-    if crate::panic::panic_count() > 0 { 1 } else { 0 }
+    if crate::panic::panic_count() > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Get the last panic message.
@@ -6618,7 +6944,10 @@ pub extern "C" fn panic_has_occurred() -> c_int {
 pub extern "C" fn panic_last_message() -> BloodStr {
     match crate::panic::last_panic() {
         Some(info) => string_to_blood_str(info.message().to_string()),
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -6630,9 +6959,15 @@ pub extern "C" fn panic_last_backtrace() -> BloodStr {
     match crate::panic::last_panic() {
         Some(info) => match info.backtrace() {
             Some(bt) => string_to_blood_str(bt.to_string()),
-            None => BloodStr { ptr: std::ptr::null(), len: 0 },
+            None => BloodStr {
+                ptr: std::ptr::null(),
+                len: 0,
+            },
         },
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -6644,7 +6979,10 @@ pub extern "C" fn panic_last_backtrace() -> BloodStr {
 pub extern "C" fn backtrace_capture() -> BloodStr {
     match crate::panic::capture_backtrace() {
         Some(bt) => string_to_blood_str(bt),
-        None => BloodStr { ptr: std::ptr::null(), len: 0 },
+        None => BloodStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        },
     }
 }
 
@@ -6654,14 +6992,19 @@ pub extern "C" fn backtrace_capture() -> BloodStr {
 /// Backtraces require RUST_BACKTRACE=1 environment variable.
 #[no_mangle]
 pub extern "C" fn backtrace_available() -> c_int {
-    if crate::panic::backtraces_available() { 1 } else { 0 }
+    if crate::panic::backtraces_available() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Callback type for panic hooks.
 pub type PanicCallback = extern "C" fn(*const PanicInfoHandle);
 
 /// Panic hook registry for FFI callbacks.
-static PANIC_CALLBACK: std::sync::OnceLock<Mutex<Option<PanicCallback>>> = std::sync::OnceLock::new();
+static PANIC_CALLBACK: std::sync::OnceLock<Mutex<Option<PanicCallback>>> =
+    std::sync::OnceLock::new();
 
 fn get_panic_callback() -> &'static Mutex<Option<PanicCallback>> {
     PANIC_CALLBACK.get_or_init(|| Mutex::new(None))
@@ -6781,9 +7124,7 @@ pub unsafe extern "C" fn panic_catch(
     }
 
     // Wrap the extern "C" function call
-    let catch_result = crate::panic::catch_panic_unchecked(|| {
-        func(context)
-    });
+    let catch_result = crate::panic::catch_panic_unchecked(|| func(context));
 
     match catch_result {
         crate::panic::CatchResult::Ok(_) => {
@@ -6860,7 +7201,11 @@ pub unsafe extern "C" fn panic_catch_result_free(result: *mut CatchPanicResult) 
 /// (e.g., compiled with panic=abort).
 #[no_mangle]
 pub extern "C" fn panic_recovery_available() -> c_int {
-    if crate::panic::recovery_available() { 1 } else { 0 }
+    if crate::panic::recovery_available() {
+        1
+    } else {
+        0
+    }
 }
 
 // ============================================================================
@@ -6952,7 +7297,11 @@ pub extern "C" fn log_set_enabled(enabled: c_int) {
 /// Returns 1 if enabled, 0 if disabled.
 #[no_mangle]
 pub extern "C" fn log_is_enabled() -> c_int {
-    if crate::log::is_enabled() { 1 } else { 0 }
+    if crate::log::is_enabled() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Check if a log level would be logged.
@@ -6961,7 +7310,11 @@ pub extern "C" fn log_is_enabled() -> c_int {
 #[no_mangle]
 pub extern "C" fn log_would_log(level: u8) -> c_int {
     if let Some(log_level) = crate::log::LogLevel::from_u8(level) {
-        if crate::log::would_log(log_level) { 1 } else { 0 }
+        if crate::log::would_log(log_level) {
+            1
+        } else {
+            0
+        }
     } else {
         0
     }
@@ -7883,10 +8236,8 @@ pub unsafe extern "C" fn vec_with_capacity(elem_size: i64, capacity: i64, out: *
     let ptr = if capacity > 0 {
         // Use 16-byte alignment to support enums with i128 payloads
         // which require 16-byte alignment for correct memory access
-        let layout = std::alloc::Layout::from_size_align(
-            (capacity * elem_size) as usize,
-            16,
-        ).unwrap();
+        let layout =
+            std::alloc::Layout::from_size_align((capacity * elem_size) as usize, 16).unwrap();
         runtime_alloc(layout)
     } else {
         std::ptr::null_mut()
@@ -7923,10 +8274,14 @@ pub unsafe extern "C" fn vec_debug_dump(vec: *const BloodVec, elem_size: i64, la
     let label_str = if label.is_null() {
         "unnamed"
     } else {
-        std::ffi::CStr::from_ptr(label as *const i8).to_str().unwrap_or("invalid")
+        std::ffi::CStr::from_ptr(label as *const i8)
+            .to_str()
+            .unwrap_or("invalid")
     };
-    eprintln!("[DEBUG vec_dump] {} ptr={:p} len={} cap={} elem_size={}",
-        label_str, v.ptr, v.len, v.capacity, elem_size);
+    eprintln!(
+        "[DEBUG vec_dump] {} ptr={:p} len={} cap={} elem_size={}",
+        label_str, v.ptr, v.len, v.capacity, elem_size
+    );
     if !v.ptr.is_null() && v.len > 0 && elem_size >= 4 {
         for i in 0..v.len.min(10) {
             let elem_ptr = v.ptr.add((i * elem_size) as usize);
@@ -7945,7 +8300,11 @@ pub unsafe extern "C" fn vec_is_empty(vec: *const BloodVec) -> i32 {
     if vec.is_null() {
         return 1; // null vec is empty
     }
-    if (*vec).len == 0 { 1 } else { 0 }
+    if (*vec).len == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Get the capacity of a Vec.
@@ -7986,7 +8345,11 @@ pub unsafe extern "C" fn vec_push(vec: *mut BloodVec, elem: *const u8, elem_size
     // Check if we need to grow
     if v.len >= v.capacity {
         // Use saturating_mul to prevent signed overflow (Pattern N)
-        let new_capacity = if v.capacity == 0 { 4 } else { v.capacity.saturating_mul(2).max(v.len + 1) };
+        let new_capacity = if v.capacity == 0 {
+            4
+        } else {
+            v.capacity.saturating_mul(2).max(v.len + 1)
+        };
         // Checked multiplication for total byte size
         let new_size = match (new_capacity as u64).checked_mul(elem_size as u64) {
             Some(sz) if sz <= isize::MAX as u64 => sz as usize,
@@ -8034,8 +8397,10 @@ pub unsafe extern "C" fn vec_push(vec: *mut BloodVec, elem: *const u8, elem_size
         } else {
             -1
         };
-        eprintln!("[vec_push] elem_size={} len={} tag={} payload={} dest={:p} src={:p} base={:p}",
-            elem_size, v.len, tag, payload, dest, elem, v.ptr);
+        eprintln!(
+            "[vec_push] elem_size={} len={} tag={} payload={} dest={:p} src={:p} base={:p}",
+            elem_size, v.len, tag, payload, dest, elem, v.ptr
+        );
     }
 }
 
@@ -8090,12 +8455,7 @@ pub unsafe extern "C" fn vec_pop(vec: *mut BloodVec, elem_size: i64, out: *mut u
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn vec_get(
-    vec: *const BloodVec,
-    index: i64,
-    elem_size: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn vec_get(vec: *const BloodVec, index: i64, elem_size: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -8134,11 +8494,7 @@ pub unsafe extern "C" fn vec_get(
 /// # Safety
 /// `vec` must be a valid pointer to a BloodVec.
 #[no_mangle]
-pub unsafe extern "C" fn vec_get_ptr(
-    vec: *const BloodVec,
-    index: i64,
-    elem_size: i64,
-) -> *mut u8 {
+pub unsafe extern "C" fn vec_get_ptr(vec: *const BloodVec, index: i64, elem_size: i64) -> *mut u8 {
     if vec.is_null() {
         return std::ptr::null_mut();
     }
@@ -8146,7 +8502,10 @@ pub unsafe extern "C" fn vec_get_ptr(
     let v = &*vec;
 
     if index < 0 || index >= v.len {
-        eprintln!("Vec index out of bounds: index {} but len is {}", index, v.len);
+        eprintln!(
+            "Vec index out of bounds: index {} but len is {}",
+            index, v.len
+        );
         std::process::abort();
     }
 
@@ -8264,10 +8623,8 @@ pub unsafe extern "C" fn vec_free(vec: *mut BloodVec, elem_size: i64) {
     // Only free the backing buffer, not the Vec struct itself
     // Use 16-byte alignment to match vec_push allocation
     if !v.ptr.is_null() && v.capacity > 0 {
-        let layout = std::alloc::Layout::from_size_align(
-            (v.capacity * elem_size) as usize,
-            16,
-        ).unwrap();
+        let layout =
+            std::alloc::Layout::from_size_align((v.capacity * elem_size) as usize, 16).unwrap();
         runtime_dealloc(v.ptr, layout);
     }
 
@@ -8348,7 +8705,12 @@ pub unsafe extern "C" fn vec_last(vec: *const BloodVec, elem_size: i64, out: *mu
 /// `elem` must be valid for `elem_size` bytes.
 /// `index` must be <= len.
 #[no_mangle]
-pub unsafe extern "C" fn vec_insert(vec: *mut BloodVec, index: i64, elem: *const u8, elem_size: i64) {
+pub unsafe extern "C" fn vec_insert(
+    vec: *mut BloodVec,
+    index: i64,
+    elem: *const u8,
+    elem_size: i64,
+) {
     if vec.is_null() || elem.is_null() || elem_size <= 0 || index < 0 {
         return;
     }
@@ -8436,7 +8798,12 @@ pub unsafe extern "C" fn vec_remove(vec: *mut BloodVec, index: i64, elem_size: i
 /// `out` must be valid for `elem_size` bytes.
 /// `index` must be < len.
 #[no_mangle]
-pub unsafe extern "C" fn vec_swap_remove(vec: *mut BloodVec, index: i64, elem_size: i64, out: *mut u8) {
+pub unsafe extern "C" fn vec_swap_remove(
+    vec: *mut BloodVec,
+    index: i64,
+    elem_size: i64,
+    out: *mut u8,
+) {
     if vec.is_null() || elem_size <= 0 || index < 0 {
         return;
     }
@@ -8648,10 +9015,8 @@ pub unsafe extern "C" fn vec_shrink_to_fit(vec: *mut BloodVec, elem_size: i64) {
 
     let new_capacity = v.len;
     // Use 16-byte alignment to match vec_push allocation
-    let old_layout = std::alloc::Layout::from_size_align(
-        (v.capacity * elem_size) as usize,
-        16,
-    ).unwrap();
+    let old_layout =
+        std::alloc::Layout::from_size_align((v.capacity * elem_size) as usize, 16).unwrap();
 
     let new_ptr = runtime_realloc(v.ptr, old_layout, (new_capacity * elem_size) as usize);
     v.ptr = new_ptr;
@@ -8751,7 +9116,11 @@ pub unsafe extern "C" fn vec_append(vec: *mut BloodVec, other: *mut BloodVec, el
 /// `vec` must be a valid pointer to a BloodVec struct.
 /// `slice` must be a valid pointer to a slice fat pointer.
 #[no_mangle]
-pub unsafe extern "C" fn vec_extend_from_slice(vec: *mut BloodVec, slice: *const u8, elem_size: i64) {
+pub unsafe extern "C" fn vec_extend_from_slice(
+    vec: *mut BloodVec,
+    slice: *const u8,
+    elem_size: i64,
+) {
     if vec.is_null() || slice.is_null() || elem_size <= 0 {
         return;
     }
@@ -9034,7 +9403,11 @@ pub unsafe extern "C" fn slice_is_empty(slice: *const u8) -> i32 {
         return 1;
     }
     let len = slice_len(slice);
-    if len == 0 { 1 } else { 0 }
+    if len == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Get the first element of a slice as Option<&T>.
@@ -9250,9 +9623,17 @@ pub unsafe extern "C" fn slice_get_mut(slice: *mut u8, index: i64, elem_size: i6
 /// # Safety
 /// Both `slice` and `needle` must be valid pointers to slice fat pointers.
 #[no_mangle]
-pub unsafe extern "C" fn slice_starts_with(slice: *const u8, needle: *const u8, elem_size: i64) -> i32 {
+pub unsafe extern "C" fn slice_starts_with(
+    slice: *const u8,
+    needle: *const u8,
+    elem_size: i64,
+) -> i32 {
     if slice.is_null() || needle.is_null() || elem_size <= 0 {
-        return if needle.is_null() || slice_len(needle) == 0 { 1 } else { 0 };
+        return if needle.is_null() || slice_len(needle) == 0 {
+            1
+        } else {
+            0
+        };
     }
 
     let slice_len_val = slice_len(slice);
@@ -9299,9 +9680,17 @@ pub unsafe extern "C" fn slice_starts_with(slice: *const u8, needle: *const u8, 
 /// # Safety
 /// Both `slice` and `needle` must be valid pointers to slice fat pointers.
 #[no_mangle]
-pub unsafe extern "C" fn slice_ends_with(slice: *const u8, needle: *const u8, elem_size: i64) -> i32 {
+pub unsafe extern "C" fn slice_ends_with(
+    slice: *const u8,
+    needle: *const u8,
+    elem_size: i64,
+) -> i32 {
     if slice.is_null() || needle.is_null() || elem_size <= 0 {
-        return if needle.is_null() || slice_len(needle) == 0 { 1 } else { 0 };
+        return if needle.is_null() || slice_len(needle) == 0 {
+            1
+        } else {
+            0
+        };
     }
 
     let slice_len_val = slice_len(slice);
@@ -9407,7 +9796,11 @@ pub unsafe extern "C" fn option_is_some(opt: *const u8) -> i32 {
     }
     // Tag is at offset 0, read as i32
     let tag = *(opt as *const i32);
-    if tag == 1 { 1 } else { 0 }
+    if tag == 1 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Check if Option is None.
@@ -9427,7 +9820,11 @@ pub unsafe extern "C" fn option_is_none(opt: *const u8) -> i32 {
     }
     // Tag is at offset 0, read as i32
     let tag = *(opt as *const i32);
-    if tag == 0 { 1 } else { 0 }
+    if tag == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Decode a packed size+alignment parameter into (size, payload_offset).
@@ -9448,7 +9845,11 @@ fn decode_size_and_offset(packed: i64) -> (usize, usize) {
         std::cmp::max(4, align)
     } else {
         // Legacy fallback (old codegen without alignment info)
-        if size > 4 { 8 } else { 4 }
+        if size > 4 {
+            8
+        } else {
+            4
+        }
     };
     (size, offset)
 }
@@ -9825,11 +10226,7 @@ pub unsafe extern "C" fn option_xor(
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn option_as_ref(
-    opt: *const u8,
-    payload_size_raw: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn option_as_ref(opt: *const u8, payload_size_raw: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -9866,11 +10263,7 @@ pub unsafe extern "C" fn option_as_ref(
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn option_as_mut(
-    opt: *mut u8,
-    payload_size_raw: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn option_as_mut(opt: *mut u8, payload_size_raw: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -9907,11 +10300,7 @@ pub unsafe extern "C" fn option_as_mut(
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn option_take(
-    opt: *mut u8,
-    payload_size_raw: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn option_take(opt: *mut u8, payload_size_raw: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -10003,7 +10392,11 @@ pub unsafe extern "C" fn result_is_ok(res: *const u8) -> i32 {
     }
     // Tag is at offset 0, read as i32
     let tag = *(res as *const i32);
-    if tag == 0 { 1 } else { 0 }
+    if tag == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Check if Result is Err.
@@ -10023,7 +10416,11 @@ pub unsafe extern "C" fn result_is_err(res: *const u8) -> i32 {
     }
     // Tag is at offset 0, read as i32
     let tag = *(res as *const i32);
-    if tag == 1 { 1 } else { 0 }
+    if tag == 1 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Unwrap a Result, panicking if Err.
@@ -10449,12 +10846,7 @@ pub unsafe extern "C" fn result_or(
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn result_as_ref(
-    res: *const u8,
-    ok_size: i64,
-    err_size: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn result_as_ref(res: *const u8, ok_size: i64, err_size: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -10495,12 +10887,7 @@ pub unsafe extern "C" fn result_as_ref(
 /// # Safety
 /// All pointers must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn result_as_mut(
-    res: *mut u8,
-    ok_size: i64,
-    err_size: i64,
-    out: *mut u8,
-) {
+pub unsafe extern "C" fn result_as_mut(res: *mut u8, ok_size: i64, err_size: i64, out: *mut u8) {
     if out.is_null() {
         return;
     }
@@ -10591,13 +10978,17 @@ mod tests {
         assert_eq!(current, new_ev);
 
         // Cleanup
-        unsafe { blood_evidence_destroy(new_ev); }
+        unsafe {
+            blood_evidence_destroy(new_ev);
+        }
     }
 
     #[test]
     fn test_dispatch_table() {
         // Mock function pointer
-        extern "C" fn mock_impl() -> i64 { 42 }
+        extern "C" fn mock_impl() -> i64 {
+            42
+        }
         let impl_ptr = mock_impl as *const c_void;
 
         // Register implementation
@@ -10643,7 +11034,14 @@ mod tests {
 
         // Register a handler (effect_id = 1)
         unsafe {
-            extern "C" fn mock_op(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
+            extern "C" fn mock_op(
+                _state: *mut c_void,
+                _args: *const i64,
+                _arg_count: i64,
+                _continuation: i64,
+            ) -> i64 {
+                0
+            }
             let ops: [*const c_void; 1] = [mock_op as *const c_void];
             blood_evidence_register(ev, 1, ops.as_ptr(), 1, 1);
         }
@@ -10657,7 +11055,9 @@ mod tests {
         assert_eq!(depth2, 0);
 
         // Cleanup
-        unsafe { blood_evidence_destroy(ev); }
+        unsafe {
+            blood_evidence_destroy(ev);
+        }
     }
 
     #[test]
@@ -10669,9 +11069,16 @@ mod tests {
         // Register a handler that returns args[0] * 2
         // Handler signature: fn(state, args, arg_count, continuation) -> i64
         unsafe {
-            extern "C" fn double_op(_state: *mut c_void, args: *const i64, _arg_count: i64, _continuation: i64) -> i64 {
+            extern "C" fn double_op(
+                _state: *mut c_void,
+                args: *const i64,
+                _arg_count: i64,
+                _continuation: i64,
+            ) -> i64 {
                 unsafe {
-                    if args.is_null() { return 0; }
+                    if args.is_null() {
+                        return 0;
+                    }
                     (*args) * 2
                 }
             }
@@ -10687,7 +11094,9 @@ mod tests {
         }
 
         // Cleanup
-        unsafe { blood_evidence_destroy(ev); }
+        unsafe {
+            blood_evidence_destroy(ev);
+        }
     }
 
     #[test]
@@ -10696,7 +11105,14 @@ mod tests {
 
         // Register a handler
         unsafe {
-            extern "C" fn noop(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
+            extern "C" fn noop(
+                _state: *mut c_void,
+                _args: *const i64,
+                _arg_count: i64,
+                _continuation: i64,
+            ) -> i64 {
+                0
+            }
             let ops: [*const c_void; 1] = [noop as *const c_void];
             blood_evidence_register(ev, 50, ops.as_ptr(), 1, 1);
         }
@@ -10716,7 +11132,9 @@ mod tests {
         }
 
         // Cleanup
-        unsafe { blood_evidence_destroy(ev); }
+        unsafe {
+            blood_evidence_destroy(ev);
+        }
     }
 
     #[test]
@@ -10843,12 +11261,8 @@ mod tests {
             // Get stale entry details
             let mut out_addr: u64 = 0;
             let mut out_gen: u32 = 0;
-            let status = blood_snapshot_get_stale_entry(
-                snapshot,
-                result,
-                &mut out_addr,
-                &mut out_gen,
-            );
+            let status =
+                blood_snapshot_get_stale_entry(snapshot, result, &mut out_addr, &mut out_gen);
 
             assert_eq!(status, 0, "Should successfully get stale entry");
             assert_eq!(out_addr, addr);
@@ -10888,7 +11302,10 @@ mod tests {
         let address = unsafe { blood_alloc_or_abort(64, &mut generation) };
 
         assert!(address != 0, "Allocation should succeed");
-        assert!(generation >= generation::FIRST, "Generation should be valid");
+        assert!(
+            generation >= generation::FIRST,
+            "Generation should be valid"
+        );
 
         // Step 2: Validate - should succeed (generation matches)
         assert_eq!(
@@ -10988,7 +11405,9 @@ mod tests {
         assert!(after_take.is_null(), "After take, get should return null");
 
         // Clean up
-        unsafe { blood_snapshot_destroy(taken); }
+        unsafe {
+            blood_snapshot_destroy(taken);
+        }
         blood_effect_context_end();
     }
 
@@ -11003,7 +11422,9 @@ mod tests {
 
         // Create snapshot with the allocation
         let snapshot = blood_snapshot_create();
-        unsafe { blood_snapshot_add_entry(snapshot, addr, gen); }
+        unsafe {
+            blood_snapshot_add_entry(snapshot, addr, gen);
+        }
         blood_effect_context_set_snapshot(snapshot);
 
         // Free the allocation (making reference stale)
@@ -11016,7 +11437,9 @@ mod tests {
 
         // Clean up
         let snap = blood_effect_context_take_snapshot();
-        unsafe { blood_snapshot_destroy(snap); }
+        unsafe {
+            blood_snapshot_destroy(snap);
+        }
         blood_effect_context_end();
     }
 
@@ -11029,7 +11452,10 @@ mod tests {
 
         // blood_get_generation should return the registered generation
         let retrieved_gen = unsafe { blood_get_generation(addr) };
-        assert_eq!(retrieved_gen, gen, "blood_get_generation should return registered generation");
+        assert_eq!(
+            retrieved_gen, gen,
+            "blood_get_generation should return registered generation"
+        );
 
         // After unregister, generation should be incremented
         blood_unregister_allocation(addr);
@@ -11043,7 +11469,10 @@ mod tests {
         // Re-register should get different generation
         let gen2 = blood_register_allocation(addr, 32);
         let retrieved_gen2 = unsafe { blood_get_generation(addr) };
-        assert_eq!(retrieved_gen2, gen2, "Should get new generation after re-register");
+        assert_eq!(
+            retrieved_gen2, gen2,
+            "Should get new generation after re-register"
+        );
 
         // Clean up
         blood_unregister_allocation(addr);
@@ -11187,7 +11616,10 @@ mod tests {
 
             // Validation should fail at child's entry (index 1 in child)
             let result = blood_snapshot_validate(child);
-            assert_eq!(result, 1, "Should detect stale reference in child at index 1");
+            assert_eq!(
+                result, 1,
+                "Should detect stale reference in child at index 1"
+            );
 
             blood_snapshot_destroy(child);
             blood_snapshot_destroy(parent);
@@ -11260,7 +11692,10 @@ mod tests {
 
             // Full chain validation should fail
             let chain_result = blood_snapshot_validate(child);
-            assert!(chain_result > 0, "Chain validation should fail due to parent");
+            assert!(
+                chain_result > 0,
+                "Chain validation should fail due to parent"
+            );
 
             blood_snapshot_destroy(child);
             blood_snapshot_destroy(parent);
@@ -11456,7 +11891,10 @@ mod tests {
 
         unsafe {
             let header_ptr = (new_ptr as usize - ALLOC_HEADER_SIZE) as *const usize;
-            assert_eq!(*header_ptr, 200, "Header should contain new size after realloc");
+            assert_eq!(
+                *header_ptr, 200,
+                "Header should contain new size after realloc"
+            );
         }
 
         // Free should work correctly with header
@@ -11475,14 +11913,26 @@ mod tests {
         assert!(ptr != 0);
 
         let (alloc_after, _, count_after, _) = system_alloc_stats();
-        assert!(alloc_after >= alloc_before + 256, "Alloc bytes should increase");
-        assert!(count_after >= count_before + 1, "Alloc count should increase");
+        assert!(
+            alloc_after >= alloc_before + 256,
+            "Alloc bytes should increase"
+        );
+        assert!(
+            count_after >= count_before + 1,
+            "Alloc count should increase"
+        );
 
         blood_free_simple(ptr);
 
         let (_, free_after, _, free_count_after) = system_alloc_stats();
-        assert!(free_after >= free_before + 256, "Free bytes should increase");
-        assert!(free_count_after >= free_count_before + 1, "Free count should increase");
+        assert!(
+            free_after >= free_before + 256,
+            "Free bytes should increase"
+        );
+        assert!(
+            free_count_after >= free_count_before + 1,
+            "Free count should increase"
+        );
     }
 
     #[test]
@@ -11602,8 +12052,12 @@ pub unsafe extern "C" fn debug_vec_index(idx: i64, byte_offset: i64) {
 /// printed as addresses and not dereferenced.
 #[no_mangle]
 pub unsafe extern "C" fn debug_vec_ptrs(data_ptr: *const u8, elem_ptr: *const u8) {
-    eprintln!("[debug_vec_ptrs] data_ptr={:p} elem_ptr={:p} offset={}", 
-        data_ptr, elem_ptr, elem_ptr as usize - data_ptr as usize);
+    eprintln!(
+        "[debug_vec_ptrs] data_ptr={:p} elem_ptr={:p} offset={}",
+        data_ptr,
+        elem_ptr,
+        elem_ptr as usize - data_ptr as usize
+    );
 }
 
 /// Debug function to read enum at pointer and print its contents
@@ -11616,7 +12070,10 @@ pub unsafe extern "C" fn debug_vec_ptrs(data_ptr: *const u8, elem_ptr: *const u8
 pub unsafe extern "C" fn debug_read_enum_at(ptr: *const u8) {
     let tag = std::ptr::read(ptr as *const i32);
     let payload = std::ptr::read(ptr.add(8) as *const i64);
-    eprintln!("[debug_read_enum_at] ptr={:p} tag={} payload={}", ptr, tag, payload);
+    eprintln!(
+        "[debug_read_enum_at] ptr={:p} tag={} payload={}",
+        ptr, tag, payload
+    );
 }
 
 /// Debug function to read and print enum at local storage
@@ -11633,7 +12090,10 @@ pub unsafe extern "C" fn debug_local_enum(ptr: *const u8, name: *const u8, name_
     let name_str = String::from_utf8_lossy(name_slice);
     let tag = std::ptr::read(ptr as *const i32);
     let payload = std::ptr::read(ptr.add(8) as *const i64);
-    eprintln!("[debug_local_enum] {} at {:p}: tag={} payload={}", name_str, ptr, tag, payload);
+    eprintln!(
+        "[debug_local_enum] {} at {:p}: tag={} payload={}",
+        name_str, ptr, tag, payload
+    );
 }
 
 // ============================================================================
@@ -11851,7 +12311,8 @@ pub extern "C" fn blood_realloc(ptr: i64, new_size: i64) -> i64 {
                 if let Some(region) = reg.get(&region_id) {
                     if region.try_realloc_in_place(old_addr as *mut u8, old_size, new_size_usize) {
                         REALLOC_INPLACE_ELIGIBLE.fetch_add(1, AtomicOrdering::Relaxed);
-                        REALLOC_INPLACE_SAVED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
+                        REALLOC_INPLACE_SAVED_BYTES
+                            .fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
                         // Update slot registry with new size
                         drop(reg);
                         crate::memory::update_slot_size(old_addr, new_size_usize);
@@ -11870,11 +12331,7 @@ pub extern "C" fn blood_realloc(ptr: i64, new_size: i64) -> i64 {
             // Copy old data to new buffer
             let copy_size = old_size.min(new_size_usize);
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    old_addr as *const u8,
-                    new_ptr as *mut u8,
-                    copy_size,
-                );
+                std::ptr::copy_nonoverlapping(old_addr as *const u8, new_ptr as *mut u8, copy_size);
             }
 
             // Free old buffer (returns to region free list)
@@ -11897,11 +12354,7 @@ pub extern "C" fn blood_realloc(ptr: i64, new_size: i64) -> i64 {
 
                 // Copy old data to new buffer
                 let copy_size = old_size.min(new_size_usize);
-                std::ptr::copy_nonoverlapping(
-                    old_addr as *const u8,
-                    new_ptr as *mut u8,
-                    copy_size,
-                );
+                std::ptr::copy_nonoverlapping(old_addr as *const u8, new_ptr as *mut u8, copy_size);
 
                 // Free old buffer (blood_free_simple handles the header)
                 blood_free_simple(ptr);
@@ -11998,7 +12451,9 @@ pub extern "C" fn ptr_read_i32(ptr: i64) -> i32 {
 /// The pointer must be valid and properly aligned for i32.
 #[no_mangle]
 pub extern "C" fn ptr_write_i32(ptr: i64, val: i32) {
-    unsafe { *(ptr as *mut i32) = val; }
+    unsafe {
+        *(ptr as *mut i32) = val;
+    }
 }
 
 /// Read an i64 value from the given memory address.
@@ -12016,7 +12471,9 @@ pub extern "C" fn ptr_read_i64(ptr: i64) -> i64 {
 /// The pointer must be valid and properly aligned for i64.
 #[no_mangle]
 pub extern "C" fn ptr_write_i64(ptr: i64, val: i64) {
-    unsafe { *(ptr as *mut i64) = val; }
+    unsafe {
+        *(ptr as *mut i64) = val;
+    }
 }
 
 /// Read a u64 value from the given memory address.
@@ -12038,7 +12495,9 @@ pub extern "C" fn ptr_read_u64(ptr: i64) -> i64 {
 /// The pointer must be valid and properly aligned for u64/i64.
 #[no_mangle]
 pub extern "C" fn ptr_write_u64(ptr: i64, val: i64) {
-    unsafe { *(ptr as *mut i64) = val; }
+    unsafe {
+        *(ptr as *mut i64) = val;
+    }
 }
 
 /// Read a u8 value from the given memory address, returned as i8.
@@ -12056,7 +12515,9 @@ pub extern "C" fn ptr_read_u8(ptr: i64) -> i8 {
 /// The pointer must be valid.
 #[no_mangle]
 pub extern "C" fn ptr_write_u8(ptr: i64, val: i8) {
-    unsafe { *(ptr as *mut i8) = val; }
+    unsafe {
+        *(ptr as *mut i8) = val;
+    }
 }
 
 /// Read an f64 value from the given memory address.
@@ -12074,7 +12535,9 @@ pub extern "C" fn ptr_read_f64(ptr: i64) -> f64 {
 /// The pointer must be valid and properly aligned for f64.
 #[no_mangle]
 pub extern "C" fn ptr_write_f64(ptr: i64, val: f64) {
-    unsafe { *(ptr as *mut f64) = val; }
+    unsafe {
+        *(ptr as *mut f64) = val;
+    }
 }
 
 // ============================================================================
@@ -12094,7 +12557,10 @@ pub extern "C" fn blood_assert(cond: i32) {
 #[no_mangle]
 pub extern "C" fn blood_assert_eq_bool(a: bool, b: bool) {
     if a != b {
-        eprintln!("BLOOD RUNTIME PANIC: assertion failed: bool values not equal ({} != {})", a, b);
+        eprintln!(
+            "BLOOD RUNTIME PANIC: assertion failed: bool values not equal ({} != {})",
+            a, b
+        );
         std::process::abort();
     }
 }
@@ -12161,7 +12627,10 @@ pub unsafe extern "C" fn blood_assert_eq_str(a: BloodStr, b: BloodStr) {
         std::str::from_utf8_unchecked(std::slice::from_raw_parts(b.ptr, b.len as usize))
     };
     if a_str != b_str {
-        eprintln!("BLOOD RUNTIME PANIC: assertion failed: \"{}\" != \"{}\"", a_str, b_str);
+        eprintln!(
+            "BLOOD RUNTIME PANIC: assertion failed: \"{}\" != \"{}\"",
+            a_str, b_str
+        );
         std::process::abort();
     }
 }
@@ -12170,7 +12639,10 @@ pub unsafe extern "C" fn blood_assert_eq_str(a: BloodStr, b: BloodStr) {
 #[no_mangle]
 pub extern "C" fn blood_assert_ne_int(a: i32, b: i32) {
     if a == b {
-        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} == {} (expected not equal)", a, b);
+        eprintln!(
+            "BLOOD RUNTIME PANIC: assertion failed: {} == {} (expected not equal)",
+            a, b
+        );
         std::process::abort();
     }
 }
@@ -12321,8 +12793,7 @@ static FIBER_THREADS: std::sync::LazyLock<StdMutex<StdHashMap<u64, std::thread::
     std::sync::LazyLock::new(|| StdMutex::new(StdHashMap::new()));
 
 /// Next fiber ID counter.
-static BUILTIN_FIBER_NEXT_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static BUILTIN_FIBER_NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Spawn a new fiber running the given function.
 ///
@@ -12403,7 +12874,11 @@ pub extern "C" fn __builtin_fiber_unpark(_fiber_id: u64) {
 /// Check if a fiber has completed.
 #[no_mangle]
 pub extern "C" fn __builtin_fiber_is_finished(fiber_id: u64) -> i64 {
-    if FIBER_RESULTS.lock().unwrap().contains_key(&fiber_id) { 1 } else { 0 }
+    if FIBER_RESULTS.lock().unwrap().contains_key(&fiber_id) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Cancel a fiber (no-op in Phase 1).

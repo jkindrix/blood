@@ -19,11 +19,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{
-    self as cc,
-    RecvTimeoutError as CcRecvTimeoutError,
-    SendTimeoutError as CcSendTimeoutError,
-    TryRecvError as CcTryRecvError,
-    TrySendError as CcTrySendError,
+    self as cc, RecvTimeoutError as CcRecvTimeoutError, SendTimeoutError as CcSendTimeoutError,
+    TryRecvError as CcTryRecvError, TrySendError as CcTrySendError,
 };
 
 use crate::cancellation::CancellationToken;
@@ -527,20 +524,14 @@ impl<T> IntoIterator for Receiver<T> {
 pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let id = next_channel_id();
     let (tx, rx) = cc::bounded(capacity);
-    (
-        Sender { id, inner: tx },
-        Receiver { id, inner: rx },
-    )
+    (Sender { id, inner: tx }, Receiver { id, inner: rx })
 }
 
 /// Create an unbounded channel.
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let id = next_channel_id();
     let (tx, rx) = cc::unbounded();
-    (
-        Sender { id, inner: tx },
-        Receiver { id, inner: rx },
-    )
+    (Sender { id, inner: tx }, Receiver { id, inner: rx })
 }
 
 // ============================================================================

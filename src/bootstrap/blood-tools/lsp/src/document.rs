@@ -113,7 +113,9 @@ impl Document {
 
     /// Converts a byte offset to an LSP position.
     pub fn offset_to_position(&self, offset: usize) -> Position {
-        let char_idx = self.content.byte_to_char(offset.min(self.content.len_bytes()));
+        let char_idx = self
+            .content
+            .byte_to_char(offset.min(self.content.len_bytes()));
         let line_idx = self.content.char_to_line(char_idx);
         let line_start = self.content.line_to_char(line_idx);
         let character = char_idx - line_start;

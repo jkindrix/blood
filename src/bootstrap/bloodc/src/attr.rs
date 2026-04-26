@@ -19,7 +19,7 @@
 //! ## Documentation
 //! - `#[doc = "..."]` - Documentation
 
-use crate::ast::{Attribute, AttributeArgs, AttributeArg, LiteralKind};
+use crate::ast::{Attribute, AttributeArg, AttributeArgs, LiteralKind};
 use crate::span::Span;
 use string_interner::DefaultStringInterner;
 
@@ -380,7 +380,10 @@ mod tests {
 
     #[test]
     fn test_test_info_new() {
-        let config = TestConfig { is_test: true, ..Default::default() };
+        let config = TestConfig {
+            is_test: true,
+            ..Default::default()
+        };
         let info = TestInfo::new(
             "my_test".to_string(),
             "foo.bar".to_string(),
@@ -395,12 +398,7 @@ mod tests {
     #[test]
     fn test_test_info_empty_module() {
         let config = TestConfig::default();
-        let info = TestInfo::new(
-            "my_test".to_string(),
-            String::new(),
-            config,
-            Span::dummy(),
-        );
+        let info = TestInfo::new("my_test".to_string(), String::new(), config, Span::dummy());
         assert_eq!(info.full_path, "my_test");
     }
 
@@ -409,11 +407,28 @@ mod tests {
         let mut registry = TestRegistry::new();
         assert!(registry.is_empty());
 
-        let config1 = TestConfig { is_test: true, ..Default::default() };
-        let config2 = TestConfig { is_test: true, ignore: true, ..Default::default() };
+        let config1 = TestConfig {
+            is_test: true,
+            ..Default::default()
+        };
+        let config2 = TestConfig {
+            is_test: true,
+            ignore: true,
+            ..Default::default()
+        };
 
-        registry.register(TestInfo::new("test1".into(), "".into(), config1, Span::dummy()));
-        registry.register(TestInfo::new("test2".into(), "".into(), config2, Span::dummy()));
+        registry.register(TestInfo::new(
+            "test1".into(),
+            "".into(),
+            config1,
+            Span::dummy(),
+        ));
+        registry.register(TestInfo::new(
+            "test2".into(),
+            "".into(),
+            config2,
+            Span::dummy(),
+        ));
 
         assert_eq!(registry.len(), 2);
 

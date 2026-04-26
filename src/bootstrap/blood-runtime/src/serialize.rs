@@ -452,10 +452,12 @@ impl<T: Serialize> Serialize for Vec<T> {
 
 impl<T: Deserialize> Deserialize for Vec<T> {
     fn deserialize(value: &Value) -> Result<Self> {
-        let arr = value.as_array().ok_or_else(|| SerializeError::TypeMismatch {
-            expected: "array",
-            found: value_type_name(value),
-        })?;
+        let arr = value
+            .as_array()
+            .ok_or_else(|| SerializeError::TypeMismatch {
+                expected: "array",
+                found: value_type_name(value),
+            })?;
         arr.iter().map(|v| T::deserialize(v)).collect()
     }
 }
@@ -491,10 +493,12 @@ impl<K: AsRef<str>, V: Serialize> Serialize for HashMap<K, V> {
 
 impl<V: Deserialize> Deserialize for HashMap<String, V> {
     fn deserialize(value: &Value) -> Result<Self> {
-        let obj = value.as_object().ok_or_else(|| SerializeError::TypeMismatch {
-            expected: "object",
-            found: value_type_name(value),
-        })?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| SerializeError::TypeMismatch {
+                expected: "object",
+                found: value_type_name(value),
+            })?;
         let mut result = HashMap::new();
         for (k, v) in obj.iter() {
             result.insert(k.clone(), V::deserialize(v)?);
@@ -1216,10 +1220,7 @@ mod tests {
 
         #[test]
         fn test_string_serialize() {
-            assert_eq!(
-                "hello".serialize().unwrap(),
-                Value::String("hello".into())
-            );
+            assert_eq!("hello".serialize().unwrap(), Value::String("hello".into()));
             assert_eq!(
                 String::from("world").serialize().unwrap(),
                 Value::String("world".into())
@@ -1252,10 +1253,7 @@ mod tests {
                 Option::<i32>::deserialize(&Value::Int(42)).unwrap(),
                 Some(42)
             );
-            assert_eq!(
-                Option::<i32>::deserialize(&Value::Null).unwrap(),
-                None
-            );
+            assert_eq!(Option::<i32>::deserialize(&Value::Null).unwrap(), None);
         }
 
         #[test]

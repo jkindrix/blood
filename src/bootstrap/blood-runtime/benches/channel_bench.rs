@@ -92,16 +92,12 @@ fn bench_try_send_recv(c: &mut Criterion) {
     group.bench_function("try_send_full", |b| {
         let (tx, _rx) = bounded::<i32>(1);
         tx.send(0).unwrap();
-        b.iter(|| {
-            black_box(tx.try_send(42))
-        });
+        b.iter(|| black_box(tx.try_send(42)));
     });
 
     group.bench_function("try_recv_empty", |b| {
         let (_tx, rx) = bounded::<i32>(1);
-        b.iter(|| {
-            black_box(rx.try_recv())
-        });
+        b.iter(|| black_box(rx.try_recv()));
     });
 
     group.finish();
@@ -171,10 +167,7 @@ fn bench_mpmc(c: &mut Criterion) {
                         })
                         .collect();
 
-                    let results: Vec<_> = handles
-                        .into_iter()
-                        .map(|h| h.join().unwrap())
-                        .collect();
+                    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
                     black_box(results)
                 });
             },
@@ -231,16 +224,12 @@ fn bench_channel_clone(c: &mut Criterion) {
 
     group.bench_function("clone_sender", |b| {
         let (tx, _rx) = bounded::<i32>(100);
-        b.iter(|| {
-            black_box(tx.clone())
-        });
+        b.iter(|| black_box(tx.clone()));
     });
 
     group.bench_function("clone_receiver", |b| {
         let (_tx, rx) = bounded::<i32>(100);
-        b.iter(|| {
-            black_box(rx.clone())
-        });
+        b.iter(|| black_box(rx.clone()));
     });
 
     group.finish();

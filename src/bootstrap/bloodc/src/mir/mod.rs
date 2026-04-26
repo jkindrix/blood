@@ -64,26 +64,25 @@ pub mod types;
 pub mod validate;
 pub mod visitor;
 
-pub use body::{MirBody, MirLocal, LocalKind};
-pub use closure_analysis::{ClosureAnalyzer, ClosureAnalysisConfig, ClosureAnalysisResults, ClosureInfo, ClosureStats};
-pub use escape::{EscapeAnalyzer, EscapeState, EscapeResults, EscapeStatistics, EscapeStateBreakdown};
-pub use static_evidence::{
-    analyze_handler_state, analyze_handler_allocation_tier,
-    handler_evidence_escapes, HandleAnalysis,
-    analyze_handler_deduplication, HandlerDeduplicationResults, HandlerFingerprint,
+pub use body::{LocalKind, MirBody, MirLocal};
+pub use closure_analysis::{
+    ClosureAnalysisConfig, ClosureAnalysisResults, ClosureAnalyzer, ClosureInfo, ClosureStats,
 };
-pub use lowering::{MirLowering, InlineHandlerBody, InlineHandlerBodies, InlineHandlerCaptureInfo};
-pub use ptr::{BloodPtr, PtrMetadata, MemoryTier, PtrFlags, PtrKind};
-pub use snapshot::{GenerationSnapshot, SnapshotEntry, LazySnapshot, LazyValidationStats};
-pub use visitor::{Visitor, Location, PlaceContext, walk_body, collect_rvalue_locals, collect_operand_locals};
+pub use escape::{
+    EscapeAnalyzer, EscapeResults, EscapeState, EscapeStateBreakdown, EscapeStatistics,
+};
+pub use lowering::{InlineHandlerBodies, InlineHandlerBody, InlineHandlerCaptureInfo, MirLowering};
+pub use ptr::{BloodPtr, MemoryTier, PtrFlags, PtrKind, PtrMetadata};
+pub use snapshot::{GenerationSnapshot, LazySnapshot, LazyValidationStats, SnapshotEntry};
+pub use static_evidence::{
+    analyze_handler_allocation_tier, analyze_handler_deduplication, analyze_handler_state,
+    handler_evidence_escapes, HandleAnalysis, HandlerDeduplicationResults, HandlerFingerprint,
+};
 pub use types::{
-    BasicBlock, BasicBlockData, BasicBlockId,
-    Statement, StatementKind,
-    Terminator, TerminatorKind,
-    Place, PlaceElem, Projection,
-    Operand, Rvalue,
-    Constant, ConstantKind,
-    SwitchTargets,
-    BinOp, UnOp, AggregateKind,
-    InlineHandlerOp, InlineHandlerCapture,
+    AggregateKind, BasicBlock, BasicBlockData, BasicBlockId, BinOp, Constant, ConstantKind,
+    InlineHandlerCapture, InlineHandlerOp, Operand, Place, PlaceElem, Projection, Rvalue,
+    Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp,
+};
+pub use visitor::{
+    collect_operand_locals, collect_rvalue_locals, walk_body, Location, PlaceContext, Visitor,
 };

@@ -294,10 +294,19 @@ impl<'src> Parser<'src> {
             // Handle `mut Type` which is invalid syntax (should be `&mut Type` for mutable reference)
             // We need to consume both `mut` and the following type to prevent infinite loops
             TokenKind::Mut => {
-                self.error_expected_one_of(&["type name", "`&`", "`*`", "`[`", "`(`", "`fn`", "`forall`", "`!`"]);
+                self.error_expected_one_of(&[
+                    "type name",
+                    "`&`",
+                    "`*`",
+                    "`[`",
+                    "`(`",
+                    "`fn`",
+                    "`forall`",
+                    "`!`",
+                ]);
                 self.advance(); // consume `mut`
-                // Try to parse and discard the following type for better error recovery
-                // Include contextual keywords in addition to standard type identifiers
+                                // Try to parse and discard the following type for better error recovery
+                                // Include contextual keywords in addition to standard type identifiers
                 if self.check(TokenKind::TypeIdent)
                     || self.check_ident()
                     || self.check(TokenKind::SelfUpper)
@@ -313,7 +322,16 @@ impl<'src> Parser<'src> {
             }
 
             _ => {
-                self.error_expected_one_of(&["type name", "`&`", "`*`", "`[`", "`(`", "`fn`", "`forall`", "`!`"]);
+                self.error_expected_one_of(&[
+                    "type name",
+                    "`&`",
+                    "`*`",
+                    "`[`",
+                    "`(`",
+                    "`fn`",
+                    "`forall`",
+                    "`!`",
+                ]);
                 // Advance to prevent infinite loop during error recovery
                 self.advance();
                 Type {
@@ -336,9 +354,8 @@ impl<'src> Parser<'src> {
 
         loop {
             // Allow contextual keywords as path segments (for identifier patterns)
-            let is_lowercase = self.check_ident()
-                || self.check(TokenKind::Crate)
-                || self.check(TokenKind::Super);
+            let is_lowercase =
+                self.check_ident() || self.check(TokenKind::Crate) || self.check(TokenKind::Super);
             let name = if self.check(TokenKind::TypeIdent)
                 || is_lowercase
                 || self.check(TokenKind::SelfUpper)

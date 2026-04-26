@@ -32,10 +32,7 @@ pub fn server_capabilities() -> ServerCapabilities {
         // Completion provider - IMPLEMENTED (basic keyword completions)
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false), // resolve not implemented
-            trigger_characters: Some(vec![
-                ".".to_string(),
-                ":".to_string(),
-            ]),
+            trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
             all_commit_characters: None,
             work_done_progress_options: WorkDoneProgressOptions::default(),
             completion_item: None,
@@ -43,10 +40,7 @@ pub fn server_capabilities() -> ServerCapabilities {
 
         // Signature help - IMPLEMENTED (parameter info at call sites)
         signature_help_provider: Some(SignatureHelpOptions {
-            trigger_characters: Some(vec![
-                "(".to_string(),
-                ",".to_string(),
-            ]),
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
             retrigger_characters: None,
             work_done_progress_options: WorkDoneProgressOptions::default(),
         }),
@@ -99,14 +93,14 @@ pub fn server_capabilities() -> ServerCapabilities {
         selection_range_provider: None,
 
         // Semantic tokens - IMPLEMENTED (full Blood syntax highlighting)
-        semantic_tokens_provider: Some(
-            SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
                 work_done_progress_options: WorkDoneProgressOptions::default(),
                 legend: semantic_tokens::legend(),
                 range: Some(true),
                 full: Some(SemanticTokensFullOptions::Bool(true)),
-            }),
-        ),
+            },
+        )),
 
         // Inlay hints - IMPLEMENTED (let binding types, effect annotations)
         inlay_hint_provider: Some(OneOf::Left(true)),

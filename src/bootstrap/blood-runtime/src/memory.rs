@@ -23,13 +23,13 @@
 //! - [Generational References](https://floooh.github.io/2018/06/17/handles-vs-pointers.html)
 //! - [Vale's Generational References](https://verdagon.dev/blog/generational-references)
 
+use parking_lot::RwLock;
 use std::alloc::{self, Layout};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use parking_lot::RwLock;
 
 #[cfg(unix)]
 use nix::libc;
@@ -146,9 +146,8 @@ pub const MAX_SLAB_SIZE: usize = 16384;
 pub const NUM_SIZE_CLASSES: usize = 12;
 
 /// Size class slot sizes (power of 2 from 8 to 16384).
-pub const SIZE_CLASS_SLOTS: [usize; NUM_SIZE_CLASSES] = [
-    8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
-];
+pub const SIZE_CLASS_SLOTS: [usize; NUM_SIZE_CLASSES] =
+    [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384];
 
 /// Get the size class index for a given allocation size.
 /// Returns SIZE_CLASS_LARGE (255) if size exceeds MAX_SLAB_SIZE.
@@ -351,7 +350,11 @@ impl SlotRegistry {
     ///
     /// Returns `Ok(())` if the generation matches and the slot is allocated.
     /// Returns `Err` with the actual generation if validation fails.
-    pub fn validate(&self, address: u64, expected_gen: Generation) -> Result<(), StaleReferenceError> {
+    pub fn validate(
+        &self,
+        address: u64,
+        expected_gen: Generation,
+    ) -> Result<(), StaleReferenceError> {
         // Skip persistent references (they never become stale)
         if expected_gen == generation::PERSISTENT {
             return Ok(());
@@ -628,7 +631,11 @@ pub enum AllocationError {
 impl std::fmt::Display for AllocationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AllocationError::LimitExceeded { requested, current, limit } => {
+            AllocationError::LimitExceeded {
+                requested,
+                current,
+                limit,
+            } => {
                 write!(
                     f,
                     "allocation of {} bytes would exceed memory limit ({} / {} bytes used)",
@@ -779,7 +786,10 @@ pub fn get_slot_generation(address: u64) -> Option<Generation> {
 }
 
 /// Validate an address against an expected generation using the global registry.
-pub fn validate_generation(address: u64, expected_gen: Generation) -> Result<(), StaleReferenceError> {
+pub fn validate_generation(
+    address: u64,
+    expected_gen: Generation,
+) -> Result<(), StaleReferenceError> {
     slot_registry().validate(address, expected_gen)
 }
 
@@ -1111,18 +1121,18 @@ impl RegionStatus {
 /// so they get larger initial capacities. Larger allocations are
 /// less frequent and get smaller capacities.
 const FREE_LIST_CAPACITIES: [usize; NUM_SIZE_CLASSES] = [
-    256,  // Class 0: 8 bytes - very common (small objects, pointers)
-    256,  // Class 1: 16 bytes - very common
-    128,  // Class 2: 32 bytes - common
-    128,  // Class 3: 64 bytes - common
-    64,   // Class 4: 128 bytes - moderate
-    64,   // Class 5: 256 bytes - moderate
-    32,   // Class 6: 512 bytes - less common
-    32,   // Class 7: 1KB - less common
-    16,   // Class 8: 2KB - infrequent
-    16,   // Class 9: 4KB - infrequent
-    8,    // Class 10: 8KB - rare
-    8,    // Class 11: 16KB - rare
+    256, // Class 0: 8 bytes - very common (small objects, pointers)
+    256, // Class 1: 16 bytes - very common
+    128, // Class 2: 32 bytes - common
+    128, // Class 3: 64 bytes - common
+    64,  // Class 4: 128 bytes - moderate
+    64,  // Class 5: 256 bytes - moderate
+    32,  // Class 6: 512 bytes - less common
+    32,  // Class 7: 1KB - less common
+    16,  // Class 8: 2KB - infrequent
+    16,  // Class 9: 4KB - infrequent
+    8,   // Class 10: 8KB - rare
+    8,   // Class 11: 16KB - rare
 ];
 
 /// Per-size-class free list for memory reuse within a region.
@@ -1317,7 +1327,6 @@ pub struct Region {
     // ========================================================================
     // Slab Allocator Fields
     // ========================================================================
-
     /// Per-size-class free lists for memory reuse.
     /// Protected by mutex for thread safety during alloc/dealloc.
     free_lists: parking_lot::Mutex<[SizeClassFreeList; NUM_SIZE_CLASSES]>,
@@ -1372,12 +1381,13 @@ impl Region {
         // Commit initial pages (make readable/writable).
         let commit_len = initial_commit.min(reserved);
         if commit_len > 0 {
-            let ret = unsafe {
-                libc::mprotect(base, commit_len, libc::PROT_READ | libc::PROT_WRITE)
-            };
+            let ret =
+                unsafe { libc::mprotect(base, commit_len, libc::PROT_READ | libc::PROT_WRITE) };
             if ret != 0 {
                 // Clean up reservation before panicking.
-                unsafe { libc::munmap(base, reserved); }
+                unsafe {
+                    libc::munmap(base, reserved);
+                }
                 panic!(
                     "Region::new: mprotect commit failed for {} bytes: {}",
                     commit_len,
@@ -1396,7 +1406,9 @@ impl Region {
             closed: AtomicU32::new(0),
             suspend_count: AtomicU32::new(0),
             status: AtomicU32::new(RegionStatus::Active as u32),
-            free_lists: parking_lot::Mutex::new(std::array::from_fn(SizeClassFreeList::new_for_class)),
+            free_lists: parking_lot::Mutex::new(std::array::from_fn(
+                SizeClassFreeList::new_for_class,
+            )),
             stats: RegionStats::new(),
         }
     }
@@ -1412,7 +1424,9 @@ impl Region {
             closed: AtomicU32::new(0),
             suspend_count: AtomicU32::new(0),
             status: AtomicU32::new(RegionStatus::Active as u32),
-            free_lists: parking_lot::Mutex::new(std::array::from_fn(SizeClassFreeList::new_for_class)),
+            free_lists: parking_lot::Mutex::new(std::array::from_fn(
+                SizeClassFreeList::new_for_class,
+            )),
             stats: RegionStats::new(),
         }
     }
@@ -1878,7 +1892,8 @@ impl Region {
         self.offset.store(0, Ordering::Release);
         self.closed.store(0, Ordering::Release);
         self.suspend_count.store(0, Ordering::Release);
-        self.status.store(RegionStatus::Active as u32, Ordering::Release);
+        self.status
+            .store(RegionStatus::Active as u32, Ordering::Release);
     }
 
     /// Set memory protection on the committed pages of this region.
@@ -1894,15 +1909,12 @@ impl Region {
             } else {
                 libc::PROT_READ | libc::PROT_WRITE
             };
-            let ret = unsafe {
-                libc::mprotect(
-                    self.base as *mut libc::c_void,
-                    committed,
-                    prot,
-                )
-            };
+            let ret = unsafe { libc::mprotect(self.base as *mut libc::c_void, committed, prot) };
             if ret != 0 {
-                eprintln!("[runtime] mprotect failed: errno={}", std::io::Error::last_os_error());
+                eprintln!(
+                    "[runtime] mprotect failed: errno={}",
+                    std::io::Error::last_os_error()
+                );
             }
         }
     }
@@ -2029,7 +2041,8 @@ impl Region {
         // Check if we have suspended continuations
         if self.suspend_count.load(Ordering::Acquire) > 0 {
             // Defer deallocation
-            self.status.store(RegionStatus::PendingDeallocation as u32, Ordering::Release);
+            self.status
+                .store(RegionStatus::PendingDeallocation as u32, Ordering::Release);
             false
         } else {
             // Immediate deallocation is safe
@@ -2095,7 +2108,9 @@ pub struct GenerationSnapshot {
 impl GenerationSnapshot {
     /// Create a new empty snapshot.
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     /// Create a snapshot from a list of pointers.
@@ -2407,12 +2422,11 @@ impl PersistentSlot {
             if current == 0 {
                 return false;
             }
-            if self.refcount.compare_exchange_weak(
-                current,
-                current + 1,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ).is_ok() {
+            if self
+                .refcount
+                .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
                 return true;
             }
         }
@@ -2836,7 +2850,9 @@ impl CycleCollector {
     ///
     /// Returns `false` if collection is already running.
     fn try_start(&self) -> bool {
-        self.collecting.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed).is_ok()
+        self.collecting
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
     }
 
     /// Mark collection as finished.
@@ -2904,8 +2920,14 @@ impl CycleCollector {
             collected += 1;
         }
 
-        allocator.stats.cycle_collections.fetch_add(1, Ordering::Relaxed);
-        allocator.stats.cycles_collected.fetch_add(collected as u64, Ordering::Relaxed);
+        allocator
+            .stats
+            .cycle_collections
+            .fetch_add(1, Ordering::Relaxed);
+        allocator
+            .stats
+            .cycles_collected
+            .fetch_add(collected as u64, Ordering::Relaxed);
 
         self.finish();
         collected
@@ -3162,7 +3184,8 @@ impl Tier2Slot {
 
     /// Mark as pending drop.
     pub fn mark_pending_drop(&self) {
-        self.flags.fetch_or(Self::FLAG_PENDING_DROP, Ordering::Release);
+        self.flags
+            .fetch_or(Self::FLAG_PENDING_DROP, Ordering::Release);
     }
 
     /// Increment the strong reference count.
@@ -3363,7 +3386,13 @@ impl Tier2Allocator {
         }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let slot = Box::new(Tier2Slot::new(ptr, size, layout, type_fp, generation::FIRST));
+        let slot = Box::new(Tier2Slot::new(
+            ptr,
+            size,
+            layout,
+            type_fp,
+            generation::FIRST,
+        ));
 
         self.slots.write().insert(id, slot);
         self.stats.allocations.fetch_add(1, Ordering::Relaxed);
@@ -3493,7 +3522,9 @@ impl Tier2Allocator {
             if result {
                 self.stats.weak_upgrades.fetch_add(1, Ordering::Relaxed);
             } else {
-                self.stats.weak_upgrade_failures.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .weak_upgrade_failures
+                    .fetch_add(1, Ordering::Relaxed);
             }
             result
         } else {
@@ -3531,17 +3562,28 @@ impl Tier2Allocator {
 
     /// Check if a slot is alive.
     pub fn is_alive(&self, id: Tier2SlotId) -> bool {
-        self.slots.read().get(&id.0).map(|s| s.is_alive()).unwrap_or(false)
+        self.slots
+            .read()
+            .get(&id.0)
+            .map(|s| s.is_alive())
+            .unwrap_or(false)
     }
 
     /// Check if a slot was promoted from Tier 1.
     pub fn is_promoted(&self, id: Tier2SlotId) -> bool {
-        self.slots.read().get(&id.0).map(|s| s.is_promoted()).unwrap_or(false)
+        self.slots
+            .read()
+            .get(&id.0)
+            .map(|s| s.is_promoted())
+            .unwrap_or(false)
     }
 
     /// Get the original generation of a promoted slot.
     pub fn original_generation(&self, id: Tier2SlotId) -> Option<Generation> {
-        self.slots.read().get(&id.0).map(|s| s.original_generation())
+        self.slots
+            .read()
+            .get(&id.0)
+            .map(|s| s.original_generation())
     }
 
     /// Get the value pointer for a slot.
@@ -3643,7 +3685,8 @@ impl<T> PersistentPtr<T> {
     /// The pointer must be valid (not dropped).
     pub fn get(&self) -> &T {
         unsafe {
-            let ptr = tier2_allocator().value_ptr(self.slot_id)
+            let ptr = tier2_allocator()
+                .value_ptr(self.slot_id)
                 .expect("PersistentPtr: slot not found");
             &*(ptr as *const T)
         }
@@ -3655,7 +3698,8 @@ impl<T> PersistentPtr<T> {
     /// The pointer must be valid and there must be no other references.
     pub fn get_mut(&mut self) -> &mut T {
         unsafe {
-            let ptr = tier2_allocator().value_ptr(self.slot_id)
+            let ptr = tier2_allocator()
+                .value_ptr(self.slot_id)
                 .expect("PersistentPtr: slot not found");
             &mut *(ptr as *mut T)
         }
@@ -3961,7 +4005,8 @@ mod tests {
         // Allocate enough to fill initial capacity.
         let num_initial_allocs = initial_size / alloc_size;
         for _ in 0..num_initial_allocs {
-            let ptr = region.allocate(alloc_size, 8)
+            let ptr = region
+                .allocate(alloc_size, 8)
                 .expect("allocation within initial capacity should succeed");
             // Write a tag pattern to verify later.
             unsafe {
@@ -3969,17 +4014,21 @@ mod tests {
             }
             pre_growth_ptrs.push((ptr, tag));
             tag = tag.wrapping_add(1);
-            if tag == 0 { tag = 1; }
+            if tag == 0 {
+                tag = 1;
+            }
         }
 
         // Phase 2: allocate beyond initial capacity to trigger growth.
-        let post_growth_ptr = region.allocate(alloc_size, 8)
+        let post_growth_ptr = region
+            .allocate(alloc_size, 8)
             .expect("allocation triggering growth should succeed");
         assert!(!post_growth_ptr.is_null());
 
         // Allocate more to exercise larger growth.
         for _ in 0..50 {
-            let ptr = region.allocate(alloc_size, 8)
+            let ptr = region
+                .allocate(alloc_size, 8)
                 .expect("post-growth allocation should succeed");
             assert!(!ptr.is_null());
         }
@@ -4047,12 +4096,10 @@ mod tests {
         assert_eq!(snapshot.len(), 2); // Null is excluded
 
         // Validate with matching generations
-        let result = snapshot.validate(|addr| {
-            match addr {
-                0x1000 => Some(1),
-                0x2000 => Some(2),
-                _ => None,
-            }
+        let result = snapshot.validate(|addr| match addr {
+            0x1000 => Some(1),
+            0x2000 => Some(2),
+            _ => None,
         });
         assert!(result.is_ok());
 
@@ -4540,7 +4587,9 @@ mod tests {
         assert!(!ptr.is_null());
 
         let original_gen = 100u32;
-        let id = allocator.promote_from_tier1(ptr, 32, 8, 0xABCD, original_gen).unwrap();
+        let id = allocator
+            .promote_from_tier1(ptr, 32, 8, 0xABCD, original_gen)
+            .unwrap();
 
         assert!(allocator.is_alive(id));
         assert!(allocator.is_promoted(id));
@@ -4578,7 +4627,8 @@ mod tests {
         let allocator = Tier2Allocator::new();
 
         // Promoting null should fail
-        let result = allocator.promote_from_tier1(std::ptr::null_mut(), 32, 8, 0, generation::FIRST);
+        let result =
+            allocator.promote_from_tier1(std::ptr::null_mut(), 32, 8, 0, generation::FIRST);
         assert!(result.is_none());
     }
 
@@ -4616,7 +4666,10 @@ mod tests {
         let id = result.unwrap();
         assert!(tier2_is_alive(id));
         assert!(tier2_allocator().is_promoted(id));
-        assert_eq!(tier2_allocator().original_generation(id), Some(original_gen));
+        assert_eq!(
+            tier2_allocator().original_generation(id),
+            Some(original_gen)
+        );
 
         tier2_decrement(id);
     }
@@ -4759,15 +4812,17 @@ mod tests {
         slot.increment();
         assert_eq!(slot.refcount(), 3);
 
-        let handles: Vec<_> = (0..4).map(|_| {
-            let slot_clone = Arc::clone(&slot);
-            thread::spawn(move || {
-                for _ in 0..100 {
-                    slot_clone.increment();
-                    slot_clone.decrement();
-                }
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let slot_clone = Arc::clone(&slot);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        slot_clone.increment();
+                        slot_clone.decrement();
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         for h in handles {
             h.join().unwrap();
@@ -4790,13 +4845,15 @@ mod tests {
 
         let ptr = Arc::new(PersistentPtr::new(42i32).unwrap());
 
-        let handles: Vec<_> = (0..4).map(|_| {
-            let ptr_clone = Arc::clone(&ptr);
-            thread::spawn(move || {
-                // Read value from different threads
-                assert_eq!(*ptr_clone.get(), 42);
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let ptr_clone = Arc::clone(&ptr);
+                thread::spawn(move || {
+                    // Read value from different threads
+                    assert_eq!(*ptr_clone.get(), 42);
+                })
             })
-        }).collect();
+            .collect();
 
         for h in handles {
             h.join().unwrap();
@@ -4810,17 +4867,19 @@ mod tests {
 
         let allocator = Arc::new(Tier2Allocator::new());
 
-        let handles: Vec<_> = (0..4).map(|i| {
-            let alloc = Arc::clone(&allocator);
-            thread::spawn(move || {
-                // Each thread allocates and deallocates its own slots
-                for j in 0..10 {
-                    let id = alloc.allocate(16, 8, (i * 100 + j) as u32).unwrap();
-                    assert!(alloc.is_alive(id));
-                    alloc.decrement(id);
-                }
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let alloc = Arc::clone(&allocator);
+                thread::spawn(move || {
+                    // Each thread allocates and deallocates its own slots
+                    for j in 0..10 {
+                        let id = alloc.allocate(16, 8, (i * 100 + j) as u32).unwrap();
+                        assert!(alloc.is_alive(id));
+                        alloc.decrement(id);
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         for h in handles {
             h.join().unwrap();
@@ -4863,20 +4922,20 @@ mod tests {
     #[test]
     fn test_size_class_for() {
         // Test boundary cases for size class mapping
-        assert_eq!(size_class_for(0), 0);   // 0 -> 8 bytes (class 0)
-        assert_eq!(size_class_for(1), 0);   // 1 -> 8 bytes (class 0)
-        assert_eq!(size_class_for(8), 0);   // 8 -> 8 bytes (class 0)
-        assert_eq!(size_class_for(9), 1);   // 9 -> 16 bytes (class 1)
-        assert_eq!(size_class_for(16), 1);  // 16 -> 16 bytes (class 1)
-        assert_eq!(size_class_for(17), 2);  // 17 -> 32 bytes (class 2)
-        assert_eq!(size_class_for(32), 2);  // 32 -> 32 bytes (class 2)
-        assert_eq!(size_class_for(64), 3);  // 64 -> 64 bytes (class 3)
+        assert_eq!(size_class_for(0), 0); // 0 -> 8 bytes (class 0)
+        assert_eq!(size_class_for(1), 0); // 1 -> 8 bytes (class 0)
+        assert_eq!(size_class_for(8), 0); // 8 -> 8 bytes (class 0)
+        assert_eq!(size_class_for(9), 1); // 9 -> 16 bytes (class 1)
+        assert_eq!(size_class_for(16), 1); // 16 -> 16 bytes (class 1)
+        assert_eq!(size_class_for(17), 2); // 17 -> 32 bytes (class 2)
+        assert_eq!(size_class_for(32), 2); // 32 -> 32 bytes (class 2)
+        assert_eq!(size_class_for(64), 3); // 64 -> 64 bytes (class 3)
         assert_eq!(size_class_for(128), 4); // 128 -> 128 bytes (class 4)
         assert_eq!(size_class_for(256), 5); // 256 -> 256 bytes (class 5)
         assert_eq!(size_class_for(512), 6); // 512 -> 512 bytes (class 6)
-        assert_eq!(size_class_for(1024), 7);  // 1KB -> class 7
-        assert_eq!(size_class_for(2048), 8);  // 2KB -> class 8
-        assert_eq!(size_class_for(4096), 9);  // 4KB -> class 9
+        assert_eq!(size_class_for(1024), 7); // 1KB -> class 7
+        assert_eq!(size_class_for(2048), 8); // 2KB -> class 8
+        assert_eq!(size_class_for(4096), 9); // 4KB -> class 9
         assert_eq!(size_class_for(8192), 10); // 8KB -> class 10
         assert_eq!(size_class_for(16384), 11); // 16KB -> class 11
         assert_eq!(size_class_for(16385), SIZE_CLASS_LARGE); // >16KB -> large
@@ -5010,15 +5069,15 @@ mod tests {
         assert_eq!(region.stats().bumped(), 3);
 
         // Deallocate to different free lists
-        let _ = region.deallocate(ptr_8 as u64, 0);    // Class 0 (8 bytes)
-        let _ = region.deallocate(ptr_64 as u64, 3);   // Class 3 (64 bytes)
-        let _ = region.deallocate(ptr_256 as u64, 5);  // Class 5 (256 bytes)
+        let _ = region.deallocate(ptr_8 as u64, 0); // Class 0 (8 bytes)
+        let _ = region.deallocate(ptr_64 as u64, 3); // Class 3 (64 bytes)
+        let _ = region.deallocate(ptr_256 as u64, 5); // Class 5 (256 bytes)
 
         // Allocate again - should reuse from correct size classes
         let ptr_8_new = region.allocate(8, 8).unwrap();
         let ptr_64_new = region.allocate(64, 8).unwrap();
 
-        assert_eq!(ptr_8_new as u64, ptr_8 as u64);   // Same addresses reused
+        assert_eq!(ptr_8_new as u64, ptr_8 as u64); // Same addresses reused
         assert_eq!(ptr_64_new as u64, ptr_64 as u64);
 
         assert_eq!(region.stats().reused(), 2);

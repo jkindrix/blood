@@ -496,9 +496,8 @@ impl Once {
     where
         F: FnOnce(&OnceState<'_>),
     {
-        self.inner.call_once_force(|state| {
-            f(&OnceState { inner: state })
-        })
+        self.inner
+            .call_once_force(|state| f(&OnceState { inner: state }))
     }
 
     /// Returns `true` if some `call_once` call has completed successfully.
@@ -608,7 +607,10 @@ impl<T: fmt::Debug> fmt::Debug for OnceLock<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.get() {
             Some(v) => f.debug_struct("OnceLock").field("value", v).finish(),
-            None => f.debug_struct("OnceLock").field("value", &"<empty>").finish(),
+            None => f
+                .debug_struct("OnceLock")
+                .field("value", &"<empty>")
+                .finish(),
         }
     }
 }
@@ -772,7 +774,12 @@ impl Semaphore {
             if current > 0 {
                 if self
                     .permits
-                    .compare_exchange_weak(current, current - 1, Ordering::AcqRel, Ordering::Relaxed)
+                    .compare_exchange_weak(
+                        current,
+                        current - 1,
+                        Ordering::AcqRel,
+                        Ordering::Relaxed,
+                    )
                     .is_ok()
                 {
                     return;

@@ -7,13 +7,10 @@
 use std::collections::HashMap;
 
 use crate::diagnostics::Diagnostic;
-use crate::hir::DefId;
 use crate::hir::ty::TypeKind;
-use crate::mir::body::{MirBody, LocalKind};
-use crate::mir::types::{
-    PlaceBase, PlaceElem,
-    Operand, Rvalue, StatementKind, TerminatorKind,
-};
+use crate::hir::DefId;
+use crate::mir::body::{LocalKind, MirBody};
+use crate::mir::types::{Operand, PlaceBase, PlaceElem, Rvalue, StatementKind, TerminatorKind};
 
 /// Results from MIR validation.
 pub struct ValidationResults {
@@ -45,7 +42,13 @@ pub fn validate_mir_bodies(
 }
 
 /// Validate a single MIR body for well-formedness.
-fn validate_body(def_id: DefId, body: &MirBody, generic_def_ids: &std::collections::HashSet<DefId>, errors: &mut Vec<Diagnostic>, warnings: &mut Vec<Diagnostic>) {
+fn validate_body(
+    def_id: DefId,
+    body: &MirBody,
+    generic_def_ids: &std::collections::HashSet<DefId>,
+    errors: &mut Vec<Diagnostic>,
+    warnings: &mut Vec<Diagnostic>,
+) {
     let num_blocks = body.basic_blocks.len();
     let num_locals = body.locals.len();
 
@@ -61,7 +64,10 @@ fn validate_body(def_id: DefId, body: &MirBody, generic_def_ids: &std::collectio
     // Check 2: Return place exists and is at index 0
     if num_locals == 0 {
         errors.push(Diagnostic::error(
-            format!("MIR body for {:?} has no locals (missing return place)", def_id),
+            format!(
+                "MIR body for {:?} has no locals (missing return place)",
+                def_id
+            ),
             body.span,
         ));
     } else if body.locals[0].kind != LocalKind::ReturnPlace {
@@ -96,7 +102,10 @@ fn validate_body(def_id: DefId, body: &MirBody, generic_def_ids: &std::collectio
                         format!(
                             "MIR body for {:?}: bb{} terminator references \
                              non-existent block bb{} (body has {} blocks)",
-                            def_id, idx, target.index(), num_blocks
+                            def_id,
+                            idx,
+                            target.index(),
+                            num_blocks
                         ),
                         term.span,
                     ));
@@ -202,35 +211,88 @@ fn validate_statement_locals(
                     format!(
                         "MIR body for {:?}: bb{} references non-existent local _{} \
                          (body has {} locals)",
-                        def_id, block_idx, local_id.index(), num_locals
+                        def_id,
+                        block_idx,
+                        local_id.index(),
+                        num_locals
                     ),
                     stmt.span,
                 ));
             }
         }
-        StatementKind::Drop(place)
-        | StatementKind::IncrementGeneration(place) => {
+        StatementKind::Drop(place) | StatementKind::IncrementGeneration(place) => {
             validate_place_local(def_id, block_idx, place, num_locals, stmt.span, errors);
         }
         StatementKind::ValidateGeneration { ptr, expected_gen } => {
             validate_place_local(def_id, block_idx, ptr, num_locals, stmt.span, errors);
-            validate_operand_local(def_id, block_idx, expected_gen, num_locals, stmt.span, errors);
+            validate_operand_local(
+                def_id,
+                block_idx,
+                expected_gen,
+                num_locals,
+                stmt.span,
+                errors,
+            );
         }
         StatementKind::PushHandler { state_place, .. } => {
-            validate_place_local(def_id, block_idx, state_place, num_locals, stmt.span, errors);
+            validate_place_local(
+                def_id,
+                block_idx,
+                state_place,
+                num_locals,
+                stmt.span,
+                errors,
+            );
         }
         StatementKind::PushInlineHandler { .. } => {
             // Inline handler operations reference synthetic DefIds, not locals
         }
-        StatementKind::CallReturnClause { body_result, state_place, destination, .. } => {
-            validate_operand_local(def_id, block_idx, body_result, num_locals, stmt.span, errors);
-            validate_place_local(def_id, block_idx, state_place, num_locals, stmt.span, errors);
-            validate_place_local(def_id, block_idx, destination, num_locals, stmt.span, errors);
+        StatementKind::CallReturnClause {
+            body_result,
+            state_place,
+            destination,
+            ..
+        } => {
+            validate_operand_local(
+                def_id,
+                block_idx,
+                body_result,
+                num_locals,
+                stmt.span,
+                errors,
+            );
+            validate_place_local(
+                def_id,
+                block_idx,
+                state_place,
+                num_locals,
+                stmt.span,
+                errors,
+            );
+            validate_place_local(
+                def_id,
+                block_idx,
+                destination,
+                num_locals,
+                stmt.span,
+                errors,
+            );
         }
         StatementKind::CallFinallyClause { state_place, .. } => {
-            validate_place_local(def_id, block_idx, state_place, num_locals, stmt.span, errors);
+            validate_place_local(
+                def_id,
+                block_idx,
+                state_place,
+                num_locals,
+                stmt.span,
+                errors,
+            );
         }
-        StatementKind::PopHandler | StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) | StatementKind::Safepoint | StatementKind::Nop => {}
+        StatementKind::PopHandler
+        | StatementKind::EnterUnchecked(_)
+        | StatementKind::ExitUnchecked(_)
+        | StatementKind::Safepoint
+        | StatementKind::Nop => {}
     }
 }
 
@@ -243,20 +305,30 @@ fn validate_terminator_locals(
     errors: &mut Vec<Diagnostic>,
 ) {
     match &term.kind {
-        TerminatorKind::Goto { .. }
-        | TerminatorKind::Return
-        | TerminatorKind::Unreachable => {}
+        TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
 
         TerminatorKind::SwitchInt { discr, .. } => {
             validate_operand_local(def_id, block_idx, discr, num_locals, term.span, errors);
         }
 
-        TerminatorKind::Call { func, args, destination, .. } => {
+        TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } => {
             validate_operand_local(def_id, block_idx, func, num_locals, term.span, errors);
             for arg in args {
                 validate_operand_local(def_id, block_idx, arg, num_locals, term.span, errors);
             }
-            validate_place_local(def_id, block_idx, destination, num_locals, term.span, errors);
+            validate_place_local(
+                def_id,
+                block_idx,
+                destination,
+                num_locals,
+                term.span,
+                errors,
+            );
         }
 
         TerminatorKind::Assert { cond, .. } => {
@@ -268,11 +340,20 @@ fn validate_terminator_locals(
             validate_operand_local(def_id, block_idx, value, num_locals, term.span, errors);
         }
 
-        TerminatorKind::Perform { args, destination, .. } => {
+        TerminatorKind::Perform {
+            args, destination, ..
+        } => {
             for arg in args {
                 validate_operand_local(def_id, block_idx, arg, num_locals, term.span, errors);
             }
-            validate_place_local(def_id, block_idx, destination, num_locals, term.span, errors);
+            validate_place_local(
+                def_id,
+                block_idx,
+                destination,
+                num_locals,
+                term.span,
+                errors,
+            );
         }
 
         TerminatorKind::Resume { value } => {
@@ -302,7 +383,10 @@ fn validate_place_local(
                 format!(
                     "MIR body for {:?}: bb{} references non-existent local _{} \
                      (body has {} locals)",
-                    def_id, block_idx, local_id.index(), num_locals
+                    def_id,
+                    block_idx,
+                    local_id.index(),
+                    num_locals
                 ),
                 span,
             ));
@@ -316,7 +400,10 @@ fn validate_place_local(
                     format!(
                         "MIR body for {:?}: bb{} Index projection references \
                          non-existent local _{} (body has {} locals)",
-                        def_id, block_idx, local_id.index(), num_locals
+                        def_id,
+                        block_idx,
+                        local_id.index(),
+                        num_locals
                     ),
                     span,
                 ));
@@ -369,7 +456,10 @@ fn validate_rvalue_locals(
         }
         Rvalue::BinaryOp { left, right, .. }
         | Rvalue::CheckedBinaryOp { left, right, .. }
-        | Rvalue::StringIndex { base: left, index: right } => {
+        | Rvalue::StringIndex {
+            base: left,
+            index: right,
+        } => {
             validate_operand_local(def_id, block_idx, left, num_locals, span, errors);
             validate_operand_local(def_id, block_idx, right, num_locals, span, errors);
         }
@@ -378,7 +468,11 @@ fn validate_rvalue_locals(
                 validate_operand_local(def_id, block_idx, op, num_locals, span, errors);
             }
         }
-        Rvalue::MakeGenPtr { address, generation, metadata } => {
+        Rvalue::MakeGenPtr {
+            address,
+            generation,
+            metadata,
+        } => {
             validate_operand_local(def_id, block_idx, address, num_locals, span, errors);
             validate_operand_local(def_id, block_idx, generation, num_locals, span, errors);
             validate_operand_local(def_id, block_idx, metadata, num_locals, span, errors);

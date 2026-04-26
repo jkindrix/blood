@@ -376,8 +376,18 @@ impl<'a> Iterator for Tokenizer<'a> {
             '}' => Token::new(TokenKind::CloseBrace, "}".to_string(), start, self.position),
             '(' => Token::new(TokenKind::OpenParen, "(".to_string(), start, self.position),
             ')' => Token::new(TokenKind::CloseParen, ")".to_string(), start, self.position),
-            '[' => Token::new(TokenKind::OpenBracket, "[".to_string(), start, self.position),
-            ']' => Token::new(TokenKind::CloseBracket, "]".to_string(), start, self.position),
+            '[' => Token::new(
+                TokenKind::OpenBracket,
+                "[".to_string(),
+                start,
+                self.position,
+            ),
+            ']' => Token::new(
+                TokenKind::CloseBracket,
+                "]".to_string(),
+                start,
+                self.position,
+            ),
 
             // Punctuation
             ',' => Token::new(TokenKind::Comma, ",".to_string(), start, self.position),
@@ -388,7 +398,12 @@ impl<'a> Iterator for Tokenizer<'a> {
             ':' => {
                 if self.peek() == Some(':') {
                     self.advance();
-                    Token::new(TokenKind::DoubleColon, "::".to_string(), start, self.position)
+                    Token::new(
+                        TokenKind::DoubleColon,
+                        "::".to_string(),
+                        start,
+                        self.position,
+                    )
                 } else {
                     Token::new(TokenKind::Colon, ":".to_string(), start, self.position)
                 }

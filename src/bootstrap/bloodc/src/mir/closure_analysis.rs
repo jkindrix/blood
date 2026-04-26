@@ -49,12 +49,10 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type};
-use crate::codegen::types::type_size;
 use super::body::MirBody;
-use super::types::{
-    Rvalue, StatementKind, AggregateKind,
-};
+use super::types::{AggregateKind, Rvalue, StatementKind};
+use crate::codegen::types::type_size;
+use crate::hir::{DefId, Type};
 
 // ============================================================================
 // Configuration
@@ -167,14 +165,17 @@ impl ClosureAnalysisResults {
 
     /// Check if a closure is eligible for inline optimization.
     pub fn is_inline_candidate(&self, def_id: DefId) -> bool {
-        self.closures.get(&def_id)
+        self.closures
+            .get(&def_id)
             .map(|info| info.is_inline_candidate)
             .unwrap_or(false)
     }
 
     /// Get all inline-eligible closures.
     pub fn inline_candidates(&self) -> impl Iterator<Item = &ClosureInfo> {
-        self.closures.values().filter(|info| info.is_inline_candidate)
+        self.closures
+            .values()
+            .filter(|info| info.is_inline_candidate)
     }
 
     /// Generate a summary report.
@@ -183,29 +184,41 @@ impl ClosureAnalysisResults {
         report.push_str("=== Closure Analysis Summary ===\n\n");
 
         report.push_str(&format!("Total closures: {}\n", self.stats.total_closures));
-        report.push_str(&format!("Zero-capture: {} ({:.1}%)\n",
+        report.push_str(&format!(
+            "Zero-capture: {} ({:.1}%)\n",
             self.stats.zero_capture,
             if self.stats.total_closures > 0 {
                 self.stats.zero_capture as f64 / self.stats.total_closures as f64 * 100.0
-            } else { 0.0 }
+            } else {
+                0.0
+            }
         ));
-        report.push_str(&format!("Inline eligible (≤{} bytes): {} ({:.1}%)\n",
+        report.push_str(&format!(
+            "Inline eligible (≤{} bytes): {} ({:.1}%)\n",
             self.config.inline_threshold,
             self.stats.inline_eligible,
             if self.stats.total_closures > 0 {
                 self.stats.inline_eligible as f64 / self.stats.total_closures as f64 * 100.0
-            } else { 0.0 }
+            } else {
+                0.0
+            }
         ));
-        report.push_str(&format!("Pointer-based: {} ({:.1}%)\n",
+        report.push_str(&format!(
+            "Pointer-based: {} ({:.1}%)\n",
             self.stats.pointer_based,
             if self.stats.total_closures > 0 {
                 self.stats.pointer_based as f64 / self.stats.total_closures as f64 * 100.0
-            } else { 0.0 }
+            } else {
+                0.0
+            }
         ));
 
         report.push_str("\nEnvironment sizes:\n");
         report.push_str(&format!("  Total: {} bytes\n", self.stats.total_env_bytes));
-        report.push_str(&format!("  Average: {:.1} bytes\n", self.stats.avg_env_size));
+        report.push_str(&format!(
+            "  Average: {:.1} bytes\n",
+            self.stats.avg_env_size
+        ));
         report.push_str(&format!("  Maximum: {} bytes\n", self.stats.max_env_size));
 
         report.push_str("\nCapture count distribution:\n");
@@ -272,7 +285,11 @@ impl ClosureAnalyzer {
         body: &MirBody,
         results: &mut ClosureAnalysisResults,
     ) {
-        if let Rvalue::Aggregate { kind: AggregateKind::Closure { def_id }, operands } = rvalue {
+        if let Rvalue::Aggregate {
+            kind: AggregateKind::Closure { def_id },
+            operands,
+        } = rvalue
+        {
             // Collect capture types
             let mut capture_types = Vec::with_capacity(operands.len());
             let mut env_size = 0usize;
@@ -280,11 +297,11 @@ impl ClosureAnalyzer {
             for operand in operands {
                 // Get the type of the captured value
                 let ty = match operand {
-                    super::types::Operand::Copy(place) | super::types::Operand::Move(place) => {
-                        body.locals.get(place.local_unchecked().index as usize)
-                            .map(|local| local.ty.clone())
-                            .unwrap_or_else(Type::error)
-                    }
+                    super::types::Operand::Copy(place) | super::types::Operand::Move(place) => body
+                        .locals
+                        .get(place.local_unchecked().index as usize)
+                        .map(|local| local.ty.clone())
+                        .unwrap_or_else(Type::error),
                     super::types::Operand::Constant(c) => c.ty.clone(),
                 };
 
@@ -335,7 +352,10 @@ impl ClosureAnalyzer {
             }
 
             // Distribution
-            *stats.capture_count_distribution.entry(info.capture_count).or_insert(0) += 1;
+            *stats
+                .capture_count_distribution
+                .entry(info.capture_count)
+                .or_insert(0) += 1;
         }
 
         // Average
@@ -417,35 +437,44 @@ mod tests {
         let mut results = ClosureAnalysisResults::new(ClosureAnalysisConfig::default());
 
         // Add some mock closure info
-        results.closures.insert(DefId::new(1), ClosureInfo {
-            def_id: DefId::new(1),
-            capture_count: 0,
-            env_size: 0,
-            capture_types: vec![],
-            is_inline_candidate: true,
-            is_zero_capture: true,
-            parent_fn: DefId::new(0),
-        });
+        results.closures.insert(
+            DefId::new(1),
+            ClosureInfo {
+                def_id: DefId::new(1),
+                capture_count: 0,
+                env_size: 0,
+                capture_types: vec![],
+                is_inline_candidate: true,
+                is_zero_capture: true,
+                parent_fn: DefId::new(0),
+            },
+        );
 
-        results.closures.insert(DefId::new(2), ClosureInfo {
-            def_id: DefId::new(2),
-            capture_count: 1,
-            env_size: 8,
-            capture_types: vec![Type::i64()],
-            is_inline_candidate: true,
-            is_zero_capture: false,
-            parent_fn: DefId::new(0),
-        });
+        results.closures.insert(
+            DefId::new(2),
+            ClosureInfo {
+                def_id: DefId::new(2),
+                capture_count: 1,
+                env_size: 8,
+                capture_types: vec![Type::i64()],
+                is_inline_candidate: true,
+                is_zero_capture: false,
+                parent_fn: DefId::new(0),
+            },
+        );
 
-        results.closures.insert(DefId::new(3), ClosureInfo {
-            def_id: DefId::new(3),
-            capture_count: 4,
-            env_size: 32,
-            capture_types: vec![Type::i64(), Type::i64(), Type::i64(), Type::i64()],
-            is_inline_candidate: false,
-            is_zero_capture: false,
-            parent_fn: DefId::new(0),
-        });
+        results.closures.insert(
+            DefId::new(3),
+            ClosureInfo {
+                def_id: DefId::new(3),
+                capture_count: 4,
+                env_size: 32,
+                capture_types: vec![Type::i64(), Type::i64(), Type::i64(), Type::i64()],
+                is_inline_candidate: false,
+                is_zero_capture: false,
+                parent_fn: DefId::new(0),
+            },
+        );
 
         let analyzer = ClosureAnalyzer::new();
         analyzer.compute_statistics(&mut results);

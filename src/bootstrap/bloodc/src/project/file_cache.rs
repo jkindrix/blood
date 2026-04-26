@@ -106,7 +106,11 @@ impl std::fmt::Display for FileCacheError {
             Self::Io(e) => write!(f, "file cache IO error: {}", e),
             Self::Json(msg) => write!(f, "file cache JSON error: {}", msg),
             Self::VersionMismatch { expected, found } => {
-                write!(f, "file cache version mismatch: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "file cache version mismatch: expected {}, found {}",
+                    expected, found
+                )
             }
         }
     }
@@ -195,7 +199,8 @@ impl FileCache {
             let abs_path = self.project_root.join(&rel_path);
 
             // Restore file_to_defs mapping
-            let def_ids: HashSet<DefId> = entry.definitions
+            let def_ids: HashSet<DefId> = entry
+                .definitions
                 .iter()
                 .map(|&idx| DefId::new(idx))
                 .collect();
@@ -205,7 +210,8 @@ impl FileCache {
 
             // Restore file_to_module mapping
             if let Some(module_idx) = entry.module_id {
-                self.file_to_module.insert(abs_path.clone(), ModuleId::new(module_idx));
+                self.file_to_module
+                    .insert(abs_path.clone(), ModuleId::new(module_idx));
             }
 
             self.entries.insert(abs_path, entry);
@@ -271,7 +277,8 @@ impl FileCache {
     /// Get file metadata (mtime, size).
     fn get_file_metadata(path: &Path) -> io::Result<(u64, u64)> {
         let metadata = fs::metadata(path)?;
-        let mtime = metadata.modified()
+        let mtime = metadata
+            .modified()
             .ok()
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
@@ -637,11 +644,8 @@ mod tests {
         fs::remove_file(&file3).unwrap();
 
         // Check changes
-        let (changed, deleted) = cache.find_changed_files(&[
-            file1.clone(),
-            file2.clone(),
-            file3.clone(),
-        ]);
+        let (changed, deleted) =
+            cache.find_changed_files(&[file1.clone(), file2.clone(), file3.clone()]);
 
         assert!(changed.contains(&file2));
         assert!(deleted.contains(&file3));

@@ -88,7 +88,11 @@ impl HandlerLintContext {
     /// Check for deeply nested handler expressions.
     fn check_handler_nesting(&mut self, expr: &Expr, depth: usize) {
         match &expr.kind {
-            ExprKind::Handle { body, handler_instance, .. } => {
+            ExprKind::Handle {
+                body,
+                handler_instance,
+                ..
+            } => {
                 let new_depth = depth + 1;
                 if new_depth > self.config.max_handler_depth && self.config.warn_deep_handlers {
                     let span_key = (expr.span.start, expr.span.end);
@@ -104,7 +108,7 @@ impl HandlerLintContext {
                         )
                         .with_error_code(ErrorCode::DeeplyNestedHandlers)
                         .with_suggestion(
-                            "consider flattening handler structure or combining related effects"
+                            "consider flattening handler structure or combining related effects",
                         );
                         self.warnings.push(warning);
                     }
@@ -131,7 +135,7 @@ impl HandlerLintContext {
                         )
                         .with_error_code(ErrorCode::DeeplyNestedHandlers)
                         .with_suggestion(
-                            "consider flattening handler structure or combining related effects"
+                            "consider flattening handler structure or combining related effects",
                         );
                         self.warnings.push(warning);
                     }
@@ -206,7 +210,11 @@ impl HandlerLintContext {
             ExprKind::AddrOf { expr, .. } => {
                 self.check_handler_nesting(expr, depth);
             }
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.check_handler_nesting(condition, depth);
                 self.check_handler_nesting(then_branch, depth);
                 if let Some(else_expr) = else_branch {
@@ -225,12 +233,13 @@ impl HandlerLintContext {
             ExprKind::Loop { body, .. } => {
                 self.check_handler_nesting(body, depth);
             }
-            ExprKind::While { condition, body, .. } => {
+            ExprKind::While {
+                condition, body, ..
+            } => {
                 self.check_handler_nesting(condition, depth);
                 self.check_handler_nesting(body, depth);
             }
-            ExprKind::Block { stmts, expr }
-            | ExprKind::Region { stmts, expr, .. } => {
+            ExprKind::Block { stmts, expr } | ExprKind::Region { stmts, expr, .. } => {
                 for stmt in stmts {
                     self.check_statement_handler_nesting(stmt, depth);
                 }
@@ -248,9 +257,7 @@ impl HandlerLintContext {
             ExprKind::Cast { expr, .. } => {
                 self.check_handler_nesting(expr, depth);
             }
-            ExprKind::Unsafe(inner)
-            | ExprKind::Heap(inner)
-            | ExprKind::Stack(inner) => {
+            ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
                 self.check_handler_nesting(inner, depth);
             }
             ExprKind::Unchecked { body, .. } => {
@@ -280,7 +287,9 @@ impl HandlerLintContext {
             }
 
             // Macro expansion nodes - check subexpressions
-            ExprKind::MacroExpansion { args, named_args, .. } => {
+            ExprKind::MacroExpansion {
+                args, named_args, ..
+            } => {
                 for arg in args {
                     self.check_handler_nesting(arg, depth);
                 }
@@ -488,8 +497,12 @@ impl PointerLintContext {
                 let d = depth + 1;
                 if d > self.config.max_indirection {
                     let type_str = format!("{}", ty);
-                    if !self.warned_types.contains(&format!("indirection:{}", type_str)) {
-                        self.warned_types.insert(format!("indirection:{}", type_str));
+                    if !self
+                        .warned_types
+                        .contains(&format!("indirection:{}", type_str))
+                    {
+                        self.warned_types
+                            .insert(format!("indirection:{}", type_str));
                         let warning = Diagnostic::warning(
                             format!(
                                 "excessive indirection ({} levels): accessing data requires {} generation checks",
@@ -507,8 +520,12 @@ impl PointerLintContext {
                 let d = depth + 1;
                 if d > self.config.max_indirection {
                     let type_str = format!("{}", ty);
-                    if !self.warned_types.contains(&format!("indirection:{}", type_str)) {
-                        self.warned_types.insert(format!("indirection:{}", type_str));
+                    if !self
+                        .warned_types
+                        .contains(&format!("indirection:{}", type_str))
+                    {
+                        self.warned_types
+                            .insert(format!("indirection:{}", type_str));
                         let warning = Diagnostic::warning(
                             format!(
                                 "excessive indirection ({} levels): accessing data requires {} generation checks",
@@ -553,19 +570,21 @@ impl PointerLintContext {
                 let array_size = size.as_u64().unwrap_or(0);
                 if self.is_pointer_type(element) && array_size > 4 {
                     let type_str = format!("{}", ty);
-                    if !self.warned_types.contains(&format!("ptr_array:{}", type_str)) {
+                    if !self
+                        .warned_types
+                        .contains(&format!("ptr_array:{}", type_str))
+                    {
                         self.warned_types.insert(format!("ptr_array:{}", type_str));
                         let warning = Diagnostic::warning(
                             format!(
                                 "array of {} pointers: uses {}x memory of 64-bit pointers",
-                                array_size,
-                                2
+                                array_size, 2
                             ),
                             span,
                         )
                         .with_error_code(ErrorCode::PointerArrayPattern)
                         .with_suggestion(
-                            "consider storing values directly, or use indices into a separate Vec"
+                            "consider storing values directly, or use indices into a separate Vec",
                         );
                         self.warnings.push(warning);
                     }
@@ -596,7 +615,10 @@ impl PointerLintContext {
             return;
         }
 
-        let pointer_fields = fields.iter().filter(|(_, ty)| self.is_pointer_type(ty)).count();
+        let pointer_fields = fields
+            .iter()
+            .filter(|(_, ty)| self.is_pointer_type(ty))
+            .count();
         let density = pointer_fields as f64 / fields.len() as f64;
 
         if density > self.config.max_pointer_density && fields.len() >= 3 {
@@ -681,7 +703,8 @@ impl PointerLintContext {
                     return true;
                 }
                 // Check through generic arguments (e.g., Option<Self>, Box<Self>)
-                args.iter().any(|arg| self.contains_self_reference(arg, target_def_id))
+                args.iter()
+                    .any(|arg| self.contains_self_reference(arg, target_def_id))
             }
             TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
                 self.contains_self_reference(inner, target_def_id)
@@ -689,9 +712,9 @@ impl PointerLintContext {
             TypeKind::Array { element, .. } | TypeKind::Slice { element } => {
                 self.contains_self_reference(element, target_def_id)
             }
-            TypeKind::Tuple(tys) => {
-                tys.iter().any(|t| self.contains_self_reference(t, target_def_id))
-            }
+            TypeKind::Tuple(tys) => tys
+                .iter()
+                .any(|t| self.contains_self_reference(t, target_def_id)),
             _ => false,
         }
     }
@@ -705,7 +728,12 @@ mod tests {
     use crate::span::Span;
 
     fn test_span() -> Span {
-        Span { start: 0, end: 10, start_line: 1, start_col: 1 }
+        Span {
+            start: 0,
+            end: 10,
+            start_line: 1,
+            start_col: 1,
+        }
     }
 
     fn i32_type() -> Type {
@@ -713,7 +741,10 @@ mod tests {
     }
 
     fn ref_type(inner: Type) -> Type {
-        Type::new(TypeKind::Ref { inner, mutable: false })
+        Type::new(TypeKind::Ref {
+            inner,
+            mutable: false,
+        })
     }
 
     #[test]
@@ -726,9 +757,14 @@ mod tests {
         ctx.check_type(&deeply_nested, test_span());
 
         // Should not warn at 3 levels (max_indirection is 3)
-        assert!(ctx.warnings.is_empty() || ctx.warnings.iter().all(|w|
-            w.code.as_ref().map(|c| c != "W0005").unwrap_or(true)
-        ));
+        assert!(
+            ctx.warnings.is_empty()
+                || ctx.warnings.iter().all(|w| w
+                    .code
+                    .as_ref()
+                    .map(|c| c != "W0005")
+                    .unwrap_or(true))
+        );
     }
 
     #[test]
@@ -819,7 +855,12 @@ mod tests {
                 handler_instance: Box::new(handler_instance.clone()),
             },
             i32_type(),
-            Span { start: 10, end: 20, start_line: 1, start_col: 10 },
+            Span {
+                start: 10,
+                end: 20,
+                start_line: 1,
+                start_col: 10,
+            },
         );
 
         // Second level
@@ -830,7 +871,12 @@ mod tests {
                 handler_instance: Box::new(handler_instance.clone()),
             },
             i32_type(),
-            Span { start: 30, end: 40, start_line: 1, start_col: 30 },
+            Span {
+                start: 30,
+                end: 40,
+                start_line: 1,
+                start_col: 30,
+            },
         );
 
         // First level (outermost)
@@ -841,15 +887,26 @@ mod tests {
                 handler_instance: Box::new(handler_instance),
             },
             i32_type(),
-            Span { start: 50, end: 60, start_line: 1, start_col: 50 },
+            Span {
+                start: 50,
+                end: 60,
+                start_line: 1,
+                start_col: 50,
+            },
         );
 
         ctx.check_expr(&handle1);
 
         // With max_depth = 2, depth 3 should trigger warning
-        assert!(!ctx.warnings.is_empty(), "Should warn about deeply nested handlers");
-        assert!(ctx.warnings.iter().any(|w|
-            w.code.as_ref().map(|c| c == "W0100").unwrap_or(false)
-        ), "Warning should have code W0100 for DeeplyNestedHandlers");
+        assert!(
+            !ctx.warnings.is_empty(),
+            "Should warn about deeply nested handlers"
+        );
+        assert!(
+            ctx.warnings
+                .iter()
+                .any(|w| w.code.as_ref().map(|c| c == "W0100").unwrap_or(false)),
+            "Warning should have code W0100 for DeeplyNestedHandlers"
+        );
     }
 }

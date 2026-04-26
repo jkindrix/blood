@@ -31,14 +31,14 @@
 //!   => ρ₂ = {IO | ρ₃}            // Fresh row variable
 //! ```
 
-use std::collections::{HashMap, BTreeSet};
-use crate::effects::row::{EffectRow, EffectRef, RowVar};
+use crate::effects::row::{EffectRef, EffectRow, RowVar};
+use std::collections::{BTreeSet, HashMap};
 
+use super::error::{TypeError, TypeErrorKind};
+use super::unify::Unifier;
 #[cfg(test)]
 use crate::hir::{DefId, Type};
 use crate::span::Span;
-use super::error::{TypeError, TypeErrorKind};
-use super::unify::Unifier;
 
 /// Row variable identifier for effect polymorphism.
 ///

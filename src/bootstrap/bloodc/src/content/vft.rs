@@ -165,10 +165,7 @@ pub enum HotSwapError {
     /// New hash not registered yet.
     NewHashNotRegistered,
     /// Arity mismatch between old and new.
-    ArityMismatch {
-        old_arity: u8,
-        new_arity: u8,
-    },
+    ArityMismatch { old_arity: u8, new_arity: u8 },
     /// Effect mismatch (new effects not subset of old).
     EffectMismatch {
         old_effects: EffectMask,
@@ -180,9 +177,7 @@ pub enum HotSwapError {
         new: CallingConvention,
     },
     /// In-flight calls blocking barrier swap.
-    InFlightCallsBlocking {
-        count: u64,
-    },
+    InFlightCallsBlocking { count: u64 },
 }
 
 /// A pending VFT update.
@@ -320,9 +315,13 @@ impl VFT {
         new_hash: ContentHash,
     ) -> Result<(), HotSwapError> {
         // Get both entries
-        let old_entry = self.entries.get(&old_hash)
+        let old_entry = self
+            .entries
+            .get(&old_hash)
             .ok_or(HotSwapError::OldHashNotFound)?;
-        let new_entry = self.entries.get(&new_hash)
+        let new_entry = self
+            .entries
+            .get(&new_hash)
             .ok_or(HotSwapError::NewHashNotRegistered)?;
 
         // Check arity (must match exactly for compatibility)
@@ -469,7 +468,8 @@ impl VFT {
     /// Clear stale redirects (clean up after GC).
     pub fn cleanup_redirects(&mut self) {
         // Remove redirects to non-existent entries
-        self.redirects.retain(|_, target| self.entries.contains_key(target));
+        self.redirects
+            .retain(|_, target| self.entries.contains_key(target));
     }
 
     /// Iterate over all entries.
@@ -546,9 +546,7 @@ impl TypePattern {
         match self {
             Self::Any => 0,
             Self::Concrete(_) => 10,
-            Self::Applied { args, .. } => {
-                10 + args.iter().map(|a| a.specificity()).sum::<u32>()
-            }
+            Self::Applied { args, .. } => 10 + args.iter().map(|a| a.specificity()).sum::<u32>(),
         }
     }
 }
@@ -565,11 +563,7 @@ impl DispatchTable {
     }
 
     /// Find the best matching implementation for given argument types.
-    pub fn dispatch(
-        &self,
-        method_hash: ContentHash,
-        arg_type: ContentHash,
-    ) -> Option<ContentHash> {
+    pub fn dispatch(&self, method_hash: ContentHash, arg_type: ContentHash) -> Option<ContentHash> {
         let entries = self.methods.get(&method_hash)?;
 
         entries
@@ -779,7 +773,10 @@ mod tests {
         let result = vft.validate_swap_compatibility(old, new);
         assert!(matches!(
             result,
-            Err(HotSwapError::ArityMismatch { old_arity: 2, new_arity: 3 })
+            Err(HotSwapError::ArityMismatch {
+                old_arity: 2,
+                new_arity: 3
+            })
         ));
     }
 
@@ -861,7 +858,11 @@ mod tests {
         let result = vft.hot_swap(old, new, SwapMode::Immediate);
 
         match result {
-            HotSwapResult::Success { old_hash, new_hash, generation } => {
+            HotSwapResult::Success {
+                old_hash,
+                new_hash,
+                generation,
+            } => {
                 assert_eq!(old_hash, old);
                 assert_eq!(new_hash, new);
                 assert!(generation > 0);
@@ -934,7 +935,10 @@ mod tests {
 
         let result = vft.hot_swap(old, new, SwapMode::Immediate);
 
-        assert!(matches!(result, HotSwapResult::Error(HotSwapError::ArityMismatch { .. })));
+        assert!(matches!(
+            result,
+            HotSwapResult::Error(HotSwapError::ArityMismatch { .. })
+        ));
     }
 
     // ========================================================================

@@ -15,7 +15,10 @@
 #![allow(deprecated)] // These tests use compile_crate (HIR path) for backwards compatibility
 
 use super::*;
-use crate::hir::{self, Crate, Item, ItemKind, Body, BodyId, Type, Expr, ExprKind, LiteralValue, Local, LocalId, DefId};
+use crate::hir::{
+    self, Body, BodyId, Crate, DefId, Expr, ExprKind, Item, ItemKind, LiteralValue, Local, LocalId,
+    Type,
+};
 use crate::span::Span;
 use std::collections::HashMap;
 
@@ -160,7 +163,11 @@ fn test_codegen_int_literal() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Integer literal codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Integer literal codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -175,7 +182,11 @@ fn test_codegen_float_literal() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Float literal codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Float literal codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -190,7 +201,11 @@ fn test_codegen_bool_literal() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Bool literal codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Bool literal codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -209,7 +224,11 @@ fn test_codegen_string_literal() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "String literal codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "String literal codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== BINARY OPERATION TESTS ====================
@@ -291,13 +310,22 @@ fn test_codegen_int_compare() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Int compare codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Int compare codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_codegen_float_add() {
     use crate::ast::BinOp;
-    let expr = binary_expr(BinOp::Add, float_literal(1.5), float_literal(2.5), f64_type());
+    let expr = binary_expr(
+        BinOp::Add,
+        float_literal(1.5),
+        float_literal(2.5),
+        f64_type(),
+    );
     let hir_crate = make_test_crate(expr, f64_type());
 
     let context = Context::create();
@@ -307,13 +335,22 @@ fn test_codegen_float_add() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Float add codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Float add codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_codegen_float_mul() {
     use crate::ast::BinOp;
-    let expr = binary_expr(BinOp::Mul, float_literal(2.0), float_literal(3.0), f64_type());
+    let expr = binary_expr(
+        BinOp::Mul,
+        float_literal(2.0),
+        float_literal(3.0),
+        f64_type(),
+    );
     let hir_crate = make_test_crate(expr, f64_type());
 
     let context = Context::create();
@@ -323,13 +360,22 @@ fn test_codegen_float_mul() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Float mul codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Float mul codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_codegen_float_compare() {
     use crate::ast::BinOp;
-    let expr = binary_expr(BinOp::Gt, float_literal(2.5), float_literal(2.71), bool_type());
+    let expr = binary_expr(
+        BinOp::Gt,
+        float_literal(2.5),
+        float_literal(2.71),
+        bool_type(),
+    );
     let hir_crate = make_test_crate(expr, bool_type());
 
     let context = Context::create();
@@ -339,7 +385,11 @@ fn test_codegen_float_compare() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Float compare codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Float compare codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== UNARY OPERATION TESTS ====================
@@ -373,7 +423,11 @@ fn test_codegen_float_neg() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Float neg codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Float neg codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -459,7 +513,11 @@ fn test_codegen_while_loop() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "While loop codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "While loop codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== BLOCK AND LET TESTS ====================
@@ -498,7 +556,11 @@ fn test_codegen_block_with_let() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Block with let codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Block with let codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== TUPLE TESTS ====================
@@ -520,7 +582,11 @@ fn test_codegen_tuple_empty() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Empty tuple codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Empty tuple codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -542,7 +608,11 @@ fn test_codegen_tuple_with_values() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Tuple with values codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Tuple with values codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== ARRAY TESTS ====================
@@ -566,7 +636,11 @@ fn test_codegen_array_literal() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Array literal codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Array literal codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -588,7 +662,11 @@ fn test_codegen_array_empty() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Empty array codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Empty array codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== TYPE LOWERING TESTS ====================
@@ -661,7 +739,11 @@ fn test_codegen_nested_binary_ops() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Nested binary ops codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Nested binary ops codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -695,7 +777,11 @@ fn test_codegen_nested_if() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Nested if codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Nested if codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ==================== BITWISE OPERATION TESTS ====================
@@ -703,7 +789,12 @@ fn test_codegen_nested_if() {
 #[test]
 fn test_codegen_bitwise_and() {
     use crate::ast::BinOp;
-    let expr = binary_expr(BinOp::BitAnd, int_literal(0xFF), int_literal(0x0F), i32_type());
+    let expr = binary_expr(
+        BinOp::BitAnd,
+        int_literal(0xFF),
+        int_literal(0x0F),
+        i32_type(),
+    );
     let hir_crate = make_test_crate(expr, i32_type());
 
     let context = Context::create();
@@ -713,13 +804,22 @@ fn test_codegen_bitwise_and() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Bitwise AND codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Bitwise AND codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_codegen_bitwise_or() {
     use crate::ast::BinOp;
-    let expr = binary_expr(BinOp::BitOr, int_literal(0xF0), int_literal(0x0F), i32_type());
+    let expr = binary_expr(
+        BinOp::BitOr,
+        int_literal(0xF0),
+        int_literal(0x0F),
+        i32_type(),
+    );
     let hir_crate = make_test_crate(expr, i32_type());
 
     let context = Context::create();
@@ -729,7 +829,11 @@ fn test_codegen_bitwise_or() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Bitwise OR codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Bitwise OR codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -745,7 +849,11 @@ fn test_codegen_shift_left() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Shift left codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Shift left codegen failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -761,7 +869,11 @@ fn test_codegen_shift_right() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Shift right codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Shift right codegen failed: {:?}",
+        result.err()
+    );
 }
 
 // ========================================================================
@@ -796,11 +908,17 @@ fn test_codegen_perform_basic() {
     let result = codegen.compile_crate(&hir_crate);
 
     // With runtime dispatch, compilation succeeds - handler lookup happens at runtime
-    assert!(result.is_ok(), "Perform codegen should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Perform codegen should succeed: {:?}",
+        result.err()
+    );
 
     // Verify blood_perform function is declared
-    assert!(module.get_function("blood_perform").is_some(),
-        "blood_perform should be declared");
+    assert!(
+        module.get_function("blood_perform").is_some(),
+        "blood_perform should be declared"
+    );
 }
 
 /// Test perform with no arguments generates correct runtime call
@@ -827,7 +945,11 @@ fn test_codegen_perform_no_args() {
     let result = codegen.compile_crate(&hir_crate);
 
     // With runtime dispatch, compilation succeeds even without handlers
-    assert!(result.is_ok(), "Perform codegen should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Perform codegen should succeed: {:?}",
+        result.err()
+    );
 }
 
 /// Test resume expression (tail-resumptive)
@@ -869,7 +991,11 @@ fn test_codegen_resume_unit() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Resume unit codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Resume unit codegen failed: {:?}",
+        result.err()
+    );
 }
 
 /// Test handle expression wraps body
@@ -937,5 +1063,9 @@ fn test_codegen_handle_unit() {
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     let result = codegen.compile_crate(&hir_crate);
 
-    assert!(result.is_ok(), "Handle unit codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Handle unit codegen failed: {:?}",
+        result.err()
+    );
 }

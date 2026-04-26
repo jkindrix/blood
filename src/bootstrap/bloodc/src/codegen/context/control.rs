@@ -6,9 +6,8 @@
 use inkwell::values::{BasicValueEnum, PointerValue};
 use inkwell::IntPredicate;
 
-use crate::hir::{self, Type};
 use crate::diagnostics::Diagnostic;
-
+use crate::hir::{self, Type};
 
 use super::{CodegenContext, LoopContext};
 
@@ -33,14 +32,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.context.i32_type().into()
                     };
 
-                    let alloca = self.builder
+                    let alloca = self
+                        .builder
                         .build_alloca(llvm_type, &format!("local_{}", local_id.index))
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
 
                     if let Some(init_expr) = init {
                         if let Some(init_val) = self.compile_expr(init_expr)? {
-                            self.builder.build_store(alloca, init_val)
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                            self.builder.build_store(alloca, init_val).map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
                         }
                     }
 
@@ -71,11 +80,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         else_branch: Option<&hir::Expr>,
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
-        let fn_value = self.current_fn
-            .ok_or_else(|| vec![Diagnostic::error("If outside function", self.current_span())])?;
+        let fn_value = self.current_fn.ok_or_else(|| {
+            vec![Diagnostic::error(
+                "If outside function",
+                self.current_span(),
+            )]
+        })?;
 
-        let cond_val = self.compile_expr(condition)?
-            .ok_or_else(|| vec![Diagnostic::error("Expected condition value", condition.span)])?;
+        let cond_val = self.compile_expr(condition)?.ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Expected condition value",
+                condition.span,
+            )]
+        })?;
 
         // Convert to i1 if needed
         let cond_bool = if cond_val.is_int_value() {
@@ -83,29 +100,51 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if int_val.get_type().get_bit_width() == 1 {
                 int_val
             } else {
-                self.builder.build_int_compare(
-                    IntPredicate::NE,
-                    int_val,
-                    int_val.get_type().const_zero(),
-                    "tobool",
-                ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+                self.builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        int_val,
+                        int_val.get_type().const_zero(),
+                        "tobool",
+                    )
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
             }
         } else {
-            return Err(vec![Diagnostic::error("Condition must be boolean", condition.span)]);
+            return Err(vec![Diagnostic::error(
+                "Condition must be boolean",
+                condition.span,
+            )]);
         };
 
         let then_bb = self.context.append_basic_block(fn_value, "then");
         let else_bb = self.context.append_basic_block(fn_value, "else");
         let merge_bb = self.context.append_basic_block(fn_value, "merge");
 
-        self.builder.build_conditional_branch(cond_bool, then_bb, else_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_conditional_branch(cond_bool, then_bb, else_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Compile then branch
         self.builder.position_at_end(then_bb);
         let then_val = self.compile_expr(then_branch)?;
-        self.builder.build_unconditional_branch(merge_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(merge_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         let then_bb = self.get_current_block()?;
 
         // Compile else branch
@@ -115,8 +154,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         } else {
             None
         };
-        self.builder.build_unconditional_branch(merge_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(merge_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         let else_bb = self.get_current_block()?;
 
         // Merge
@@ -125,8 +170,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // If non-unit result type, create phi node
         if !result_ty.is_unit() {
             if let (Some(then_v), Some(else_v)) = (then_val, else_val) {
-                let phi = self.builder.build_phi(self.lower_type(result_ty), "ifresult")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                let phi = self
+                    .builder
+                    .build_phi(self.lower_type(result_ty), "ifresult")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 phi.add_incoming(&[(&then_v, then_bb), (&else_v, else_bb)]);
                 return Ok(Some(phi.as_basic_value()));
             }
@@ -141,43 +193,78 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         condition: &hir::Expr,
         body: &hir::Expr,
     ) -> Result<(), Vec<Diagnostic>> {
-        let fn_value = self.current_fn
-            .ok_or_else(|| vec![Diagnostic::error("While outside function", self.current_span())])?;
+        let fn_value = self.current_fn.ok_or_else(|| {
+            vec![Diagnostic::error(
+                "While outside function",
+                self.current_span(),
+            )]
+        })?;
 
         let cond_bb = self.context.append_basic_block(fn_value, "while.cond");
         let body_bb = self.context.append_basic_block(fn_value, "while.body");
         let end_bb = self.context.append_basic_block(fn_value, "while.end");
 
         // Jump to condition
-        self.builder.build_unconditional_branch(cond_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Compile condition
         self.builder.position_at_end(cond_bb);
-        let cond_val = self.compile_expr(condition)?
-            .ok_or_else(|| vec![Diagnostic::error("Expected condition value", condition.span)])?
+        let cond_val = self
+            .compile_expr(condition)?
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Expected condition value",
+                    condition.span,
+                )]
+            })?
             .into_int_value();
 
         // Ensure boolean
         let cond_bool = if cond_val.get_type().get_bit_width() == 1 {
             cond_val
         } else {
-            self.builder.build_int_compare(
-                IntPredicate::NE,
-                cond_val,
-                cond_val.get_type().const_zero(),
-                "tobool",
-            ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+            self.builder
+                .build_int_compare(
+                    IntPredicate::NE,
+                    cond_val,
+                    cond_val.get_type().const_zero(),
+                    "tobool",
+                )
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
         };
 
-        self.builder.build_conditional_branch(cond_bool, body_bb, end_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_conditional_branch(cond_bool, body_bb, end_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Compile body
         self.builder.position_at_end(body_bb);
         self.compile_expr(body)?;
-        self.builder.build_unconditional_branch(cond_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Continue after loop
         self.builder.position_at_end(end_bb);
@@ -186,18 +273,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Compile a return statement.
-    pub(super) fn compile_return(&mut self, value: Option<&hir::Expr>) -> Result<(), Vec<Diagnostic>> {
+    pub(super) fn compile_return(
+        &mut self,
+        value: Option<&hir::Expr>,
+    ) -> Result<(), Vec<Diagnostic>> {
         if let Some(val_expr) = value {
             if let Some(val) = self.compile_expr(val_expr)? {
-                self.builder.build_return(Some(&val))
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                self.builder.build_return(Some(&val)).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             } else {
-                self.builder.build_return(None)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                self.builder.build_return(None).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             }
         } else {
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            self.builder.build_return(None).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         }
         Ok(())
     }
@@ -208,11 +310,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Supports local variables, struct field access, and array indexing.
     fn compile_lvalue(&mut self, expr: &hir::Expr) -> Result<PointerValue<'ctx>, Vec<Diagnostic>> {
         match &expr.kind {
-            hir::ExprKind::Local(local_id) => {
-                self.locals.get(local_id)
-                    .copied()
-                    .ok_or_else(|| vec![Diagnostic::error("Local not found", expr.span)])
-            }
+            hir::ExprKind::Local(local_id) => self
+                .locals
+                .get(local_id)
+                .copied()
+                .ok_or_else(|| vec![Diagnostic::error("Local not found", expr.span)]),
             hir::ExprKind::Field { base, field_idx } => {
                 // Get address of the base (must be addressable)
                 let base_ptr = self.compile_lvalue(base)?;
@@ -223,8 +325,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let zero = self.context.i32_type().const_int(0, false);
                 let field_index = self.context.i32_type().const_int(*field_idx as u64, false);
                 unsafe {
-                    self.builder.build_gep(base_pointee_ty, base_ptr, &[zero, field_index], "field.ptr")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])
+                    self.builder
+                        .build_gep(base_pointee_ty, base_ptr, &[zero, field_index], "field.ptr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)]
+                        })
                 }
             }
             hir::ExprKind::Index { base, index } => {
@@ -234,35 +339,49 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let base_pointee_ty = self.lower_type(&base.ty);
 
                 // Compile the index expression to get the index value
-                let index_val = self.compile_expr(index)?
+                let index_val = self
+                    .compile_expr(index)?
                     .ok_or_else(|| vec![Diagnostic::error("Expected index value", index.span)])?
                     .into_int_value();
 
                 // Compute GEP for the array element
                 let zero = self.context.i32_type().const_int(0, false);
                 unsafe {
-                    self.builder.build_gep(base_pointee_ty, base_ptr, &[zero, index_val], "elem.ptr")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])
+                    self.builder
+                        .build_gep(base_pointee_ty, base_ptr, &[zero, index_val], "elem.ptr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)]
+                        })
                 }
             }
-            _ => {
-                Err(vec![Diagnostic::error(
-                    "Cannot assign to this expression",
-                    expr.span,
-                )])
-            }
+            _ => Err(vec![Diagnostic::error(
+                "Cannot assign to this expression",
+                expr.span,
+            )]),
         }
     }
 
     /// Compile an assignment.
-    pub(super) fn compile_assign(&mut self, target: &hir::Expr, value: &hir::Expr) -> Result<(), Vec<Diagnostic>> {
-        let val = self.compile_expr(value)?
-            .ok_or_else(|| vec![Diagnostic::error("Expected value for assignment", value.span)])?;
+    pub(super) fn compile_assign(
+        &mut self,
+        target: &hir::Expr,
+        value: &hir::Expr,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let val = self.compile_expr(value)?.ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Expected value for assignment",
+                value.span,
+            )]
+        })?;
 
         // Get target address using compile_lvalue
         let target_ptr = self.compile_lvalue(target)?;
-        self.builder.build_store(target_ptr, val)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder.build_store(target_ptr, val).map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM error: {}", e),
+                self.current_span(),
+            )]
+        })?;
 
         Ok(())
     }
@@ -274,8 +393,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         label: Option<hir::LoopId>,
         result_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
-        let fn_value = self.current_fn
-            .ok_or_else(|| vec![Diagnostic::error("Loop outside function", self.current_span())])?;
+        let fn_value = self.current_fn.ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Loop outside function",
+                self.current_span(),
+            )]
+        })?;
 
         let loop_bb = self.context.append_basic_block(fn_value, "loop.body");
         let exit_bb = self.context.append_basic_block(fn_value, "loop.exit");
@@ -283,9 +406,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Allocate storage for break value if non-unit result type
         let break_value_store = if !result_ty.is_unit() {
             let llvm_type = self.lower_type(result_ty);
-            Some(self.builder
-                .build_alloca(llvm_type, "loop.result")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?)
+            Some(
+                self.builder
+                    .build_alloca(llvm_type, "loop.result")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?,
+            )
         } else {
             None
         };
@@ -299,8 +429,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         });
 
         // Jump to loop body
-        self.builder.build_unconditional_branch(loop_bb)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(loop_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Compile loop body
         self.builder.position_at_end(loop_bb);
@@ -308,8 +444,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // If body didn't terminate, loop back
         if self.get_current_block()?.get_terminator().is_none() {
-            self.builder.build_unconditional_branch(loop_bb)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            self.builder
+                .build_unconditional_branch(loop_bb)
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
         }
 
         // Pop loop context
@@ -325,8 +467,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 .as_instruction()
                 .and_then(|inst| inst.get_allocated_type().ok())
                 .unwrap_or_else(|| self.lower_type(result_ty));
-            let val = self.builder.build_load(store_ty, store, "loop.result.load")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            let val = self
+                .builder
+                .build_load(store_ty, store, "loop.result.load")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             Ok(Some(val))
         } else {
             Ok(None)
@@ -341,62 +490,89 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ) -> Result<(), Vec<Diagnostic>> {
         // Find the loop context
         let loop_ctx = if let Some(label) = label {
-            self.loop_stack.iter().rev()
+            self.loop_stack
+                .iter()
+                .rev()
                 .find(|ctx| ctx.label == Some(label))
                 .cloned()
-                .ok_or_else(|| vec![Diagnostic::error(
-                    format!("Cannot find loop with label {:?}", label),
-                    self.current_span(),
-                )])?
+                .ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        format!("Cannot find loop with label {:?}", label),
+                        self.current_span(),
+                    )]
+                })?
         } else {
-            self.loop_stack.last()
-                .cloned()
-                .ok_or_else(|| vec![Diagnostic::error(
+            self.loop_stack.last().cloned().ok_or_else(|| {
+                vec![Diagnostic::error(
                     "Break outside of loop",
                     self.current_span(),
-                )])?
+                )]
+            })?
         };
 
         // Compile and store break value if present
         if let Some(val_expr) = value {
             if let Some(val) = self.compile_expr(val_expr)? {
                 if let Some(store) = loop_ctx.break_value_store {
-                    self.builder.build_store(store, val)
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                    self.builder.build_store(store, val).map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 }
             }
         }
 
         // Jump to exit block
-        self.builder.build_unconditional_branch(loop_ctx.exit_block)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(loop_ctx.exit_block)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         Ok(())
     }
 
     /// Compile a continue statement.
-    pub(super) fn compile_continue(&mut self, label: Option<hir::LoopId>) -> Result<(), Vec<Diagnostic>> {
+    pub(super) fn compile_continue(
+        &mut self,
+        label: Option<hir::LoopId>,
+    ) -> Result<(), Vec<Diagnostic>> {
         // Find the loop context
         let loop_ctx = if let Some(label) = label {
-            self.loop_stack.iter().rev()
+            self.loop_stack
+                .iter()
+                .rev()
                 .find(|ctx| ctx.label == Some(label))
                 .cloned()
-                .ok_or_else(|| vec![Diagnostic::error(
-                    format!("Cannot find loop with label {:?}", label),
-                    self.current_span(),
-                )])?
+                .ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        format!("Cannot find loop with label {:?}", label),
+                        self.current_span(),
+                    )]
+                })?
         } else {
-            self.loop_stack.last()
-                .cloned()
-                .ok_or_else(|| vec![Diagnostic::error(
+            self.loop_stack.last().cloned().ok_or_else(|| {
+                vec![Diagnostic::error(
                     "Continue outside of loop",
                     self.current_span(),
-                )])?
+                )]
+            })?
         };
 
         // Jump to continue block
-        self.builder.build_unconditional_branch(loop_ctx.continue_block)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder
+            .build_unconditional_branch(loop_ctx.continue_block)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         Ok(())
     }

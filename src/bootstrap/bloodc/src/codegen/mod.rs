@@ -28,12 +28,12 @@
 
 pub mod context;
 pub mod debug_info;
-pub mod types;
 pub mod expr;
 pub mod mir_codegen;
+pub mod types;
 
 pub use context::CodegenContext;
-pub use debug_info::{DebugInfoGenerator, DebugInfoConfig};
+pub use debug_info::{DebugInfoConfig, DebugInfoGenerator};
 pub use mir_codegen::MirCodegen;
 
 // ============================================================================
@@ -62,15 +62,17 @@ pub const CODEGEN_HASH: &str = env!("CODEGEN_HASH");
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
-use inkwell::targets::{Target, TargetMachine, InitializationConfig, CodeModel, RelocMode, FileType};
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 use inkwell::OptimizationLevel;
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::hir::{self, DefId};
-use crate::mir::{EscapeResults, MirBody, InlineHandlerBodies, ClosureAnalysisResults};
 use crate::diagnostics::Diagnostic;
+use crate::hir::{self, DefId};
+use crate::mir::{ClosureAnalysisResults, EscapeResults, InlineHandlerBodies, MirBody};
 
 /// Type alias for escape analysis results per function.
 pub type EscapeAnalysisMap = HashMap<DefId, EscapeResults>;
@@ -123,7 +125,10 @@ fn optimize_module(module: &Module, opt_level: BloodOptLevel, target_machine: &T
 
     let options = PassBuilderOptions::create();
     if let Err(e) = module.run_passes(passes, target_machine, options) {
-        eprintln!("Warning: LLVM optimization passes failed: {}", e.to_string());
+        eprintln!(
+            "Warning: LLVM optimization passes failed: {}",
+            e.to_string()
+        );
     }
 }
 
@@ -175,7 +180,11 @@ pub fn optimize_module_bisect(module: &Module) -> Vec<(String, String, bool)> {
         let success = match module.run_passes(pass_name, &target_machine, options) {
             Ok(()) => true,
             Err(e) => {
-                eprintln!("Warning: LLVM pass '{}' failed: {}; skipping remaining passes", pass_name, e.to_string());
+                eprintln!(
+                    "Warning: LLVM pass '{}' failed: {}; skipping remaining passes",
+                    pass_name,
+                    e.to_string()
+                );
                 let ir = module.print_to_string().to_string();
                 results.push((pass_name.to_string(), ir, false));
                 break;
@@ -206,7 +215,7 @@ fn get_native_target_machine_with_opt(opt_level: BloodOptLevel) -> Result<Target
             cpu.to_str().unwrap_or("generic"),
             features.to_str().unwrap_or(""),
             opt_level.to_llvm_opt_level(),
-            RelocMode::PIC,  // Required for PIE executables
+            RelocMode::PIC, // Required for PIE executables
             CodeModel::Default,
         )
         .ok_or_else(|| "Failed to create target machine".to_string())
@@ -277,7 +286,12 @@ pub fn compile_mir_to_object(
     if let Some(ca) = closure_analysis {
         codegen.set_closure_analysis(ca.clone());
     }
-    codegen.set_builtin_def_ids(builtin_def_ids.0, builtin_def_ids.1, builtin_def_ids.2, builtin_def_ids.3);
+    codegen.set_builtin_def_ids(
+        builtin_def_ids.0,
+        builtin_def_ids.1,
+        builtin_def_ids.2,
+        builtin_def_ids.3,
+    );
 
     // First pass: declare types and functions from HIR
     // This sets up struct_defs, enum_defs, and function declarations
@@ -343,10 +357,12 @@ pub fn compile_mir_to_object(
     // Write object file
     target_machine
         .write_to_file(&module, FileType::Object, output_path)
-        .map_err(|e| vec![Diagnostic::error(
-            format!("Failed to write object file: {}", e.to_string()),
-            crate::span::Span::dummy(),
-        )])?;
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!("Failed to write object file: {}", e.to_string()),
+                crate::span::Span::dummy(),
+            )]
+        })?;
 
     Ok(())
 }
@@ -377,7 +393,12 @@ pub fn compile_mir_to_object_with_opt(
     if let Some(ca) = closure_analysis {
         codegen.set_closure_analysis(ca.clone());
     }
-    codegen.set_builtin_def_ids(builtin_def_ids.0, builtin_def_ids.1, builtin_def_ids.2, builtin_def_ids.3);
+    codegen.set_builtin_def_ids(
+        builtin_def_ids.0,
+        builtin_def_ids.1,
+        builtin_def_ids.2,
+        builtin_def_ids.3,
+    );
 
     // First pass: declare types and functions from HIR
     codegen.compile_crate_declarations(hir_crate)?;
@@ -436,10 +457,12 @@ pub fn compile_mir_to_object_with_opt(
     // Write object file
     target_machine
         .write_to_file(&module, FileType::Object, output_path)
-        .map_err(|e| vec![Diagnostic::error(
-            format!("Failed to write object file: {}", e.to_string()),
-            crate::span::Span::dummy(),
-        )])?;
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!("Failed to write object file: {}", e.to_string()),
+                crate::span::Span::dummy(),
+            )]
+        })?;
 
     Ok(())
 }
@@ -484,7 +507,12 @@ pub fn compile_definition_to_object(
     configure_module_target(&module, &target_machine);
 
     let mut codegen = CodegenContext::new(&context, &module, &builder);
-    codegen.set_builtin_def_ids(builtin_def_ids.0, builtin_def_ids.1, builtin_def_ids.2, builtin_def_ids.3);
+    codegen.set_builtin_def_ids(
+        builtin_def_ids.0,
+        builtin_def_ids.1,
+        builtin_def_ids.2,
+        builtin_def_ids.3,
+    );
 
     // Set up escape analysis if provided
     if let Some(results) = escape_results {
@@ -559,7 +587,11 @@ pub fn compile_definition_to_object(
     // Verify the module
     if let Err(err) = module.verify() {
         return Err(vec![Diagnostic::error(
-            format!("LLVM verification failed for def {:?}: {}", def_id, err.to_string()),
+            format!(
+                "LLVM verification failed for def {:?}: {}",
+                def_id,
+                err.to_string()
+            ),
             crate::span::Span::dummy(),
         )]);
     }
@@ -595,10 +627,12 @@ pub fn compile_definition_to_object(
     // Write object file (target_machine created earlier for data layout)
     target_machine
         .write_to_file(&module, FileType::Object, output_path)
-        .map_err(|e| vec![Diagnostic::error(
-            format!("Failed to write object file: {}", e.to_string()),
-            crate::span::Span::dummy(),
-        )])?;
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!("Failed to write object file: {}", e.to_string()),
+                crate::span::Span::dummy(),
+            )]
+        })?;
 
     Ok(())
 }
@@ -628,7 +662,12 @@ pub fn compile_handler_registration_to_object(
     configure_module_target(&module, &target_machine);
 
     let mut codegen = CodegenContext::new(&context, &module, &builder);
-    codegen.set_builtin_def_ids(builtin_def_ids.0, builtin_def_ids.1, builtin_def_ids.2, builtin_def_ids.3);
+    codegen.set_builtin_def_ids(
+        builtin_def_ids.0,
+        builtin_def_ids.1,
+        builtin_def_ids.2,
+        builtin_def_ids.3,
+    );
 
     // Declare all types and functions needed for handler registration
     // This already calls declare_handler_operations internally
@@ -642,7 +681,10 @@ pub fn compile_handler_registration_to_object(
     // Verify the module
     if let Err(err) = module.verify() {
         return Err(vec![Diagnostic::error(
-            format!("LLVM verification failed for handler registration: {}", err.to_string()),
+            format!(
+                "LLVM verification failed for handler registration: {}",
+                err.to_string()
+            ),
             crate::span::Span::dummy(),
         )]);
     }
@@ -653,10 +695,15 @@ pub fn compile_handler_registration_to_object(
     // Write object file
     target_machine
         .write_to_file(&module, FileType::Object, output_path)
-        .map_err(|e| vec![Diagnostic::error(
-            format!("Failed to write handler registration object: {}", e.to_string()),
-            crate::span::Span::dummy(),
-        )])?;
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!(
+                    "Failed to write handler registration object: {}",
+                    e.to_string()
+                ),
+                crate::span::Span::dummy(),
+            )]
+        })?;
 
     Ok(())
 }
@@ -682,7 +729,18 @@ pub fn compile_definitions_to_objects(
         let escape_results = escape_analysis.get(&def_id);
         let output_path = output_dir.join(format!("def_{}.o", def_id.index()));
 
-        match compile_definition_to_object(def_id, hir_crate, mir_body, escape_results, Some(mir_bodies), inline_handler_bodies, &output_path, builtin_def_ids, closure_analysis, BloodOptLevel::Default) {
+        match compile_definition_to_object(
+            def_id,
+            hir_crate,
+            mir_body,
+            escape_results,
+            Some(mir_bodies),
+            inline_handler_bodies,
+            &output_path,
+            builtin_def_ids,
+            closure_analysis,
+            BloodOptLevel::Default,
+        ) {
             Ok(()) => {
                 results.push((def_id, output_path));
             }
@@ -731,7 +789,8 @@ pub fn link_objects(
     // PIE for ASLR
     cmd.arg("-pie");
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| format!("Failed to run linker: {}", e))?;
 
     if output.status.success() {
@@ -753,7 +812,15 @@ pub fn compile_mir_to_ir(
     inline_handler_bodies: Option<&InlineHandlerBodies>,
     closure_analysis: Option<&ClosureAnalysisResults>,
 ) -> Result<String, Vec<Diagnostic>> {
-    compile_mir_to_ir_with_opt(hir_crate, mir_bodies, escape_analysis, BloodOptLevel::Aggressive, builtin_def_ids, inline_handler_bodies, closure_analysis)
+    compile_mir_to_ir_with_opt(
+        hir_crate,
+        mir_bodies,
+        escape_analysis,
+        BloodOptLevel::Aggressive,
+        builtin_def_ids,
+        inline_handler_bodies,
+        closure_analysis,
+    )
 }
 
 /// Compile MIR bodies to LLVM IR text with specified optimization level.

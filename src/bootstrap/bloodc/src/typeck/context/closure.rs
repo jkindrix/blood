@@ -9,9 +9,9 @@ use crate::ast;
 use crate::hir::{self, LocalId, Type};
 use crate::span::Span;
 
-use super::TypeContext;
 use super::super::error::{TypeError, TypeErrorKind};
 use super::super::resolve::ScopeKind;
+use super::TypeContext;
 
 impl<'a> TypeContext<'a> {
     /// Infer the type of a closure expression.
@@ -42,7 +42,8 @@ impl<'a> TypeContext<'a> {
         let closure_effects_count = if let Some(effect_row) = effects {
             let (effect_refs, _row_var) = self.parse_effect_row(effect_row)?;
             for effect_ref in &effect_refs {
-                self.handled_effects.push((effect_ref.def_id, effect_ref.type_args.clone()));
+                self.handled_effects
+                    .push((effect_ref.def_id, effect_ref.type_args.clone()));
             }
             effect_refs.len()
         } else {
@@ -141,7 +142,9 @@ impl<'a> TypeContext<'a> {
                         }
                         _ => {
                             return Err(Box::new(TypeError::new(
-                                TypeErrorKind::NotATuple { ty: param_ty.clone() },
+                                TypeErrorKind::NotATuple {
+                                    ty: param_ty.clone(),
+                                },
                                 param.span,
                             )));
                         }
@@ -188,7 +191,8 @@ impl<'a> TypeContext<'a> {
         let body_expr = self.infer_expr(body)?;
 
         // Unify body type with expected return type
-        self.unifier.unify(&body_expr.ty, &expected_return_ty, body.span)?;
+        self.unifier
+            .unify(&body_expr.ty, &expected_return_ty, body.span)?;
 
         // Resolve all types now that inference is done
         let resolved_return_ty = self.unifier.resolve(&expected_return_ty);
@@ -225,14 +229,18 @@ impl<'a> TypeContext<'a> {
         // [Linear-Closure]: If any captured variable has a linear type and is
         // captured by-move, the closure itself becomes linear (one-shot).
         let has_linear_capture = captures.iter().any(|cap| {
-            if !cap.by_move { return false; }
+            if !cap.by_move {
+                return false;
+            }
             outer_locals.iter().any(|local| {
-                local.id == cap.local_id && matches!(
-                    self.unifier.resolve(&local.ty).kind(),
-                    hir::TypeKind::Ownership {
-                        qualifier: hir::ty::OwnershipQualifier::Linear, ..
-                    }
-                )
+                local.id == cap.local_id
+                    && matches!(
+                        self.unifier.resolve(&local.ty).kind(),
+                        hir::TypeKind::Ownership {
+                            qualifier: hir::ty::OwnershipQualifier::Linear,
+                            ..
+                        }
+                    )
             })
         });
 
@@ -247,10 +255,7 @@ impl<'a> TypeContext<'a> {
         }
 
         Ok(hir::Expr::new(
-            hir::ExprKind::Closure {
-                body_id,
-                captures,
-            },
+            hir::ExprKind::Closure { body_id, captures },
             closure_ty,
             span,
         ))
@@ -260,7 +265,11 @@ impl<'a> TypeContext<'a> {
     ///
     /// This is a simplified analysis that finds all local variable references
     /// in the closure body that refer to outer scopes.
-    pub(crate) fn analyze_closure_captures(&self, body: &hir::Expr, is_move: bool) -> Vec<hir::Capture> {
+    pub(crate) fn analyze_closure_captures(
+        &self,
+        body: &hir::Expr,
+        is_move: bool,
+    ) -> Vec<hir::Capture> {
         let mut captures = Vec::new();
         let mut seen = HashSet::new();
         self.collect_captures(body, is_move, &mut captures, &mut seen);
@@ -305,7 +314,11 @@ impl<'a> TypeContext<'a> {
                     self.collect_captures(arg, is_move, captures, seen);
                 }
             }
-            hir::ExprKind::If { condition, then_branch, else_branch } => {
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.collect_captures(condition, is_move, captures, seen);
                 self.collect_captures(then_branch, is_move, captures, seen);
                 if let Some(else_expr) = else_branch {
@@ -313,10 +326,14 @@ impl<'a> TypeContext<'a> {
                 }
             }
             hir::ExprKind::Block { stmts, expr: tail }
-            | hir::ExprKind::Region { stmts, expr: tail, .. } => {
+            | hir::ExprKind::Region {
+                stmts, expr: tail, ..
+            } => {
                 for stmt in stmts {
                     match stmt {
-                        hir::Stmt::Let { init: Some(init), .. } => {
+                        hir::Stmt::Let {
+                            init: Some(init), ..
+                        } => {
                             self.collect_captures(init, is_move, captures, seen);
                         }
                         hir::Stmt::Let { init: None, .. } => {
@@ -378,13 +395,17 @@ impl<'a> TypeContext<'a> {
                     self.collect_captures(base_expr, is_move, captures, seen);
                 }
             }
-            hir::ExprKind::Closure { captures: nested_captures, .. } => {
+            hir::ExprKind::Closure {
+                captures: nested_captures,
+                ..
+            } => {
                 // Nested closures may capture variables from outer scopes.
                 // If those variables are from outside the current closure's scope,
                 // we need to capture them too so we can pass them down.
                 for nested_capture in nested_captures {
                     if !seen.contains(&nested_capture.local_id) {
-                        let is_closure_local = self.locals.iter().any(|l| l.id == nested_capture.local_id);
+                        let is_closure_local =
+                            self.locals.iter().any(|l| l.id == nested_capture.local_id);
                         if !is_closure_local {
                             seen.insert(nested_capture.local_id);
                             captures.push(hir::Capture {
@@ -464,7 +485,9 @@ impl<'a> TypeContext<'a> {
                 }
             }
             // Macro expansion nodes - collect from subexpressions
-            hir::ExprKind::MacroExpansion { args, named_args, .. } => {
+            hir::ExprKind::MacroExpansion {
+                args, named_args, ..
+            } => {
                 for arg in args {
                     self.collect_captures(arg, is_move, captures, seen);
                 }

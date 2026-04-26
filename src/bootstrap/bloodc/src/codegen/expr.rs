@@ -9,9 +9,7 @@ use crate::hir::{Expr, ExprKind};
 pub fn has_side_effects(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Literal(_) | ExprKind::Local(_) | ExprKind::Def(_) => false,
-        ExprKind::Binary { left, right, .. } => {
-            has_side_effects(left) || has_side_effects(right)
-        }
+        ExprKind::Binary { left, right, .. } => has_side_effects(left) || has_side_effects(right),
         ExprKind::Unary { operand, .. } => has_side_effects(operand),
         ExprKind::Call { .. } => true,
         ExprKind::Assign { .. } => true,

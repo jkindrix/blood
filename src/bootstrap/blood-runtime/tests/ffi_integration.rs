@@ -210,7 +210,8 @@ fn test_ffi_integer_arithmetic() {
 
     // Get add_numbers function
     let add_fn: libloading::Symbol<unsafe extern "C" fn(i32, i32) -> i32> = unsafe {
-        lib.get_symbol("add_numbers").expect("add_numbers not found")
+        lib.get_symbol("add_numbers")
+            .expect("add_numbers not found")
     };
 
     // Test various additions
@@ -337,10 +338,8 @@ fn test_ffi_memory_allocation() {
             .expect("fill_buffer not found")
     };
 
-    let sum_fn: libloading::Symbol<unsafe extern "C" fn(*const i32, i32) -> i32> = unsafe {
-        lib.get_symbol("sum_buffer")
-            .expect("sum_buffer not found")
-    };
+    let sum_fn: libloading::Symbol<unsafe extern "C" fn(*const i32, i32) -> i32> =
+        unsafe { lib.get_symbol("sum_buffer").expect("sum_buffer not found") };
 
     // Allocate buffer for 10 i32 values
     let buffer = unsafe { alloc_fn(10 * std::mem::size_of::<i32>()) };
@@ -378,14 +377,20 @@ fn test_ffi_global_state() {
         }
     };
 
-    let reset_fn: libloading::Symbol<unsafe extern "C" fn()> =
-        unsafe { lib.get_symbol("reset_counter").expect("reset_counter not found") };
+    let reset_fn: libloading::Symbol<unsafe extern "C" fn()> = unsafe {
+        lib.get_symbol("reset_counter")
+            .expect("reset_counter not found")
+    };
 
-    let inc_fn: libloading::Symbol<unsafe extern "C" fn() -> i32> =
-        unsafe { lib.get_symbol("increment_counter").expect("increment_counter not found") };
+    let inc_fn: libloading::Symbol<unsafe extern "C" fn() -> i32> = unsafe {
+        lib.get_symbol("increment_counter")
+            .expect("increment_counter not found")
+    };
 
-    let get_fn: libloading::Symbol<unsafe extern "C" fn() -> i32> =
-        unsafe { lib.get_symbol("get_counter").expect("get_counter not found") };
+    let get_fn: libloading::Symbol<unsafe extern "C" fn() -> i32> = unsafe {
+        lib.get_symbol("get_counter")
+            .expect("get_counter not found")
+    };
 
     // Reset counter
     unsafe { reset_fn() };
@@ -654,7 +659,11 @@ fn test_scheduler_ffi_exports() {
     // Initialize scheduler with 2 workers
     let init_result = ffi_exports::blood_scheduler_init(2);
     // May return -1 if already initialized, which is fine
-    assert!(init_result == 0 || init_result == -1, "Unexpected init result: {}", init_result);
+    assert!(
+        init_result == 0 || init_result == -1,
+        "Unexpected init result: {}",
+        init_result
+    );
 
     // Counter to verify task execution
     let counter = Arc::new(AtomicI32::new(0));
@@ -683,7 +692,11 @@ fn test_scheduler_ffi_exports() {
 
     // Check active fiber count
     let active = ffi_exports::blood_scheduler_active_fibers();
-    assert!(active >= 5, "Expected at least 5 active fibers, got {}", active);
+    assert!(
+        active >= 5,
+        "Expected at least 5 active fibers, got {}",
+        active
+    );
 
     // Note: Running the scheduler would block, so we just verify the API works
     // In a real test, we'd run it in a background thread with a shutdown timer
@@ -768,7 +781,8 @@ fn test_dispatch_runtime_c() {
             };
 
             // Test dispatch_register and dispatch_lookup if available
-            if lib.has_symbol("blood_dispatch_register") && lib.has_symbol("blood_dispatch_lookup") {
+            if lib.has_symbol("blood_dispatch_register") && lib.has_symbol("blood_dispatch_lookup")
+            {
                 let register_fn: libloading::Symbol<unsafe extern "C" fn(u64, u64, *mut c_void)> =
                     unsafe { lib.get_symbol("blood_dispatch_register").unwrap() };
 
@@ -781,7 +795,10 @@ fn test_dispatch_runtime_c() {
 
                 // Look it up
                 let found = unsafe { lookup_fn(1, 100) };
-                assert_eq!(found, fake_impl, "Dispatch lookup should return registered impl");
+                assert_eq!(
+                    found, fake_impl,
+                    "Dispatch lookup should return registered impl"
+                );
 
                 eprintln!("Multiple dispatch runtime verified successfully!");
             } else {

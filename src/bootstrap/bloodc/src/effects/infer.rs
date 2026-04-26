@@ -136,7 +136,9 @@ impl EffectInferencer {
     fn infer_expr(&mut self, expr: &Expr, ctx: &mut InferenceContext) {
         match &expr.kind {
             // Effect operations - the core of effect inference
-            ExprKind::Perform { effect_id, args, .. } => {
+            ExprKind::Perform {
+                effect_id, args, ..
+            } => {
                 // Add this effect to the performed set
                 let effect_ref = self.type_args_from_effect(expr, *effect_id);
                 ctx.performed.insert(effect_ref);
@@ -148,7 +150,11 @@ impl EffectInferencer {
             }
 
             // Handle expressions reduce (handle) effects
-            ExprKind::Handle { body, handler_id, handler_instance } => {
+            ExprKind::Handle {
+                body,
+                handler_id,
+                handler_instance,
+            } => {
                 // Create a child context for the handled body
                 let mut child_ctx = InferenceContext::default();
                 self.infer_expr(body, &mut child_ctx);
@@ -204,7 +210,9 @@ impl EffectInferencer {
 
             // Block/Region expressions
             ExprKind::Block { stmts, expr: tail }
-            | ExprKind::Region { stmts, expr: tail, .. } => {
+            | ExprKind::Region {
+                stmts, expr: tail, ..
+            } => {
                 for stmt in stmts {
                     self.infer_stmt(stmt, ctx);
                 }
@@ -214,7 +222,11 @@ impl EffectInferencer {
             }
 
             // Control flow
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.infer_expr(condition, ctx);
                 self.infer_expr(then_branch, ctx);
                 if let Some(else_br) = else_branch {
@@ -236,7 +248,9 @@ impl EffectInferencer {
                 self.infer_expr(body, ctx);
             }
 
-            ExprKind::While { condition, body, .. } => {
+            ExprKind::While {
+                condition, body, ..
+            } => {
                 self.infer_expr(condition, ctx);
                 self.infer_expr(body, ctx);
             }
@@ -327,13 +341,13 @@ impl EffectInferencer {
             }
 
             // Reference operations
-            ExprKind::Borrow { expr: inner, .. } |
-            ExprKind::Deref(inner) |
-            ExprKind::AddrOf { expr: inner, .. } |
-            ExprKind::Cast { expr: inner, .. } |
-            ExprKind::Unsafe(inner) |
-            ExprKind::Heap(inner) |
-            ExprKind::Stack(inner) => {
+            ExprKind::Borrow { expr: inner, .. }
+            | ExprKind::Deref(inner)
+            | ExprKind::AddrOf { expr: inner, .. }
+            | ExprKind::Cast { expr: inner, .. }
+            | ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner) => {
                 self.infer_expr(inner, ctx);
             }
             ExprKind::Unchecked { body, .. } => {
@@ -367,7 +381,9 @@ impl EffectInferencer {
             }
 
             // Macro expansion expressions
-            ExprKind::MacroExpansion { args, named_args, .. } => {
+            ExprKind::MacroExpansion {
+                args, named_args, ..
+            } => {
                 for arg in args {
                     self.infer_expr(arg, ctx);
                 }
@@ -404,16 +420,16 @@ impl EffectInferencer {
             }
 
             // Leaf expressions - no effects
-            ExprKind::Literal(_) |
-            ExprKind::Local(_) |
-            ExprKind::Def(_) |
-            ExprKind::MethodFamily { .. } |
-            ExprKind::ConstParam(_) |
-            ExprKind::Continue { .. } |
-            ExprKind::Return(None) |
-            ExprKind::Break { value: None, .. } |
-            ExprKind::Default |
-            ExprKind::Error => {
+            ExprKind::Literal(_)
+            | ExprKind::Local(_)
+            | ExprKind::Def(_)
+            | ExprKind::MethodFamily { .. }
+            | ExprKind::ConstParam(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::Return(None)
+            | ExprKind::Break { value: None, .. }
+            | ExprKind::Default
+            | ExprKind::Error => {
                 // No effects
             }
         }
@@ -425,7 +441,9 @@ impl EffectInferencer {
             Stmt::Expr(expr) => {
                 self.infer_expr(expr, ctx);
             }
-            Stmt::Let { init: Some(expr), .. } => {
+            Stmt::Let {
+                init: Some(expr), ..
+            } => {
                 self.infer_expr(expr, ctx);
             }
             Stmt::Let { init: None, .. } => {
@@ -464,9 +482,7 @@ impl EffectInferencer {
 
     /// Build the final effect row from the inference context.
     fn build_effect_row(&mut self, ctx: InferenceContext) -> EffectRow {
-        let remaining: Vec<EffectRef> = ctx.performed
-            .into_iter()
-            .collect();
+        let remaining: Vec<EffectRef> = ctx.performed.into_iter().collect();
 
         if remaining.is_empty() && !ctx.is_polymorphic {
             // Pure function
@@ -644,9 +660,9 @@ impl Default for DetailedEffectInferencer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use crate::hir::{Local, LocalId, LiteralValue, Type};
+    use crate::hir::{LiteralValue, Local, LocalId, Type};
     use crate::span::Span;
+    use std::collections::HashMap;
 
     /// Create a test expression with the given kind.
     fn make_expr(kind: ExprKind) -> Expr {
@@ -698,8 +714,11 @@ mod tests {
 
         let row = infer_effects(&body);
         assert!(!row.is_pure(), "Expected effectful function");
-        assert!(row.effects().any(|e| e.def_id == effect_id),
-            "Expected effect {:?} in row", effect_id);
+        assert!(
+            row.effects().any(|e| e.def_id == effect_id),
+            "Expected effect {:?} in row",
+            effect_id
+        );
     }
 
     #[test]
@@ -709,14 +728,12 @@ mod tests {
         let effect2 = DefId::new(2);
 
         let block = make_expr(ExprKind::Block {
-            stmts: vec![
-                Stmt::Expr(make_expr(ExprKind::Perform {
-                    effect_id: effect1,
-                    op_index: 0,
-                    args: vec![],
-                    type_args: vec![],
-                })),
-            ],
+            stmts: vec![Stmt::Expr(make_expr(ExprKind::Perform {
+                effect_id: effect1,
+                op_index: 0,
+                args: vec![],
+                type_args: vec![],
+            }))],
             expr: Some(Box::new(make_expr(ExprKind::Perform {
                 effect_id: effect2,
                 op_index: 0,
@@ -766,10 +783,16 @@ mod tests {
         let result = inferencer.infer_effects_detailed(&body);
 
         // The effect should be handled - the handler's effect_id should be tracked
-        assert!(result.handled_effects.contains(&effect_id),
-            "Expected effect {:?} to be tracked as handled", effect_id);
+        assert!(
+            result.handled_effects.contains(&effect_id),
+            "Expected effect {:?} to be tracked as handled",
+            effect_id
+        );
         // And it should be eliminated from the inferred effect row
-        assert!(result.effect_row.is_pure(), "Expected handled effect to be reduced");
+        assert!(
+            result.effect_row.is_pure(),
+            "Expected handled effect to be reduced"
+        );
     }
 
     #[test]
@@ -784,8 +807,10 @@ mod tests {
         let body = make_body(call_expr);
 
         let row = infer_effects(&body);
-        assert!(row.is_polymorphic(),
-            "Expected polymorphic function due to higher-order call");
+        assert!(
+            row.is_polymorphic(),
+            "Expected polymorphic function due to higher-order call"
+        );
     }
 
     #[test]
@@ -807,8 +832,11 @@ mod tests {
 
         let row = infer_effects(&body);
         assert!(!row.is_pure(), "Expected effectful function");
-        assert!(row.effects().any(|e| e.def_id == effect_id),
-            "Expected effect {:?} in row", effect_id);
+        assert!(
+            row.effects().any(|e| e.def_id == effect_id),
+            "Expected effect {:?} in row",
+            effect_id
+        );
     }
 
     #[test]
@@ -845,7 +873,10 @@ mod tests {
         let declared = EffectRow::polymorphic(RowVar::new(0));
 
         let result = verify_effects_subset(&inferred, &declared);
-        assert!(result.is_ok(), "Polymorphic declaration should accept any effects");
+        assert!(
+            result.is_ok(),
+            "Polymorphic declaration should accept any effects"
+        );
     }
 
     #[test]

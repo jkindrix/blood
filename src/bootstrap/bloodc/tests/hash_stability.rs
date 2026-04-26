@@ -120,11 +120,14 @@ fn extract_cache_stats(output: &str) -> (usize, usize) {
 fn test_hash_stable_cache_hit() {
     clear_cache();
 
-    let fixture = create_fixture("hash_stable_1", r#"
+    let fixture = create_fixture(
+        "hash_stable_1",
+        r#"
 fn main() -> i32 {
     42
 }
-"#);
+"#,
+    );
 
     // First compilation - should be all misses
     let output1 = compile_verbose(&fixture);
@@ -150,17 +153,23 @@ fn main() -> i32 {
 fn test_hash_different_no_cache_hit() {
     clear_cache();
 
-    let fixture1 = create_fixture("hash_diff_1", r#"
+    let fixture1 = create_fixture(
+        "hash_diff_1",
+        r#"
 fn main() -> i32 {
     1
 }
-"#);
+"#,
+    );
 
-    let fixture2 = create_fixture("hash_diff_2", r#"
+    let fixture2 = create_fixture(
+        "hash_diff_2",
+        r#"
 fn main() -> i32 {
     2
 }
-"#);
+"#,
+    );
 
     // Compile first file
     compile_verbose(&fixture1);
@@ -197,7 +206,9 @@ fn main() -> i32 {
 fn test_different_handlers_no_cache_collision() {
     clear_cache();
 
-    let handler_a = create_fixture("handler_hash_a", r#"
+    let handler_a = create_fixture(
+        "handler_hash_a",
+        r#"
 effect Counter {
     op inc() -> i32;
 }
@@ -216,9 +227,12 @@ fn main() -> i32 {
         perform Counter.inc()
     }
 }
-"#);
+"#,
+    );
 
-    let handler_b = create_fixture("handler_hash_b", r#"
+    let handler_b = create_fixture(
+        "handler_hash_b",
+        r#"
 effect Counter {
     op inc() -> i32;
 }
@@ -237,7 +251,8 @@ fn main() -> i32 {
         perform Counter.inc()
     }
 }
-"#);
+"#,
+    );
 
     // Compile handler A
     let _output_a = compile_verbose(&handler_a);
@@ -261,7 +276,7 @@ fn main() -> i32 {
         .expect("Failed to run handler B");
     assert_eq!(
         result_b.status.code(),
-        Some(101),  // 1 + 100 from return clause
+        Some(101), // 1 + 100 from return clause
         "HandlerBeta should return 101, not 1 (cache pollution would cause 1)"
     );
 
@@ -277,7 +292,9 @@ fn regression_defid_index_collision() {
     // These two files have handlers with identical structure but different names.
     // The bug was that they would get the same hash because DefId indices matched.
 
-    let file_a = create_fixture("regression_idx_a", r#"
+    let file_a = create_fixture(
+        "regression_idx_a",
+        r#"
 effect State { op get() -> i32; }
 deep handler GetterA for State {
     let val: i32
@@ -287,9 +304,12 @@ deep handler GetterA for State {
 fn main() -> i32 {
     with GetterA { val: 42 } handle { perform State.get() }
 }
-"#);
+"#,
+    );
 
-    let file_b = create_fixture("regression_idx_b", r#"
+    let file_b = create_fixture(
+        "regression_idx_b",
+        r#"
 effect State { op get() -> i32; }
 deep handler GetterB for State {
     let val: i32
@@ -299,7 +319,8 @@ deep handler GetterB for State {
 fn main() -> i32 {
     with GetterB { val: 99 } handle { perform State.get() }
 }
-"#);
+"#,
+    );
 
     // Compile and run A
     compile_verbose(&file_a);
@@ -340,7 +361,9 @@ fn main() -> i32 {
 fn test_compilation_order_independence() {
     clear_cache();
 
-    let file1 = create_fixture("order_1", r#"
+    let file1 = create_fixture(
+        "order_1",
+        r#"
 effect E { op get() -> i32; }
 deep handler H1 for E {
     return(x) { x }
@@ -349,9 +372,12 @@ deep handler H1 for E {
 fn main() -> i32 {
     with H1 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
-    let file2 = create_fixture("order_2", r#"
+    let file2 = create_fixture(
+        "order_2",
+        r#"
 effect E { op get() -> i32; }
 deep handler H2 for E {
     return(x) { x }
@@ -360,9 +386,12 @@ deep handler H2 for E {
 fn main() -> i32 {
     with H2 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
-    let file3 = create_fixture("order_3", r#"
+    let file3 = create_fixture(
+        "order_3",
+        r#"
 effect E { op get() -> i32; }
 deep handler H3 for E {
     return(x) { x }
@@ -371,7 +400,8 @@ deep handler H3 for E {
 fn main() -> i32 {
     with H3 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
     // Compile in one order
     compile_verbose(&file1);
@@ -394,7 +424,9 @@ fn main() -> i32 {
     cleanup_fixture(&file3);
 
     // Recreate fixtures
-    let file1 = create_fixture("order_1", r#"
+    let file1 = create_fixture(
+        "order_1",
+        r#"
 effect E { op get() -> i32; }
 deep handler H1 for E {
     return(x) { x }
@@ -403,9 +435,12 @@ deep handler H1 for E {
 fn main() -> i32 {
     with H1 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
-    let file2 = create_fixture("order_2", r#"
+    let file2 = create_fixture(
+        "order_2",
+        r#"
 effect E { op get() -> i32; }
 deep handler H2 for E {
     return(x) { x }
@@ -414,9 +449,12 @@ deep handler H2 for E {
 fn main() -> i32 {
     with H2 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
-    let file3 = create_fixture("order_3", r#"
+    let file3 = create_fixture(
+        "order_3",
+        r#"
 effect E { op get() -> i32; }
 deep handler H3 for E {
     return(x) { x }
@@ -425,7 +463,8 @@ deep handler H3 for E {
 fn main() -> i32 {
     with H3 {} handle { perform E.get() }
 }
-"#);
+"#,
+    );
 
     // Compile in reverse order
     compile_verbose(&file3);
@@ -437,9 +476,21 @@ fn main() -> i32 {
     let r2 = Command::new(file2.with_extension("")).output().unwrap();
     let r3 = Command::new(file3.with_extension("")).output().unwrap();
 
-    assert_eq!(r1.status.code(), Some(10), "File 1 should return 10 regardless of order");
-    assert_eq!(r2.status.code(), Some(20), "File 2 should return 20 regardless of order");
-    assert_eq!(r3.status.code(), Some(30), "File 3 should return 30 regardless of order");
+    assert_eq!(
+        r1.status.code(),
+        Some(10),
+        "File 1 should return 10 regardless of order"
+    );
+    assert_eq!(
+        r2.status.code(),
+        Some(20),
+        "File 2 should return 20 regardless of order"
+    );
+    assert_eq!(
+        r3.status.code(),
+        Some(30),
+        "File 3 should return 30 regardless of order"
+    );
 
     cleanup_fixture(&file1);
     cleanup_fixture(&file2);

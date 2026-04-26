@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type, TyVarId};
 use super::effect_row::EffectRow;
+use crate::hir::{DefId, TyVarId, Type};
 
 /// A method candidate for dispatch resolution.
 #[derive(Debug, Clone)]

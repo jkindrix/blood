@@ -84,9 +84,7 @@ fn is_exhaustive(
     }
 
     match &*scrutinee_ty.kind {
-        TypeKind::Primitive(hir::PrimitiveTy::Bool) => {
-            check_bool_exhaustiveness(patterns)
-        }
+        TypeKind::Primitive(hir::PrimitiveTy::Bool) => check_bool_exhaustiveness(patterns),
         TypeKind::Adt { .. } => {
             if let Some(info) = enum_info {
                 check_enum_exhaustiveness(patterns, info)
@@ -130,12 +128,14 @@ fn is_irrefutable(pattern: &Pattern) -> bool {
         }
         PatternKind::Tuple(pats) => pats.iter().all(is_irrefutable),
         PatternKind::Ref { inner, .. } => is_irrefutable(inner),
-        PatternKind::Struct { fields, .. } => {
-            fields.iter().all(|f| is_irrefutable(&f.pattern))
-        }
+        PatternKind::Struct { fields, .. } => fields.iter().all(|f| is_irrefutable(&f.pattern)),
         PatternKind::Or(alts) => alts.iter().any(is_irrefutable),
         // Slice is irrefutable only if it has a rest pattern and all subpatterns are irrefutable
-        PatternKind::Slice { prefix, slice, suffix } => {
+        PatternKind::Slice {
+            prefix,
+            slice,
+            suffix,
+        } => {
             slice.is_some()
                 && prefix.iter().all(is_irrefutable)
                 && suffix.iter().all(is_irrefutable)
@@ -161,14 +161,23 @@ fn check_bool_exhaustiveness(patterns: &[&Pattern]) -> (bool, Vec<String>) {
                 has_false = true;
             }
             // Binding without subpattern covers all values
-            PatternKind::Binding { subpattern: None, .. } => {
+            PatternKind::Binding {
+                subpattern: None, ..
+            } => {
                 has_true = true;
                 has_false = true;
             }
             // Binding with subpattern - check the subpattern
-            PatternKind::Binding { subpattern: Some(sub), .. } => {
+            PatternKind::Binding {
+                subpattern: Some(sub),
+                ..
+            } => {
                 if let PatternKind::Literal(hir::LiteralValue::Bool(b)) = &sub.kind {
-                    if *b { has_true = true; } else { has_false = true; }
+                    if *b {
+                        has_true = true;
+                    } else {
+                        has_false = true;
+                    }
                 }
             }
             PatternKind::Literal(hir::LiteralValue::Bool(true)) => has_true = true,
@@ -180,12 +189,18 @@ fn check_bool_exhaustiveness(patterns: &[&Pattern]) -> (bool, Vec<String>) {
                             has_true = true;
                             has_false = true;
                         }
-                        PatternKind::Binding { subpattern: None, .. } => {
+                        PatternKind::Binding {
+                            subpattern: None, ..
+                        } => {
                             has_true = true;
                             has_false = true;
                         }
                         PatternKind::Literal(hir::LiteralValue::Bool(b)) => {
-                            if *b { has_true = true; } else { has_false = true; }
+                            if *b {
+                                has_true = true;
+                            } else {
+                                has_false = true;
+                            }
                         }
                         // These patterns don't contribute to bool exhaustiveness
                         PatternKind::Literal(_)
@@ -196,7 +211,10 @@ fn check_bool_exhaustiveness(patterns: &[&Pattern]) -> (bool, Vec<String>) {
                         | PatternKind::Ref { .. }
                         | PatternKind::Range { .. }
                         | PatternKind::Or(_)
-                        | PatternKind::Binding { subpattern: Some(_), .. } => {}
+                        | PatternKind::Binding {
+                            subpattern: Some(_),
+                            ..
+                        } => {}
                     }
                 }
             }
@@ -212,8 +230,12 @@ fn check_bool_exhaustiveness(patterns: &[&Pattern]) -> (bool, Vec<String>) {
     }
 
     let mut missing = vec![];
-    if !has_true { missing.push("true".to_string()); }
-    if !has_false { missing.push("false".to_string()); }
+    if !has_true {
+        missing.push("true".to_string());
+    }
+    if !has_false {
+        missing.push("false".to_string());
+    }
 
     (missing.is_empty(), missing)
 }
@@ -256,13 +278,18 @@ fn collect_variant_indices(pattern: &Pattern, indices: &mut HashSet<u32>, varian
             }
         }
         // Binding without subpattern covers all variants
-        PatternKind::Binding { subpattern: None, .. } => {
+        PatternKind::Binding {
+            subpattern: None, ..
+        } => {
             for idx in 0..variant_count {
                 indices.insert(idx);
             }
         }
         // Binding with subpattern - check the subpattern
-        PatternKind::Binding { subpattern: Some(sub), .. } => {
+        PatternKind::Binding {
+            subpattern: Some(sub),
+            ..
+        } => {
             collect_variant_indices(sub, indices, variant_count);
         }
         PatternKind::Variant { variant_idx, .. } => {
@@ -379,11 +406,17 @@ fn build_tuple_matrix(patterns: &[&Pattern], arity: usize) -> Vec<Vec<Pattern>> 
                 }
                 // Mismatched arity is a type error; skip silently
             }
-            PatternKind::Wildcard | PatternKind::Binding { subpattern: None, .. } => {
+            PatternKind::Wildcard
+            | PatternKind::Binding {
+                subpattern: None, ..
+            } => {
                 // Expand to a row of wildcards
                 matrix.push(vec![wildcard(); arity]);
             }
-            PatternKind::Binding { subpattern: Some(sub), .. } => {
+            PatternKind::Binding {
+                subpattern: Some(sub),
+                ..
+            } => {
                 // Recurse into the sub-pattern
                 let sub_refs: Vec<&Pattern> = vec![sub.as_ref()];
                 let sub_matrix = build_tuple_matrix(&sub_refs, arity);
@@ -425,7 +458,7 @@ fn closed_type_constructors(ty: &Type) -> Vec<ConstructorTag> {
             vec![ConstructorTag::BoolTrue, ConstructorTag::BoolFalse]
         }
         TypeKind::Never => vec![], // No constructors — always exhaustive
-        _ => vec![], // Open type or unsupported — no constructors
+        _ => vec![],               // Open type or unsupported — no constructors
     }
 }
 
@@ -468,7 +501,8 @@ fn is_tuple_matrix_exhaustive(matrix: &[Vec<Pattern>], types: &[Type]) -> bool {
         // For each constructor, specialize the matrix and check recursively
         for ctor in &constructors {
             let specialized = specialize_matrix(matrix, col, ctor);
-            let remaining_types: Vec<Type> = types.iter()
+            let remaining_types: Vec<Type> = types
+                .iter()
                 .enumerate()
                 .filter(|(i, _)| *i != col)
                 .map(|(_, t)| t.clone())
@@ -509,7 +543,8 @@ fn specialize_matrix(
 
         if matches {
             // Build new row without column `col`
-            let new_row: Vec<Pattern> = row.iter()
+            let new_row: Vec<Pattern> = row
+                .iter()
                 .enumerate()
                 .filter(|(i, _)| *i != col)
                 .map(|(_, p)| p.clone())
@@ -526,23 +561,22 @@ fn pattern_matches_constructor(pat: &Pattern, ctor: &ConstructorTag) -> bool {
     match &pat.kind {
         // Wildcards and bindings match any constructor
         PatternKind::Wildcard => true,
-        PatternKind::Binding { subpattern: None, .. } => true,
-        PatternKind::Binding { subpattern: Some(sub), .. } => {
-            pattern_matches_constructor(sub, ctor)
-        }
+        PatternKind::Binding {
+            subpattern: None, ..
+        } => true,
+        PatternKind::Binding {
+            subpattern: Some(sub),
+            ..
+        } => pattern_matches_constructor(sub, ctor),
 
         // Bool literals match their respective constructor
-        PatternKind::Literal(hir::LiteralValue::Bool(true)) => {
-            *ctor == ConstructorTag::BoolTrue
-        }
-        PatternKind::Literal(hir::LiteralValue::Bool(false)) => {
-            *ctor == ConstructorTag::BoolFalse
-        }
+        PatternKind::Literal(hir::LiteralValue::Bool(true)) => *ctor == ConstructorTag::BoolTrue,
+        PatternKind::Literal(hir::LiteralValue::Bool(false)) => *ctor == ConstructorTag::BoolFalse,
 
         // Or patterns: matches if any alternative matches
-        PatternKind::Or(alts) => {
-            alts.iter().any(|alt| pattern_matches_constructor(alt, ctor))
-        }
+        PatternKind::Or(alts) => alts
+            .iter()
+            .any(|alt| pattern_matches_constructor(alt, ctor)),
 
         // All other patterns don't match bool constructors
         _ => false,
@@ -555,14 +589,14 @@ fn check_tuple_per_position(
     element_types: &[Type],
 ) -> (bool, Vec<String>) {
     for (i, elem_ty) in element_types.iter().enumerate() {
-        let position_patterns: Vec<&Pattern> = matrix
-            .iter()
-            .filter_map(|row| row.get(i))
-            .collect();
+        let position_patterns: Vec<&Pattern> = matrix.iter().filter_map(|row| row.get(i)).collect();
 
         let (is_exhaustive, missing) = is_exhaustive(&position_patterns, elem_ty, None);
         if !is_exhaustive {
-            return (false, vec![format!("missing pattern at position {}: {:?}", i, missing)]);
+            return (
+                false,
+                vec![format!("missing pattern at position {}: {:?}", i, missing)],
+            );
         }
     }
 
@@ -614,7 +648,12 @@ fn check_array_exhaustiveness(
     let slice_patterns: Vec<_> = patterns
         .iter()
         .filter_map(|p| {
-            if let PatternKind::Slice { prefix, slice, suffix } = &p.kind {
+            if let PatternKind::Slice {
+                prefix,
+                slice,
+                suffix,
+            } = &p.kind
+            {
                 Some((prefix.as_slice(), slice.as_ref(), suffix.as_slice()))
             } else {
                 None
@@ -703,10 +742,7 @@ pub enum Witness {
     /// A wildcard (any value).
     Wild,
     /// A specific constructor (enum variant, tuple, etc.).
-    Constructor {
-        name: String,
-        fields: Vec<Witness>,
-    },
+    Constructor { name: String, fields: Vec<Witness> },
     /// A literal value.
     Literal(String),
 }
@@ -719,8 +755,12 @@ impl std::fmt::Display for Witness {
                 if fields.is_empty() {
                     write!(f, "{}", name)
                 } else {
-                    write!(f, "{}({})", name,
-                        fields.iter()
+                    write!(
+                        f,
+                        "{}({})",
+                        name,
+                        fields
+                            .iter()
                             .map(|w| w.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -735,15 +775,25 @@ impl std::fmt::Display for Witness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::{self, Pattern, PatternKind, Type, LiteralValue};
+    use crate::hir::{self, LiteralValue, Pattern, PatternKind, Type};
     use crate::span::Span;
 
-    fn dummy_span() -> Span { Span::dummy() }
-    fn bool_ty() -> Type { Type::bool() }
-    fn i32_ty() -> Type { Type::i32() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
+    fn bool_ty() -> Type {
+        Type::bool()
+    }
+    fn i32_ty() -> Type {
+        Type::i32()
+    }
 
     fn wildcard_pat() -> Pattern {
-        Pattern { kind: PatternKind::Wildcard, span: dummy_span(), ty: Type::error() }
+        Pattern {
+            kind: PatternKind::Wildcard,
+            span: dummy_span(),
+            ty: Type::error(),
+        }
     }
 
     fn bool_pat(val: bool) -> Pattern {
@@ -784,7 +834,10 @@ mod tests {
         ];
         let scrutinee_ty = Type::tuple(vec![bool_ty(), bool_ty()]);
         let result = check_exhaustiveness(&arms, &scrutinee_ty, None);
-        assert!(!result.is_exhaustive, "diagonal (true,true)/(false,false) should NOT be exhaustive");
+        assert!(
+            !result.is_exhaustive,
+            "diagonal (true,true)/(false,false) should NOT be exhaustive"
+        );
     }
 
     #[test]
@@ -796,7 +849,10 @@ mod tests {
         ];
         let scrutinee_ty = Type::tuple(vec![bool_ty(), i32_ty()]);
         let result = check_exhaustiveness(&arms, &scrutinee_ty, None);
-        assert!(result.is_exhaustive, "(true, _)/(false, _) should be exhaustive");
+        assert!(
+            result.is_exhaustive,
+            "(true, _)/(false, _) should be exhaustive"
+        );
     }
 
     #[test]
@@ -809,7 +865,10 @@ mod tests {
         ];
         let scrutinee_ty = Type::tuple(vec![bool_ty(), bool_ty()]);
         let result = check_exhaustiveness(&arms, &scrutinee_ty, None);
-        assert!(result.is_exhaustive, "full bool×bool coverage should be exhaustive");
+        assert!(
+            result.is_exhaustive,
+            "full bool×bool coverage should be exhaustive"
+        );
     }
 
     #[test]
@@ -828,7 +887,10 @@ mod tests {
         ];
         let scrutinee_ty = Type::tuple(vec![bool_ty(), bool_ty()]);
         let result = check_exhaustiveness(&arms, &scrutinee_ty, None);
-        assert!(!result.is_exhaustive, "(true,_)/(_,true) misses (false,false)");
+        assert!(
+            !result.is_exhaustive,
+            "(true,_)/(_,true) misses (false,false)"
+        );
     }
 
     #[test]
@@ -840,6 +902,9 @@ mod tests {
         ];
         let scrutinee_ty = Type::tuple(vec![bool_ty(), bool_ty()]);
         let result = check_exhaustiveness(&arms, &scrutinee_ty, None);
-        assert!(result.is_exhaustive, "any pattern + wildcard should be exhaustive");
+        assert!(
+            result.is_exhaustive,
+            "any pattern + wildcard should be exhaustive"
+        );
     }
 }

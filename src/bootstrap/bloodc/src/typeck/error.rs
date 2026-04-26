@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::diagnostics::{Diagnostic, DiagnosticLabel};
+use crate::hir::ty::display_type;
 use crate::hir::DefId;
 use crate::hir::Type;
-use crate::hir::ty::display_type;
 use crate::span::Span;
-use crate::diagnostics::{Diagnostic, DiagnosticLabel};
 
 /// Result type alias for type checking operations.
 ///
@@ -58,7 +58,8 @@ impl TypeError {
 
     /// Add a secondary diagnostic label (e.g., pointing to a function definition).
     pub fn with_secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.secondary_labels.push(DiagnosticLabel::secondary(span, message));
+        self.secondary_labels
+            .push(DiagnosticLabel::secondary(span, message));
         self
     }
 
@@ -441,108 +442,55 @@ impl TypeError {
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
     /// Type mismatch.
-    Mismatch {
-        expected: Type,
-        found: Type,
-    },
+    Mismatch { expected: Type, found: Type },
     /// Name not found.
-    NotFound {
-        name: String,
-    },
+    NotFound { name: String },
     /// Type not found.
-    TypeNotFound {
-        name: String,
-    },
+    TypeNotFound { name: String },
     /// Not a type.
-    NotAType {
-        name: String,
-    },
+    NotAType { name: String },
     /// Not a function.
-    NotAFunction {
-        ty: Type,
-    },
+    NotAFunction { ty: Type },
     /// Wrong number of arguments.
-    WrongArity {
-        expected: usize,
-        found: usize,
-    },
+    WrongArity { expected: usize, found: usize },
     /// Wrong number of generic type arguments.
-    GenericArgsMismatch {
-        expected: usize,
-        found: usize,
-    },
+    GenericArgsMismatch { expected: usize, found: usize },
     /// Not a struct (when we have a type).
-    NotAStruct {
-        ty: Type,
-    },
+    NotAStruct { ty: Type },
     /// Not a struct (when we only have a name, no resolved type).
-    NotAStructName {
-        name: String,
-    },
+    NotAStructName { name: String },
     /// No such field.
-    NoField {
-        ty: Type,
-        field: String,
-    },
+    NoField { ty: Type, field: String },
     /// Missing field in struct initializer.
-    MissingField {
-        ty: Type,
-        field: String,
-    },
+    MissingField { ty: Type, field: String },
     /// Cannot infer type.
     CannotInfer,
     /// Cannot infer type (with context about what couldn't be inferred).
-    CannotInferWithContext {
-        ty: String,
-        hint: String,
-    },
+    CannotInferWithContext { ty: String, hint: String },
     /// Duplicate definition.
-    DuplicateDefinition {
-        name: String,
-    },
+    DuplicateDefinition { name: String },
     /// Cannot borrow as mutable.
-    MutableBorrow {
-        reason: String,
-    },
+    MutableBorrow { reason: String },
     /// Cannot dereference.
-    CannotDeref {
-        ty: Type,
-    },
+    CannotDeref { ty: Type },
     /// Invalid binary operator.
-    InvalidBinaryOp {
-        op: String,
-        left: Type,
-        right: Type,
-    },
+    InvalidBinaryOp { op: String, left: Type, right: Type },
     /// Invalid unary operator.
-    InvalidUnaryOp {
-        op: String,
-        ty: Type,
-    },
+    InvalidUnaryOp { op: String, ty: Type },
     /// Not indexable.
-    NotIndexable {
-        ty: Type,
-    },
+    NotIndexable { ty: Type },
     /// Infinite type (occurs check).
     InfiniteType,
     /// Invalid main function signature.
     MainSignature,
     /// Return type mismatch.
-    ReturnTypeMismatch {
-        expected: Type,
-        found: Type,
-    },
+    ReturnTypeMismatch { expected: Type, found: Type },
     /// No main function.
     NoMainFunction,
     /// Recursive type.
-    RecursiveType {
-        name: String,
-    },
+    RecursiveType { name: String },
     /// Mismatched types (generic).
-    MismatchedTypes {
-        expected: Type,
-        found: Type,
-    },
+    MismatchedTypes { expected: Type, found: Type },
     /// Break outside loop.
     BreakOutsideLoop,
     /// Continue outside loop.
@@ -550,63 +498,32 @@ pub enum TypeErrorKind {
     /// Return outside function.
     ReturnOutsideFunction,
     /// Pattern doesn't match type.
-    PatternMismatch {
-        expected: Type,
-        pattern: String,
-    },
+    PatternMismatch { expected: Type, pattern: String },
     /// Not a tuple.
-    NotATuple {
-        ty: Type,
-    },
+    NotATuple { ty: Type },
     /// Unsupported feature.
-    UnsupportedFeature {
-        feature: String,
-    },
+    UnsupportedFeature { feature: String },
     /// Unresolved name.
-    UnresolvedName {
-        name: String,
-    },
+    UnresolvedName { name: String },
     /// Unknown field on struct.
-    UnknownField {
-        ty: Type,
-        field: String,
-    },
+    UnknownField { ty: Type, field: String },
     /// Effect row mismatch.
-    EffectMismatch {
-        expected: String,
-        found: String,
-    },
+    EffectMismatch { expected: String, found: String },
     /// Unhandled effect.
-    UnhandledEffect {
-        effect: String,
-    },
+    UnhandledEffect { effect: String },
     /// Resume type mismatch - value passed to resume doesn't match expected type.
-    ResumeTypeMismatch {
-        expected: String,
-        found: String,
-    },
+    ResumeTypeMismatch { expected: String, found: String },
     /// Invalid effect handler.
-    InvalidHandler {
-        reason: String,
-    },
+    InvalidHandler { reason: String },
     /// Not an effect.
-    NotAnEffect {
-        name: String,
-    },
+    NotAnEffect { name: String },
     /// Invalid effect type syntax (expected a named effect like `State<T>`).
-    InvalidEffectType {
-        found: String,
-    },
+    InvalidEffectType { found: String },
     /// Function performs effects that were not declared in its signature.
-    UndeclaredEffects {
-        effects: Vec<String>,
-    },
+    UndeclaredEffects { effects: Vec<String> },
     /// Multiple resume calls in a shallow handler operation.
     /// Shallow handlers enforce single-shot continuation semantics.
-    MultipleResumesInShallowHandler {
-        operation: String,
-        count: usize,
-    },
+    MultipleResumesInShallowHandler { operation: String, count: usize },
     /// Linear value captured in a multi-shot (deep) handler operation.
     /// Linear values must be used exactly once, but multi-shot handlers can
     /// resume multiple times, which would duplicate the linear value.
@@ -624,26 +541,15 @@ pub enum TypeErrorKind {
         field_type: String,
     },
     /// Trait not found.
-    TraitNotFound {
-        name: String,
-    },
+    TraitNotFound { name: String },
     /// Type annotation required.
     TypeAnnotationRequired,
     /// Trait bound not satisfied.
-    TraitBoundNotSatisfied {
-        ty: Type,
-        trait_name: String,
-    },
+    TraitBoundNotSatisfied { ty: Type, trait_name: String },
     /// Method not found on type.
-    MethodNotFound {
-        ty: Type,
-        method: String,
-    },
+    MethodNotFound { ty: Type, method: String },
     /// Missing trait method in impl.
-    MissingTraitMethod {
-        trait_name: String,
-        method: String,
-    },
+    MissingTraitMethod { trait_name: String, method: String },
     /// Missing associated type in impl.
     MissingAssocType {
         trait_name: String,
@@ -656,39 +562,24 @@ pub enum TypeErrorKind {
         ty_b: Type,
     },
     /// Const evaluation error.
-    ConstEvalError {
-        reason: String,
-    },
+    ConstEvalError { reason: String },
     /// Non-exhaustive pattern match.
-    NonExhaustivePatterns {
-        missing: Vec<String>,
-    },
+    NonExhaustivePatterns { missing: Vec<String> },
     /// Unreachable pattern (dead code).
     UnreachablePattern,
     /// Assignment to immutable variable.
-    ImmutableAssign {
-        name: String,
-    },
+    ImmutableAssign { name: String },
     /// Invalid cast expression.
-    InvalidCast {
-        source: Type,
-        target: Type,
-    },
+    InvalidCast { source: Type, target: Type },
 
     // Object safety errors (E09xx)
     /// Trait is not object-safe: method has generic type parameters.
-    TraitNotObjectSafe {
-        trait_name: String,
-        reason: String,
-    },
+    TraitNotObjectSafe { trait_name: String, reason: String },
 
     // Linearity errors (E08xx)
     /// Linear value was never consumed.
     /// Linear types must be used exactly once.
-    UnusedLinearValue {
-        name: String,
-        ty: Type,
-    },
+    UnusedLinearValue { name: String, ty: Type },
     /// Linear value was used more than once.
     /// Linear types must be used exactly once.
     MultipleLinearUse {
@@ -707,10 +598,7 @@ pub enum TypeErrorKind {
     },
     /// Linear value defined outside loop was consumed inside loop.
     /// Loops may execute zero or many times, violating linear semantics.
-    LinearConsumedInLoop {
-        name: String,
-        ty: Type,
-    },
+    LinearConsumedInLoop { name: String, ty: Type },
     /// Linear value consumed in some branches but not all.
     /// Linear values must be consumed consistently across all control flow paths.
     InconsistentLinearBranches {
@@ -721,10 +609,7 @@ pub enum TypeErrorKind {
     },
     /// Linear/affine value captured by reference in a closure.
     /// Linear values can only be captured by-move (with `move` keyword).
-    LinearCaptureByRef {
-        name: String,
-        ty: Type,
-    },
+    LinearCaptureByRef { name: String, ty: Type },
 
     // FFI errors (E05xx)
     /// Type is not FFI-safe.
@@ -757,25 +642,16 @@ pub enum TypeErrorKind {
         searched_paths: Vec<String>,
     },
     /// Import resolution error.
-    ImportError {
-        message: String,
-    },
+    ImportError { message: String },
     /// I/O error reading module file.
-    IoError {
-        message: String,
-    },
+    IoError { message: String },
     /// Parse error in module file.
-    ParseError {
-        message: String,
-    },
+    ParseError { message: String },
 
     // Security limits (E07xx)
     /// Type recursion depth exceeded during unification.
     /// This prevents DoS attacks via pathologically nested types.
-    TypeDepthExceeded {
-        depth: usize,
-        limit: usize,
-    },
+    TypeDepthExceeded { depth: usize, limit: usize },
 }
 
 impl fmt::Display for TypeError {

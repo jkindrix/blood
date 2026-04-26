@@ -420,9 +420,8 @@ pub type FfiResult<T> = Result<T, FfiError>;
 
 /// Convert a Rust string to a C string.
 pub fn to_cstring(s: &str) -> FfiResult<CString> {
-    CString::new(s).map_err(|_| {
-        FfiError::new(FfiErrorKind::InvalidUtf8, "string contains null byte")
-    })
+    CString::new(s)
+        .map_err(|_| FfiError::new(FfiErrorKind::InvalidUtf8, "string contains null byte"))
 }
 
 /// Convert a C string to a Rust string.
@@ -479,18 +478,12 @@ mod tests {
 
     #[test]
     fn test_ffi_signature() {
-        let sig = FfiSignature::new(
-            vec![FfiType::I32, FfiType::Pointer],
-            FfiType::I32,
-        );
+        let sig = FfiSignature::new(vec![FfiType::I32, FfiType::Pointer], FfiType::I32);
         assert_eq!(sig.params.len(), 2);
         assert_eq!(sig.return_type, FfiType::I32);
         assert!(!sig.varargs);
 
-        let varargs_sig = FfiSignature::varargs(
-            vec![FfiType::CString],
-            FfiType::I32,
-        );
+        let varargs_sig = FfiSignature::varargs(vec![FfiType::CString], FfiType::I32);
         assert!(varargs_sig.varargs);
     }
 

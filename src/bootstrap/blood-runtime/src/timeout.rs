@@ -268,7 +268,8 @@ impl TimeoutGuard {
     ///
     /// This is useful for early termination.
     pub fn cancel(&self) {
-        self.source.cancel_with_reason(Some("manually cancelled".into()));
+        self.source
+            .cancel_with_reason(Some("manually cancelled".into()));
     }
 
     /// Check the timeout and return an error if expired.

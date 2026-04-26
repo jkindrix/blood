@@ -38,7 +38,11 @@ use crate::SchedulerConfig;
 pub fn configured_worker_count() -> usize {
     crate::runtime_config()
         .map(|c| c.scheduler.num_workers)
-        .unwrap_or_else(|| std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4)
+        })
 }
 
 /// Get the configured work stealing setting from the runtime configuration.
@@ -185,11 +189,7 @@ impl Scheduler {
     /// Spawn a fiber with a specific parent cancellation token.
     ///
     /// The fiber will be cancelled when the parent token is cancelled.
-    pub fn spawn_with_cancellation<F>(
-        &self,
-        task: F,
-        parent_token: CancellationToken,
-    ) -> FiberId
+    pub fn spawn_with_cancellation<F>(&self, task: F, parent_token: CancellationToken) -> FiberId
     where
         F: FnOnce() + Send + 'static,
     {
@@ -221,10 +221,7 @@ impl Scheduler {
             );
 
             // Take ownership of the deque
-            let deque = std::mem::replace(
-                &mut self.workers[i].deque,
-                Deque::new_fifo(),
-            );
+            let deque = std::mem::replace(&mut self.workers[i].deque, Deque::new_fifo());
 
             let handle = thread::Builder::new()
                 .name(format!("blood-worker-{}", i))
@@ -248,13 +245,15 @@ impl Scheduler {
     /// cancellation to all fibers and their child operations.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
-        self.cancellation_source.cancel_with_reason(Some("scheduler shutdown".into()));
+        self.cancellation_source
+            .cancel_with_reason(Some("scheduler shutdown".into()));
     }
 
     /// Request scheduler shutdown with a reason.
     pub fn shutdown_with_reason(&self, reason: &str) {
         self.shutdown.store(true, Ordering::Release);
-        self.cancellation_source.cancel_with_reason(Some(reason.into()));
+        self.cancellation_source
+            .cancel_with_reason(Some(reason.into()));
     }
 
     /// Cancel a specific fiber by ID.
@@ -321,10 +320,7 @@ impl Scheduler {
                 self.cancellation_token.clone(),
             );
 
-            let deque = std::mem::replace(
-                &mut self.workers[i].deque,
-                Deque::new_fifo(),
-            );
+            let deque = std::mem::replace(&mut self.workers[i].deque, Deque::new_fifo());
 
             let handle = thread::Builder::new()
                 .name(format!("blood-worker-{}", i))

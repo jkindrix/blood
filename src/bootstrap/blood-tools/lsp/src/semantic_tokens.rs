@@ -71,10 +71,10 @@ impl TokenType {
             TokenType::Regexp => "regexp",
             TokenType::Operator => "operator",
             TokenType::Decorator => "decorator",
-            TokenType::Effect => "interface",  // Use interface styling for effects
-            TokenType::Handler => "class",     // Use class styling for handlers
-            TokenType::Operation => "method",  // Use method styling for operations
-            TokenType::Lifetime => "label",    // Use label styling for lifetimes
+            TokenType::Effect => "interface", // Use interface styling for effects
+            TokenType::Handler => "class",    // Use class styling for handlers
+            TokenType::Operation => "method", // Use method styling for operations
+            TokenType::Lifetime => "label",   // Use label styling for lifetimes
         }
     }
 
@@ -172,10 +172,9 @@ impl SemanticTokensProvider {
         Self {
             // Type keywords are used to distinguish standard library types
             type_keywords: vec![
-                "i8", "i16", "i32", "i64", "i128", "isize",
-                "u8", "u16", "u32", "u64", "u128", "usize",
-                "f32", "f64", "bool", "char", "str",
-                "Option", "Result", "Vec", "String", "Box",
+                "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
+                "usize", "f32", "f64", "bool", "char", "str", "Option", "Result", "Vec", "String",
+                "Box",
             ],
         }
     }
@@ -200,7 +199,8 @@ impl SemanticTokensProvider {
             }
 
             // Map bloodc TokenKind to LSP semantic token type
-            let (token_type, modifiers) = self.map_token_kind(&token.kind, &text[token.span.start..token.span.end]);
+            let (token_type, modifiers) =
+                self.map_token_kind(&token.kind, &text[token.span.start..token.span.end]);
 
             // Skip tokens we don't want to highlight (operators, punctuation, etc.)
             if token_type.is_none() {
@@ -234,23 +234,57 @@ impl SemanticTokensProvider {
     fn map_token_kind(&self, kind: &TokenKind, text: &str) -> (Option<u32>, u32) {
         match kind {
             // Keywords
-            TokenKind::As | TokenKind::Break | TokenKind::Const | TokenKind::Continue
-            | TokenKind::Else | TokenKind::Enum | TokenKind::False | TokenKind::Fn
-            | TokenKind::For | TokenKind::If | TokenKind::Impl | TokenKind::In
-            | TokenKind::Let | TokenKind::Loop | TokenKind::Match | TokenKind::Mod
-            | TokenKind::Module | TokenKind::Move | TokenKind::Mut | TokenKind::Pub
-            | TokenKind::Ref | TokenKind::Return | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Static | TokenKind::Struct | TokenKind::Super | TokenKind::Trait
-            | TokenKind::True | TokenKind::Type | TokenKind::Use | TokenKind::Where
-            | TokenKind::While | TokenKind::Yield | TokenKind::Fiber | TokenKind::Suspend
-            | TokenKind::Dyn | TokenKind::Crate | TokenKind::Bridge | TokenKind::Extern => {
-                (Some(TokenType::Keyword as u32), 0)
-            }
+            TokenKind::As
+            | TokenKind::Break
+            | TokenKind::Const
+            | TokenKind::Continue
+            | TokenKind::Else
+            | TokenKind::Enum
+            | TokenKind::False
+            | TokenKind::Fn
+            | TokenKind::For
+            | TokenKind::If
+            | TokenKind::Impl
+            | TokenKind::In
+            | TokenKind::Let
+            | TokenKind::Loop
+            | TokenKind::Match
+            | TokenKind::Mod
+            | TokenKind::Module
+            | TokenKind::Move
+            | TokenKind::Mut
+            | TokenKind::Pub
+            | TokenKind::Ref
+            | TokenKind::Return
+            | TokenKind::SelfLower
+            | TokenKind::SelfUpper
+            | TokenKind::Static
+            | TokenKind::Struct
+            | TokenKind::Super
+            | TokenKind::Trait
+            | TokenKind::True
+            | TokenKind::Type
+            | TokenKind::Use
+            | TokenKind::Where
+            | TokenKind::While
+            | TokenKind::Yield
+            | TokenKind::Fiber
+            | TokenKind::Suspend
+            | TokenKind::Dyn
+            | TokenKind::Crate
+            | TokenKind::Bridge
+            | TokenKind::Extern => (Some(TokenType::Keyword as u32), 0),
 
             // Effect-related keywords
-            TokenKind::Effect | TokenKind::Handler | TokenKind::Perform
-            | TokenKind::Resume | TokenKind::With | TokenKind::Handle
-            | TokenKind::Deep | TokenKind::Shallow | TokenKind::Pure => {
+            TokenKind::Effect
+            | TokenKind::Handler
+            | TokenKind::Perform
+            | TokenKind::Resume
+            | TokenKind::With
+            | TokenKind::Handle
+            | TokenKind::Deep
+            | TokenKind::Shallow
+            | TokenKind::Pure => {
                 let modifier = if matches!(kind, TokenKind::Pure) {
                     TokenModifier::Pure.bitmask()
                 } else {
@@ -260,14 +294,10 @@ impl SemanticTokensProvider {
             }
 
             // Numeric literals
-            TokenKind::IntLit | TokenKind::FloatLit => {
-                (Some(TokenType::Number as u32), 0)
-            }
+            TokenKind::IntLit | TokenKind::FloatLit => (Some(TokenType::Number as u32), 0),
 
             // String and character literals
-            TokenKind::StringLit | TokenKind::CharLit => {
-                (Some(TokenType::String as u32), 0)
-            }
+            TokenKind::StringLit | TokenKind::CharLit => (Some(TokenType::String as u32), 0),
 
             // Comments (if lexer preserves them - currently skipped)
             TokenKind::LineComment | TokenKind::BlockComment => {
@@ -278,7 +308,10 @@ impl SemanticTokensProvider {
             TokenKind::Ident => {
                 // Check if it's a known type keyword
                 if self.type_keywords.contains(&text) {
-                    (Some(TokenType::Type as u32), TokenModifier::DefaultLibrary.bitmask())
+                    (
+                        Some(TokenType::Type as u32),
+                        TokenModifier::DefaultLibrary.bitmask(),
+                    )
                 } else {
                     (Some(TokenType::Variable as u32), 0)
                 }
@@ -287,16 +320,17 @@ impl SemanticTokensProvider {
             // Type identifiers (uppercase)
             TokenKind::TypeIdent => {
                 if self.type_keywords.contains(&text) {
-                    (Some(TokenType::Type as u32), TokenModifier::DefaultLibrary.bitmask())
+                    (
+                        Some(TokenType::Type as u32),
+                        TokenModifier::DefaultLibrary.bitmask(),
+                    )
                 } else {
                     (Some(TokenType::Type as u32), 0)
                 }
             }
 
             // Lifetime identifiers
-            TokenKind::Lifetime => {
-                (Some(TokenType::Lifetime as u32), 0)
-            }
+            TokenKind::Lifetime => (Some(TokenType::Lifetime as u32), 0),
 
             // Attributes/decorators
             TokenKind::AtUnsafe | TokenKind::AtHeap | TokenKind::AtStack => {

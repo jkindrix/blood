@@ -27,12 +27,12 @@
 //!             └── ...
 //! ```
 
-use std::fmt;
+use super::ptr::MemoryTier;
+use super::static_evidence::InlineEvidenceMode;
 use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{DefId, LocalId, Type};
 use crate::span::Span;
-use super::ptr::MemoryTier;
-use super::static_evidence::InlineEvidenceMode;
+use std::fmt;
 
 // ============================================================================
 // Basic Blocks
@@ -505,7 +505,10 @@ pub struct SwitchTargets {
 impl SwitchTargets {
     /// Create new switch targets.
     pub fn new(branches: Vec<(u128, BasicBlockId)>, otherwise: BasicBlockId) -> Self {
-        Self { branches, otherwise }
+        Self {
+            branches,
+            otherwise,
+        }
     }
 
     /// Get all target blocks.
@@ -625,7 +628,9 @@ impl fmt::Display for Place {
                 PlaceElem::Deref => write!(f, ".*")?,
                 PlaceElem::Field(idx) => write!(f, ".{}", idx)?,
                 PlaceElem::Index(local) => write!(f, "[_{}]", local.index)?,
-                PlaceElem::ConstantIndex { offset, from_end, .. } => {
+                PlaceElem::ConstantIndex {
+                    offset, from_end, ..
+                } => {
                     if *from_end {
                         write!(f, "[-{}]", offset)?;
                     } else {
@@ -661,11 +666,7 @@ pub enum PlaceElem {
         from_end: bool,
     },
     /// Subslice: `place[from..to]`
-    Subslice {
-        from: u64,
-        to: u64,
-        from_end: bool,
-    },
+    Subslice { from: u64, to: u64, from_end: bool },
     /// Enum variant downcast.
     Downcast(u32),
 }
@@ -724,16 +725,10 @@ pub enum Rvalue {
     Use(Operand),
 
     /// Create a reference to a place.
-    Ref {
-        place: Place,
-        mutable: bool,
-    },
+    Ref { place: Place, mutable: bool },
 
     /// Create a raw pointer to a place.
-    AddressOf {
-        place: Place,
-        mutable: bool,
-    },
+    AddressOf { place: Place, mutable: bool },
 
     /// Binary operation.
     BinaryOp {
@@ -750,16 +745,10 @@ pub enum Rvalue {
     },
 
     /// Unary operation.
-    UnaryOp {
-        op: UnOp,
-        operand: Operand,
-    },
+    UnaryOp { op: UnOp, operand: Operand },
 
     /// Type cast.
-    Cast {
-        operand: Operand,
-        target_ty: Type,
-    },
+    Cast { operand: Operand, target_ty: Type },
 
     /// Get discriminant of an enum.
     Discriminant(Place),
@@ -797,10 +786,7 @@ pub enum Rvalue {
     /// String indexing operation.
     /// Returns the character at the given index (by character, not byte index).
     /// Calls str_char_at_index runtime function.
-    StringIndex {
-        base: Operand,
-        index: Operand,
-    },
+    StringIndex { base: Operand, index: Operand },
 
     /// Array-to-slice coercion: &[T; N] -> &[T]
     /// Creates a fat pointer (slice reference) from an array reference.
@@ -815,10 +801,22 @@ pub enum Rvalue {
 /// Binary operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Rem,
-    BitAnd, BitOr, BitXor,
-    Shl, Shr,
-    Eq, Ne, Lt, Le, Gt, Ge,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
     Offset, // Pointer offset
 }
 
@@ -846,14 +844,9 @@ pub enum AggregateKind {
     /// Anonymous record.
     Record,
     /// Closure (captures).
-    Closure {
-        def_id: DefId,
-    },
+    Closure { def_id: DefId },
     /// Range (start, end, [exhausted]).
-    Range {
-        element: Type,
-        inclusive: bool,
-    },
+    Range { element: Type, inclusive: bool },
 }
 
 // ============================================================================
@@ -967,8 +960,7 @@ mod tests {
 
     #[test]
     fn test_place_display() {
-        let place = Place::local(LocalId::new(0))
-            .project(PlaceElem::Field(1));
+        let place = Place::local(LocalId::new(0)).project(PlaceElem::Field(1));
         assert_eq!(format!("{}", place), "_0.1");
     }
 
@@ -987,7 +979,9 @@ mod tests {
     #[test]
     fn test_terminator_successors_goto() {
         let term = Terminator::new(
-            TerminatorKind::Goto { target: BasicBlockId::new(1) },
+            TerminatorKind::Goto {
+                target: BasicBlockId::new(1),
+            },
             Span::dummy(),
         );
         assert_eq!(term.successors(), vec![BasicBlockId::new(1)]);
@@ -1003,7 +997,10 @@ mod tests {
     fn test_terminator_is_diverging() {
         assert!(TerminatorKind::Return.is_diverging());
         assert!(TerminatorKind::Unreachable.is_diverging());
-        assert!(!TerminatorKind::Goto { target: BasicBlockId::new(0) }.is_diverging());
+        assert!(!TerminatorKind::Goto {
+            target: BasicBlockId::new(0)
+        }
+        .is_diverging());
     }
 
     #[test]

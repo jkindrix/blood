@@ -43,24 +43,24 @@ pub mod suggestion;
 pub mod unify;
 pub mod variance;
 
-pub use ambiguity::{Ambiguity, AmbiguityChecker, AmbiguityCheckResult};
+pub use ambiguity::{Ambiguity, AmbiguityCheckResult, AmbiguityChecker};
 pub use context::TypeContext;
 pub use dispatch::{DispatchResolver, DispatchResult, MethodCandidate};
 pub use effect::EffectUnifier;
 pub use error::{TypeError, TypeErrorKind, TypeResult};
-pub use ffi::{FfiValidator, FfiSafety};
+pub use ffi::{FfiSafety, FfiValidator};
 pub use infer::TypeInference;
-pub use lifetime::{LifetimeInference, LifetimeConstraint, LifetimeOrigin, LifetimeSolution};
+pub use lifetime::{LifetimeConstraint, LifetimeInference, LifetimeOrigin, LifetimeSolution};
 pub use linearity::LinearityChecker;
-pub use lint::{PointerLintContext, PointerLintConfig, HandlerLintContext, HandlerLintConfig};
+pub use lint::{HandlerLintConfig, HandlerLintContext, PointerLintConfig, PointerLintContext};
 pub use methods::{MethodFamily, MethodRegistry};
 pub use resolve::{Resolver, Scope, ScopeKind};
 pub use unify::Unifier;
-pub use variance::{Variance, VarianceInfo, VarianceInferrer, VarianceChecker};
+pub use variance::{Variance, VarianceChecker, VarianceInferrer, VarianceInfo};
 
 use crate::ast;
-use crate::hir;
 use crate::diagnostics::Diagnostic;
+use crate::hir;
 
 /// Type check an AST program and produce HIR.
 ///
@@ -100,7 +100,8 @@ pub fn check_program(
     // Phase 4: Check linearity (linear/affine type usage)
     let linearity_errors = linearity::check_crate_linearity(&hir_crate);
     if !linearity_errors.is_empty() {
-        return Err(linearity_errors.into_iter()
+        return Err(linearity_errors
+            .into_iter()
             .map(|e| e.to_diagnostic_with_names(&type_name_map))
             .collect());
     }

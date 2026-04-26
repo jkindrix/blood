@@ -118,17 +118,18 @@ impl<'a> SyncEngine<'a> {
 
         let mut file = std::fs::File::open(path)?;
         let data: ExportData = match format {
-            ExportFormat::Json => {
-                serde_json::from_reader(&file)
-                    .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
-            }
+            ExportFormat::Json => serde_json::from_reader(&file).map_err(|e| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?,
             ExportFormat::Binary => {
                 use std::io::Read;
                 let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes)
-                    .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
-                postcard::from_bytes(&bytes)
-                    .map_err(|e: postcard::Error| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
+                file.read_to_end(&mut bytes).map_err(|e| {
+                    UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+                })?;
+                postcard::from_bytes(&bytes).map_err(|e: postcard::Error| {
+                    UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+                })?
             }
         };
 
@@ -136,17 +137,20 @@ impl<'a> SyncEngine<'a> {
     }
 
     /// Computes sync operations by comparing local state with remote data.
-    fn compute_plan_from_data(&self, remote_data: &ExportData, plan: &mut SyncPlan) -> UcmResult<()> {
+    fn compute_plan_from_data(
+        &self,
+        remote_data: &ExportData,
+        plan: &mut SyncPlan,
+    ) -> UcmResult<()> {
         // Build sets of remote definitions and names
-        let remote_hashes: std::collections::HashSet<String> = remote_data.definitions
+        let remote_hashes: std::collections::HashSet<String> = remote_data
+            .definitions
             .iter()
             .map(|(h, _, _)| h.clone())
             .collect();
 
-        let remote_names: std::collections::HashMap<String, String> = remote_data.names
-            .iter()
-            .cloned()
-            .collect();
+        let remote_names: std::collections::HashMap<String, String> =
+            remote_data.names.iter().cloned().collect();
 
         // Get local names and check what's missing from remote
         let local_names = self.local.list_names(None)?;
@@ -169,8 +173,9 @@ impl<'a> SyncEngine<'a> {
                 if let Some(remote_hash) = remote_names.get(&name_str) {
                     if remote_hash != &hash_str {
                         // Same name points to different hash - conflict
-                        let remote_hash_parsed: Hash = remote_hash.parse()
-                            .map_err(|_| UcmError::ParseError(format!("Invalid hash: {}", remote_hash)))?;
+                        let remote_hash_parsed: Hash = remote_hash.parse().map_err(|_| {
+                            UcmError::ParseError(format!("Invalid hash: {}", remote_hash))
+                        })?;
                         plan.add(SyncOp::Conflict {
                             name: name.clone(),
                             local_hash: hash.clone(),
@@ -186,7 +191,8 @@ impl<'a> SyncEngine<'a> {
             let name = Name::new(name_str);
             if self.local.resolve(&name)?.is_none() {
                 // Local doesn't have this name - need to pull
-                if let Some((_, kind_str, source)) = remote_data.definitions
+                if let Some((_, kind_str, source)) = remote_data
+                    .definitions
                     .iter()
                     .find(|(h, _, _)| h == hash_str)
                 {
@@ -245,7 +251,9 @@ impl<'a> SyncEngine<'a> {
         let plan = self.plan(remote)?;
 
         // Count operations that would push to remote
-        let push_ops: Vec<_> = plan.operations.iter()
+        let push_ops: Vec<_> = plan
+            .operations
+            .iter()
             .filter(|op| matches!(op, SyncOp::AddRemote(_, _, _)))
             .collect();
         let pushed = push_ops.len();
@@ -410,7 +418,12 @@ pub struct ConflictInfo {
 impl ConflictInfo {
     /// Creates a new conflict info from a SyncOp::Conflict.
     pub fn from_sync_op(op: &SyncOp) -> Option<Self> {
-        if let SyncOp::Conflict { name, local_hash, remote_hash } = op {
+        if let SyncOp::Conflict {
+            name,
+            local_hash,
+            remote_hash,
+        } = op
+        {
             Some(Self {
                 name: name.clone(),
                 local_hash: local_hash.clone(),
@@ -456,7 +469,11 @@ pub enum ResolvedOp {
     /// Remove a name
     RemoveName { name: Name },
     /// Add a new definition
-    AddDefinition { name: Name, source: String, kind: DefKind },
+    AddDefinition {
+        name: Name,
+        source: String,
+        kind: DefKind,
+    },
     /// No operation needed
     NoOp,
 }
@@ -478,13 +495,11 @@ pub fn resolve_conflict(
             // Update local name to point to remote hash
             // First we need to add the remote definition, then update the name
             if let Some(source) = remote_source {
-                vec![
-                    ResolvedOp::AddDefinition {
-                        name: conflict.name.clone(),
-                        source: source.to_string(),
-                        kind: DefKind::Term, // Default, should be provided
-                    },
-                ]
+                vec![ResolvedOp::AddDefinition {
+                    name: conflict.name.clone(),
+                    source: source.to_string(),
+                    kind: DefKind::Term, // Default, should be provided
+                }]
             } else {
                 // Can't keep remote without source
                 vec![ResolvedOp::UpdateLocal {
@@ -493,7 +508,10 @@ pub fn resolve_conflict(
                 }]
             }
         }
-        ConflictResolution::KeepBoth { local_name, remote_name } => {
+        ConflictResolution::KeepBoth {
+            local_name,
+            remote_name,
+        } => {
             let mut ops = Vec::new();
 
             // Rename local if specified
@@ -565,11 +583,20 @@ impl ConflictResolver {
     }
 
     /// Resolves all conflicts in a sync plan using the default strategy.
-    pub fn resolve_all(&self, plan: &SyncPlan, remote_data: Option<&ExportData>) -> Vec<ResolvedOp> {
+    pub fn resolve_all(
+        &self,
+        plan: &SyncPlan,
+        remote_data: Option<&ExportData>,
+    ) -> Vec<ResolvedOp> {
         let mut all_ops = Vec::new();
 
         for op in &plan.operations {
-            if let SyncOp::Conflict { name, local_hash, remote_hash } = op {
+            if let SyncOp::Conflict {
+                name,
+                local_hash,
+                remote_hash,
+            } = op
+            {
                 let conflict = ConflictInfo {
                     name: name.clone(),
                     local_hash: local_hash.clone(),
@@ -655,7 +682,11 @@ pub fn export_codebase(
         // Get the definition for this hash
         if let Some(info) = codebase.find(&crate::DefRef::Hash(hash.clone()))? {
             // Check if we already have this definition
-            if !export_data.definitions.iter().any(|(h, _, _)| h == &hash.to_string()) {
+            if !export_data
+                .definitions
+                .iter()
+                .any(|(h, _, _)| h == &hash.to_string())
+            {
                 export_data.definitions.push((
                     hash.to_string(),
                     info.kind.as_str().to_string(),
@@ -669,15 +700,18 @@ pub fn export_codebase(
     let mut file = std::fs::File::create(path)?;
     match format {
         ExportFormat::Json => {
-            serde_json::to_writer_pretty(&file, &export_data)
-                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
+            serde_json::to_writer_pretty(&file, &export_data).map_err(|e| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?;
         }
         ExportFormat::Binary => {
             use std::io::Write;
-            let bytes = postcard::to_stdvec(&export_data)
-                .map_err(|e: postcard::Error| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
-            file.write_all(&bytes)
-                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
+            let bytes = postcard::to_stdvec(&export_data).map_err(|e: postcard::Error| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?;
+            file.write_all(&bytes).map_err(|e| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?;
         }
     }
 
@@ -693,17 +727,17 @@ pub fn import_codebase(
     // Read from file
     let mut file = std::fs::File::open(path)?;
     let export_data: ExportData = match format {
-        ExportFormat::Json => {
-            serde_json::from_reader(&file)
-                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
-        }
+        ExportFormat::Json => serde_json::from_reader(&file)
+            .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?,
         ExportFormat::Binary => {
             use std::io::Read;
             let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)
-                .map_err(|e| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?;
-            postcard::from_bytes(&bytes)
-                .map_err(|e: postcard::Error| UcmError::Storage(crate::storage::StorageError::Other(e.to_string())))?
+            file.read_to_end(&mut bytes).map_err(|e| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?;
+            postcard::from_bytes(&bytes).map_err(|e: postcard::Error| {
+                UcmError::Storage(crate::storage::StorageError::Other(e.to_string()))
+            })?
         }
     };
 
@@ -717,9 +751,12 @@ pub fn import_codebase(
             "effect" => codebase.add_effect(source)?,
             "handler" => codebase.add_handler(source)?,
             "test" => codebase.add_test(source)?,
-            other => return Err(UcmError::ParseError(
-                format!("Unknown definition kind '{}' in import data", other)
-            )),
+            other => {
+                return Err(UcmError::ParseError(format!(
+                    "Unknown definition kind '{}' in import data",
+                    other
+                )))
+            }
         };
         imported += 1;
     }
@@ -727,7 +764,8 @@ pub fn import_codebase(
     // Import names
     for (name_str, hash_str) in &export_data.names {
         let name = Name::new(name_str);
-        let hash: Hash = hash_str.parse()
+        let hash: Hash = hash_str
+            .parse()
             .map_err(|_| UcmError::ParseError(format!("Invalid hash: {}", hash_str)))?;
         // Only add if name doesn't already exist
         if codebase.resolve(&name)?.is_none() {

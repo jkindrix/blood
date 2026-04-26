@@ -9,8 +9,8 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 /// Simple HIR-like structures for benchmarking hash computation
 mod mock_hir {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     #[derive(Clone)]
     pub struct Function {
@@ -33,9 +33,16 @@ mod mock_hir {
 
     #[derive(Clone)]
     pub enum Statement {
-        Let { name: String, value: Expr },
+        Let {
+            name: String,
+            value: Expr,
+        },
         Return(Expr),
-        If { cond: Expr, then: Vec<Statement>, else_: Vec<Statement> },
+        If {
+            cond: Expr,
+            then: Vec<Statement>,
+            else_: Vec<Statement>,
+        },
     }
 
     #[derive(Clone)]
@@ -44,8 +51,15 @@ mod mock_hir {
         Float(f64),
         Bool(bool),
         Var(String),
-        Binary { op: &'static str, left: Box<Expr>, right: Box<Expr> },
-        Call { name: String, args: Vec<Expr> },
+        Binary {
+            op: &'static str,
+            left: Box<Expr>,
+            right: Box<Expr>,
+        },
+        Call {
+            name: String,
+            args: Vec<Expr>,
+        },
     }
 
     impl Function {
@@ -69,7 +83,11 @@ mod mock_hir {
                     name: format!("v{}", i),
                     value: Expr::Binary {
                         op: "+",
-                        left: Box::new(Expr::Var(if i == 0 { "x".into() } else { format!("v{}", i - 1) })),
+                        left: Box::new(Expr::Var(if i == 0 {
+                            "x".into()
+                        } else {
+                            format!("v{}", i - 1)
+                        })),
                         right: Box::new(Expr::Int(i as i64)),
                     },
                 });
@@ -115,9 +133,20 @@ mod mock_hir {
             Type::Float => 1u8.hash(h),
             Type::Bool => 2u8.hash(h),
             Type::String => 3u8.hash(h),
-            Type::Custom(name) => { 4u8.hash(h); name.hash(h); }
-            Type::Array(inner) => { 5u8.hash(h); hash_type(inner, h); }
-            Type::Tuple(types) => { 6u8.hash(h); for t in types { hash_type(t, h); } }
+            Type::Custom(name) => {
+                4u8.hash(h);
+                name.hash(h);
+            }
+            Type::Array(inner) => {
+                5u8.hash(h);
+                hash_type(inner, h);
+            }
+            Type::Tuple(types) => {
+                6u8.hash(h);
+                for t in types {
+                    hash_type(t, h);
+                }
+            }
         }
     }
 
@@ -135,18 +164,34 @@ mod mock_hir {
             Statement::If { cond, then, else_ } => {
                 2u8.hash(h);
                 hash_expr(cond, h);
-                for s in then { hash_statement(s, h); }
-                for s in else_ { hash_statement(s, h); }
+                for s in then {
+                    hash_statement(s, h);
+                }
+                for s in else_ {
+                    hash_statement(s, h);
+                }
             }
         }
     }
 
     fn hash_expr(expr: &Expr, h: &mut impl Hasher) {
         match expr {
-            Expr::Int(v) => { 0u8.hash(h); v.hash(h); }
-            Expr::Float(v) => { 1u8.hash(h); v.to_bits().hash(h); }
-            Expr::Bool(v) => { 2u8.hash(h); v.hash(h); }
-            Expr::Var(name) => { 3u8.hash(h); name.hash(h); }
+            Expr::Int(v) => {
+                0u8.hash(h);
+                v.hash(h);
+            }
+            Expr::Float(v) => {
+                1u8.hash(h);
+                v.to_bits().hash(h);
+            }
+            Expr::Bool(v) => {
+                2u8.hash(h);
+                v.hash(h);
+            }
+            Expr::Var(name) => {
+                3u8.hash(h);
+                name.hash(h);
+            }
             Expr::Binary { op, left, right } => {
                 4u8.hash(h);
                 op.hash(h);
@@ -156,7 +201,9 @@ mod mock_hir {
             Expr::Call { name, args } => {
                 5u8.hash(h);
                 name.hash(h);
-                for arg in args { hash_expr(arg, h); }
+                for arg in args {
+                    hash_expr(arg, h);
+                }
             }
         }
     }
@@ -169,15 +216,9 @@ fn bench_blake3_hash(c: &mut Criterion) {
     for size in [64, 256, 1024, 4096, 16384] {
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("bytes", size),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    black_box(blake3::hash(data))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("bytes", size), &data, |b, data| {
+            b.iter(|| black_box(blake3::hash(data)));
+        });
     }
 
     group.finish();
@@ -192,9 +233,7 @@ fn bench_hir_hash(c: &mut Criterion) {
     // Simple function
     group.bench_function("simple_function", |b| {
         let func = Function::simple("add_one");
-        b.iter(|| {
-            black_box(hash_function(&func))
-        });
+        b.iter(|| black_box(hash_function(&func)));
     });
 
     // Complex function with varying depths
@@ -204,9 +243,7 @@ fn bench_hir_hash(c: &mut Criterion) {
             &depth,
             |b, &depth| {
                 let func = Function::complex("compute", depth);
-                b.iter(|| {
-                    black_box(hash_function(&func))
-                });
+                b.iter(|| black_box(hash_function(&func)));
             },
         );
     }
@@ -214,20 +251,16 @@ fn bench_hir_hash(c: &mut Criterion) {
     // Batch hash computation
     for count in [10, 50, 100] {
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::new("batch", count),
-            &count,
-            |b, &count| {
-                let funcs: Vec<_> = (0..count)
-                    .map(|i| Function::simple(&format!("fn_{}", i)))
-                    .collect();
-                b.iter(|| {
-                    for func in &funcs {
-                        black_box(hash_function(func));
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("batch", count), &count, |b, &count| {
+            let funcs: Vec<_> = (0..count)
+                .map(|i| Function::simple(&format!("fn_{}", i)))
+                .collect();
+            b.iter(|| {
+                for func in &funcs {
+                    black_box(hash_function(func));
+                }
+            });
+        });
     }
 
     group.finish();
@@ -258,17 +291,13 @@ fn bench_hash_comparison(c: &mut Criterion) {
         use std::collections::HashSet;
         let set: HashSet<_> = hashes.iter().cloned().collect();
         let target = hashes[500];
-        b.iter(|| {
-            black_box(set.contains(&target))
-        });
+        b.iter(|| black_box(set.contains(&target)));
     });
 
     // Hash to hex string
     group.bench_function("hash_to_hex", |b| {
         let hash = hashes[0];
-        b.iter(|| {
-            black_box(hash.to_hex())
-        });
+        b.iter(|| black_box(hash.to_hex()));
     });
 
     group.finish();
@@ -307,18 +336,14 @@ fn bench_cache_operations(c: &mut Criterion) {
     group.bench_function("cache_lookup_hit", |b| {
         let cache: HashMap<_, _> = hashes.iter().cloned().collect();
         let target = hashes[500].0;
-        b.iter(|| {
-            black_box(cache.get(&target))
-        });
+        b.iter(|| black_box(cache.get(&target)));
     });
 
     // Cache lookup (miss)
     group.bench_function("cache_lookup_miss", |b| {
         let cache: HashMap<_, _> = hashes.iter().cloned().collect();
         let target = blake3::hash(b"nonexistent");
-        b.iter(|| {
-            black_box(cache.get(&target))
-        });
+        b.iter(|| black_box(cache.get(&target)));
     });
 
     group.finish();

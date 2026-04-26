@@ -77,7 +77,10 @@ impl<'src> Parser<'src> {
                         // Only Int and Float literals can be preceded by minus.
                         // We already checked for IntLit/FloatLit token, so other variants
                         // should never occur here.
-                        LiteralKind::String(_) | LiteralKind::ByteString(_) | LiteralKind::Char(_) | LiteralKind::Bool(_) => {
+                        LiteralKind::String(_)
+                        | LiteralKind::ByteString(_)
+                        | LiteralKind::Char(_)
+                        | LiteralKind::Bool(_) => {
                             // Unreachable: we check for IntLit/FloatLit before calling parse_literal
                         }
                     }
@@ -217,10 +220,13 @@ impl<'src> Parser<'src> {
             // Identifier, path, struct, or tuple struct pattern
             // Also include contextual keywords that can be used as identifiers
             // Note: Resume is allowed as an identifier in handler operation parameters
-            TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Default | TokenKind::Handle | TokenKind::Resume => {
-                self.parse_ident_or_path_pattern()
-            }
+            TokenKind::Ident
+            | TokenKind::TypeIdent
+            | TokenKind::SelfLower
+            | TokenKind::SelfUpper
+            | TokenKind::Default
+            | TokenKind::Handle
+            | TokenKind::Resume => self.parse_ident_or_path_pattern(),
 
             // Tuple pattern
             TokenKind::LParen => self.parse_tuple_pattern(),
@@ -271,7 +277,11 @@ impl<'src> Parser<'src> {
                 let (fields, rest_pos) = self.parse_tuple_pattern_fields();
                 self.expect(TokenKind::RParen);
                 Pattern {
-                    kind: PatternKind::TupleStruct { path, fields, rest_pos },
+                    kind: PatternKind::TupleStruct {
+                        path,
+                        fields,
+                        rest_pos,
+                    },
                     span: start.merge(self.previous.span),
                 }
             }
@@ -493,7 +503,9 @@ impl<'src> Parser<'src> {
             // Check if there was a trailing comma - if not, it's just paren
             // For now, treat single element as paren pattern
             // Safe: we just checked fields.len() == 1, so pop() returns the only element
-            let field = fields.into_iter().next()
+            let field = fields
+                .into_iter()
+                .next()
                 .expect("BUG: checked len == 1 but no element found");
             return Pattern {
                 kind: PatternKind::Paren(Box::new(field)),

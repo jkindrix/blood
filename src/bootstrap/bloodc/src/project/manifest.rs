@@ -362,9 +362,7 @@ impl Manifest {
         for bin in &self.bin {
             let name = bin.name.as_ref().unwrap_or(&self.package.name);
             if !bin_names.insert(name.clone()) {
-                return Err(ManifestError::DuplicateTarget {
-                    name: name.clone(),
-                });
+                return Err(ManifestError::DuplicateTarget { name: name.clone() });
             }
         }
 
@@ -373,17 +371,20 @@ impl Manifest {
 
     /// Get the effective library name.
     pub fn lib_name(&self) -> Option<&str> {
-        self.lib.as_ref().map(|lib| {
-            lib.name.as_deref().unwrap_or(&self.package.name)
-        })
+        self.lib
+            .as_ref()
+            .map(|lib| lib.name.as_deref().unwrap_or(&self.package.name))
     }
 
     /// Get all binary targets with resolved names.
     pub fn resolved_bins(&self) -> Vec<(&str, &PathBuf)> {
-        self.bin.iter().map(|bin| {
-            let name = bin.name.as_deref().unwrap_or(&self.package.name);
-            (name, &bin.path)
-        }).collect()
+        self.bin
+            .iter()
+            .map(|bin| {
+                let name = bin.name.as_deref().unwrap_or(&self.package.name);
+                (name, &bin.path)
+            })
+            .collect()
     }
 
     /// Infer default targets if none are specified.
@@ -499,7 +500,10 @@ mod tests {
 
         let manifest = Manifest::from_str(content).unwrap();
         assert_eq!(manifest.package.name, "my_project");
-        assert_eq!(manifest.package.description, Some("A test project".to_string()));
+        assert_eq!(
+            manifest.package.description,
+            Some("A test project".to_string())
+        );
         assert_eq!(manifest.bin.len(), 1);
         assert!(manifest.lib.is_some());
         assert_eq!(manifest.dependencies.len(), 2);

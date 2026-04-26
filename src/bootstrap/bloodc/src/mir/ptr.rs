@@ -165,15 +165,9 @@ impl BloodPtr {
         // SAFETY: These unwraps cannot fail because we're slicing a [u8; 16]
         // into exact-sized chunks that match the target array sizes.
         Self {
-            address: u64::from_le_bytes(
-                bytes[0..8].try_into().expect("8 bytes from [u8; 16]")
-            ),
-            generation: u32::from_le_bytes(
-                bytes[8..12].try_into().expect("4 bytes from [u8; 16]")
-            ),
-            metadata: u32::from_le_bytes(
-                bytes[12..16].try_into().expect("4 bytes from [u8; 16]")
-            ),
+            address: u64::from_le_bytes(bytes[0..8].try_into().expect("8 bytes from [u8; 16]")),
+            generation: u32::from_le_bytes(bytes[8..12].try_into().expect("4 bytes from [u8; 16]")),
+            metadata: u32::from_le_bytes(bytes[12..16].try_into().expect("4 bytes from [u8; 16]")),
         }
     }
 }
@@ -271,7 +265,11 @@ pub enum MemoryTier {
 impl MemoryTier {
     /// Create from the 4-bit tier field.
     pub fn from_bits(bits: u32) -> Self {
-        debug_assert!(bits <= 0xF, "MemoryTier bits must fit in 4-bit field, got {}", bits);
+        debug_assert!(
+            bits <= 0xF,
+            "MemoryTier bits must fit in 4-bit field, got {}",
+            bits
+        );
         match bits {
             0 => MemoryTier::Stack,
             1 => MemoryTier::Region,
@@ -370,7 +368,6 @@ impl PtrKind {
         }
     }
 }
-
 
 // ============================================================================
 // Pointer Flags
@@ -714,7 +711,11 @@ mod tests {
 
     #[test]
     fn test_blood_ptr_serialization() {
-        let meta = PtrMetadata::new(MemoryTier::Region, PtrFlags::MUT | PtrFlags::LINEAR, 0xABCDEF);
+        let meta = PtrMetadata::new(
+            MemoryTier::Region,
+            PtrFlags::MUT | PtrFlags::LINEAR,
+            0xABCDEF,
+        );
         let ptr = BloodPtr::new(0x1234_5678_9ABC_DEF0, 0xCAFE_BABE, meta);
 
         let bytes = ptr.to_bytes();
@@ -769,7 +770,11 @@ mod tests {
 
     #[test]
     fn test_ptr_metadata_packing() {
-        let meta = PtrMetadata::new(MemoryTier::Region, PtrFlags::MUT | PtrFlags::FROZEN, 0x123456);
+        let meta = PtrMetadata::new(
+            MemoryTier::Region,
+            PtrFlags::MUT | PtrFlags::FROZEN,
+            0x123456,
+        );
         let packed = meta.to_u32();
         let unpacked = PtrMetadata::from_u32(packed);
 
@@ -827,12 +832,18 @@ mod tests {
 
         // Increment should trigger promotion because we'd enter reserved range
         let needs_promotion = slot.increment_generation();
-        assert!(needs_promotion, "should need promotion when entering reserved range");
+        assert!(
+            needs_promotion,
+            "should need promotion when entering reserved range"
+        );
         assert_eq!(slot.generation, PERSISTENT_MARKER);
 
         // Further increments on persistent should be no-ops
         let needs_promotion = slot.increment_generation();
-        assert!(!needs_promotion, "persistent should not need promotion again");
+        assert!(
+            !needs_promotion,
+            "persistent should not need promotion again"
+        );
         assert_eq!(slot.generation, PERSISTENT_MARKER);
     }
 

@@ -4,7 +4,7 @@
 //! The main work is done in CodegenContext; this module provides
 //! type utilities and helpers.
 
-use crate::hir::{Type, TypeKind, PrimitiveTy};
+use crate::hir::{PrimitiveTy, Type, TypeKind};
 use crate::ice;
 
 /// Calculate the size of a type in bytes (for layout purposes).
@@ -15,10 +15,12 @@ pub fn type_size(ty: &Type) -> usize {
     match ty.kind() {
         TypeKind::Primitive(prim) => primitive_size(prim),
         TypeKind::Tuple(types) => types.iter().map(type_size).sum(),
-        TypeKind::Array { element, size } => type_size(element) * (size.as_u64().unwrap_or(0) as usize),
+        TypeKind::Array { element, size } => {
+            type_size(element) * (size.as_u64().unwrap_or(0) as usize)
+        }
         TypeKind::Slice { .. } => 16, // fat pointer (ptr + len)
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8, // 64-bit pointer
-        TypeKind::Fn { .. } => 8, // function pointer
+        TypeKind::Fn { .. } => 8,     // function pointer
         TypeKind::Closure { .. } => 8, // closure (function pointer + captured environment)
         TypeKind::Adt { .. } => 8, // Placeholder - ADT sizes should be computed from field layout
         TypeKind::Range { element, inclusive } => {
@@ -30,8 +32,8 @@ pub fn type_size(ty: &Type) -> usize {
                 elem_size * 2 // start + end
             }
         }
-        TypeKind::Never => 0, // uninhabited type, zero-sized
-        TypeKind::Error => 0, // error recovery, treated as zero-sized
+        TypeKind::Never => 0,            // uninhabited type, zero-sized
+        TypeKind::Error => 0,            // error recovery, treated as zero-sized
         TypeKind::DynTrait { .. } => 16, // fat pointer (data ptr + vtable ptr)
         TypeKind::Infer(var_id) => {
             // Type variable should be resolved before codegen
@@ -85,10 +87,10 @@ fn primitive_size(prim: &PrimitiveTy) -> usize {
             crate::hir::def::FloatTy::F32 => 4,
             crate::hir::def::FloatTy::F64 => 8,
         },
-        PrimitiveTy::Str => 16, // fat pointer (ptr + len)
+        PrimitiveTy::Str => 16,    // fat pointer (ptr + len)
         PrimitiveTy::String => 24, // ptr + len + cap
-        PrimitiveTy::Unit => 0, // zero-sized type
-        PrimitiveTy::Never => 0, // never type is zero-sized
+        PrimitiveTy::Unit => 0,    // zero-sized type
+        PrimitiveTy::Never => 0,   // never type is zero-sized
     }
 }
 
@@ -99,19 +101,16 @@ fn primitive_size(prim: &PrimitiveTy) -> usize {
 pub fn type_alignment(ty: &Type) -> usize {
     match ty.kind() {
         TypeKind::Primitive(prim) => primitive_size(prim).max(1),
-        TypeKind::Tuple(types) => types.iter()
-            .map(type_alignment)
-            .max()
-            .unwrap_or(1),
+        TypeKind::Tuple(types) => types.iter().map(type_alignment).max().unwrap_or(1),
         TypeKind::Array { element, .. } => type_alignment(element),
         TypeKind::Slice { .. } => 8, // fat pointer alignment
         TypeKind::Ref { .. } | TypeKind::Ptr { .. } => 8,
-        TypeKind::Fn { .. } => 8, // function pointer alignment
+        TypeKind::Fn { .. } => 8,      // function pointer alignment
         TypeKind::Closure { .. } => 8, // closure alignment
-        TypeKind::Adt { .. } => 8, // conservative default - should compute from fields
+        TypeKind::Adt { .. } => 8,     // conservative default - should compute from fields
         TypeKind::Range { element, .. } => type_alignment(element), // align to element
-        TypeKind::Never => 1, // zero-sized, minimal alignment
-        TypeKind::Error => 1, // error recovery
+        TypeKind::Never => 1,          // zero-sized, minimal alignment
+        TypeKind::Error => 1,          // error recovery
         TypeKind::DynTrait { .. } => 8, // fat pointer alignment
         TypeKind::Infer(var_id) => {
             ice!("type_alignment called on unresolved type variable"; "var_id" => var_id);
@@ -123,7 +122,8 @@ pub fn type_alignment(ty: &Type) -> usize {
         }
         TypeKind::Record { fields, .. } => {
             // Record alignment is max of field alignments
-            fields.iter()
+            fields
+                .iter()
                 .map(|f| type_alignment(&f.ty))
                 .max()
                 .unwrap_or(1)

@@ -72,18 +72,13 @@ pub mod lowering;
 pub mod row;
 pub mod std_effects;
 
-pub use evidence::{Evidence, EvidenceVector, EvidenceEntry, EvidenceContext, TranslatedOp};
-pub use evidence::{EvidenceCache, HandlerPattern, CacheStats};
-pub use handler::{Handler, HandlerKind, Continuation, ResumeMode};
-pub use handler::{analyze_tail_resumptive, analyze_handler_tail_resumptive, analyze_resume_mode};
+pub use evidence::{CacheStats, EvidenceCache, HandlerPattern};
+pub use evidence::{Evidence, EvidenceContext, EvidenceEntry, EvidenceVector, TranslatedOp};
+pub use handler::{analyze_handler_tail_resumptive, analyze_resume_mode, analyze_tail_resumptive};
+pub use handler::{Continuation, Handler, HandlerKind, ResumeMode};
 pub use infer::{
-    EffectInferencer,
-    DetailedEffectInferencer,
-    InferenceResult,
-    infer_effects,
-    infer_effects_with_handlers,
-    infer_effects_detailed_with_handlers,
-    verify_effects_subset,
+    infer_effects, infer_effects_detailed_with_handlers, infer_effects_with_handlers,
+    verify_effects_subset, DetailedEffectInferencer, EffectInferencer, InferenceResult,
 };
-pub use lowering::{EffectLowering, EffectInfo, OperationInfo, EvidenceRequirement, HandlerInfo};
-pub use row::{EffectRow, RowVar, EffectRef};
+pub use lowering::{EffectInfo, EffectLowering, EvidenceRequirement, HandlerInfo, OperationInfo};
+pub use row::{EffectRef, EffectRow, RowVar};

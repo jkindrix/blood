@@ -88,22 +88,22 @@ impl EffectRow {
         let self_pure = self.is_pure();
         let other_pure = other.is_pure();
         match (self_pure, other_pure) {
-            (true, false) => return Ordering::Less,    // self is more specific
+            (true, false) => return Ordering::Less, // self is more specific
             (false, true) => return Ordering::Greater, // other is more specific
-            (true, true) => return Ordering::Equal,    // both pure
-            (false, false) => {}                        // continue comparison
+            (true, true) => return Ordering::Equal, // both pure
+            (false, false) => {}                    // continue comparison
         }
 
         // Rule 2: Closed rows are more specific than open rows
         match (self.is_open, other.is_open) {
-            (false, true) => return Ordering::Less,    // closed is more specific
+            (false, true) => return Ordering::Less, // closed is more specific
             (true, false) => return Ordering::Greater, // open is less specific
-            _ => {}                                     // continue comparison
+            _ => {}                                 // continue comparison
         }
 
         // Rule 3: Fewer effects = more specific
         match self.effects.len().cmp(&other.effects.len()) {
-            Ordering::Less => return Ordering::Less,    // fewer effects = more specific
+            Ordering::Less => return Ordering::Less, // fewer effects = more specific
             Ordering::Greater => return Ordering::Greater,
             Ordering::Equal => {}
         }

@@ -152,10 +152,7 @@ pub fn structural_hash(source: &str) -> Hash {
     }
 
     // Fallback: normalize whitespace and hash
-    let normalized: String = source
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized: String = source.split_whitespace().collect::<Vec<_>>().join(" ");
     Hash::of_str(&normalized)
 }
 
@@ -178,10 +175,7 @@ fn try_ast_hash(source: &str) -> Option<Hash> {
 
     // Parse succeeded - use whitespace-normalized source for deterministic hash
     // This ensures "fn foo() { 42 }" and "fn  foo()  {  42  }" produce same hash
-    let normalized: String = source
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let normalized: String = source.split_whitespace().collect::<Vec<_>>().join(" ");
     Some(Hash::of_str(&normalized))
 }
 
@@ -265,7 +259,9 @@ fn collect_deps_from_expr(
 
     match &expr.kind {
         ExprKind::Path(path) => {
-            let path_str: Vec<_> = path.segments.iter()
+            let path_str: Vec<_> = path
+                .segments
+                .iter()
                 .filter_map(|s| interner.resolve(s.name.node))
                 .collect();
             if !path_str.is_empty() {
@@ -291,7 +287,11 @@ fn collect_deps_from_expr(
                 collect_deps_from_expr(&arg.value, interner, deps);
             }
         }
-        ExprKind::If { condition, then_branch, else_branch } => {
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             collect_deps_from_expr(condition, interner, deps);
             collect_deps_from_block(then_branch, interner, deps);
             if let Some(e) = else_branch {
@@ -330,19 +330,17 @@ fn collect_deps_from_expr(
                 collect_deps_from_expr(b, interner, deps);
             }
         }
-        ExprKind::Array(arr) => {
-            match arr {
-                bloodc::ast::ArrayExpr::List(elements) => {
-                    for e in elements {
-                        collect_deps_from_expr(e, interner, deps);
-                    }
-                }
-                bloodc::ast::ArrayExpr::Repeat { value, count } => {
-                    collect_deps_from_expr(value, interner, deps);
-                    collect_deps_from_expr(count, interner, deps);
+        ExprKind::Array(arr) => match arr {
+            bloodc::ast::ArrayExpr::List(elements) => {
+                for e in elements {
+                    collect_deps_from_expr(e, interner, deps);
                 }
             }
-        }
+            bloodc::ast::ArrayExpr::Repeat { value, count } => {
+                collect_deps_from_expr(value, interner, deps);
+                collect_deps_from_expr(count, interner, deps);
+            }
+        },
         ExprKind::Tuple(elements) => {
             for e in elements {
                 collect_deps_from_expr(e, interner, deps);
@@ -367,7 +365,9 @@ fn collect_deps_from_expr(
         ExprKind::Loop { body, .. } => {
             collect_deps_from_block(body, interner, deps);
         }
-        ExprKind::While { condition, body, .. } => {
+        ExprKind::While {
+            condition, body, ..
+        } => {
             collect_deps_from_expr(condition, interner, deps);
             collect_deps_from_block(body, interner, deps);
         }
@@ -439,14 +439,35 @@ fn collect_deps_from_stmt(
 fn is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-            | "f32" | "f64"
-            | "bool" | "char" | "str" | "String"
-            | "true" | "false"
-            | "self" | "Self"
-            | "Some" | "None" | "Ok" | "Err"
-            | "Vec" | "Option" | "Result" | "Box"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+            | "String"
+            | "true"
+            | "false"
+            | "self"
+            | "Self"
+            | "Some"
+            | "None"
+            | "Ok"
+            | "Err"
+            | "Vec"
+            | "Option"
+            | "Result"
+            | "Box"
     )
 }
 
@@ -505,11 +526,7 @@ mod tests {
     fn test_deterministic_hash_parts() {
         // Verify Hash::of_parts is deterministic
         fn build_hash() -> Hash {
-            Hash::of_parts(&[
-                b"part1",
-                b"part2",
-                b"part3",
-            ])
+            Hash::of_parts(&[b"part1", b"part2", b"part3"])
         }
 
         let h1 = build_hash();

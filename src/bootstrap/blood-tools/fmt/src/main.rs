@@ -11,7 +11,9 @@ use clap::{Parser, Subcommand};
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use blood_fmt::{check_formatted_with_config, format_diff_with_config, format_source_with_config, Config};
+use blood_fmt::{
+    check_formatted_with_config, format_diff_with_config, format_source_with_config, Config,
+};
 
 #[derive(Parser)]
 #[command(name = "blood-fmt")]
@@ -70,13 +72,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    let filter = if cli.verbose {
-        "debug"
-    } else {
-        "info"
-    };
+    let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)),
+        )
         .with_writer(io::stderr)
         .init();
 

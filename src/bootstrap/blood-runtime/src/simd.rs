@@ -27,7 +27,7 @@
 //! ```
 
 use std::fmt;
-use std::ops::{Add, Sub, Mul, Div, BitAnd, BitOr, BitXor, Neg, Not};
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Sub};
 
 // ============================================================================
 // 128-bit SIMD Types (SSE/NEON/WASM SIMD128)
@@ -90,7 +90,10 @@ impl f32x4 {
     /// The pointer must be aligned to 16 bytes and have space for at least 4 f32 values.
     #[inline]
     pub unsafe fn store_aligned(&self, ptr: *mut f32) {
-        debug_assert!(ptr as usize % 16 == 0, "unaligned pointer for store_aligned");
+        debug_assert!(
+            ptr as usize % 16 == 0,
+            "unaligned pointer for store_aligned"
+        );
         *ptr = self.0[0];
         *ptr.add(1) = self.0[1];
         *ptr.add(2) = self.0[2];
@@ -279,7 +282,11 @@ impl Default for f32x4 {
 
 impl fmt::Debug for f32x4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "f32x4({}, {}, {}, {})", self.0[0], self.0[1], self.0[2], self.0[3])
+        write!(
+            f,
+            "f32x4({}, {}, {}, {})",
+            self.0[0], self.0[1], self.0[2], self.0[3]
+        )
     }
 }
 
@@ -412,7 +419,11 @@ impl Default for f64x4 {
 
 impl fmt::Debug for f64x4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "f64x4({}, {}, {}, {})", self.0[0], self.0[1], self.0[2], self.0[3])
+        write!(
+            f,
+            "f64x4({}, {}, {}, {})",
+            self.0[0], self.0[1], self.0[2], self.0[3]
+        )
     }
 }
 
@@ -470,7 +481,10 @@ impl i32x4 {
     /// Horizontal sum.
     #[inline]
     pub fn sum(&self) -> i32 {
-        self.0[0].wrapping_add(self.0[1]).wrapping_add(self.0[2]).wrapping_add(self.0[3])
+        self.0[0]
+            .wrapping_add(self.0[1])
+            .wrapping_add(self.0[2])
+            .wrapping_add(self.0[3])
     }
 
     /// Lane-wise minimum.
@@ -638,7 +652,11 @@ impl Default for i32x4 {
 
 impl fmt::Debug for i32x4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "i32x4({}, {}, {}, {})", self.0[0], self.0[1], self.0[2], self.0[3])
+        write!(
+            f,
+            "i32x4({}, {}, {}, {})",
+            self.0[0], self.0[1], self.0[2], self.0[3]
+        )
     }
 }
 
@@ -676,8 +694,7 @@ impl i32x8 {
     pub fn load(slice: &[i32]) -> Self {
         assert!(slice.len() >= 8, "slice too short for i32x8::load");
         Self([
-            slice[0], slice[1], slice[2], slice[3],
-            slice[4], slice[5], slice[6], slice[7],
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
         ])
     }
 
@@ -721,9 +738,9 @@ impl Default for i32x8 {
 impl fmt::Debug for i32x8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
-            f, "i32x8({}, {}, {}, {}, {}, {}, {}, {})",
-            self.0[0], self.0[1], self.0[2], self.0[3],
-            self.0[4], self.0[5], self.0[6], self.0[7]
+            f,
+            "i32x8({}, {}, {}, {}, {}, {}, {}, {})",
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6], self.0[7]
         )
     }
 }

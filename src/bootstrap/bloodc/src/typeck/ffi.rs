@@ -32,8 +32,8 @@
 //! - Ranges
 
 use crate::diagnostics::Diagnostic;
+use crate::hir::def::{FloatTy, IntTy, UintTy};
 use crate::hir::ty::{PrimitiveTy, Type, TypeKind};
-use crate::hir::def::{IntTy, UintTy, FloatTy};
 use crate::hir::DefId;
 use crate::span::Span;
 
@@ -122,17 +122,15 @@ impl FfiValidator {
             ),
 
             // Arrays are FFI-safe if element is FFI-safe
-            TypeKind::Array { element, .. } => {
-                match self.validate_type_inner(element, visited) {
-                    FfiSafety::Safe => FfiSafety::Safe,
-                    FfiSafety::Warning(msg) => FfiSafety::Warning(format!(
-                        "array element has FFI warning: {}", msg
-                    )),
-                    FfiSafety::Unsafe(msg) => FfiSafety::Unsafe(format!(
-                        "array element is not FFI-safe: {}", msg
-                    )),
+            TypeKind::Array { element, .. } => match self.validate_type_inner(element, visited) {
+                FfiSafety::Safe => FfiSafety::Safe,
+                FfiSafety::Warning(msg) => {
+                    FfiSafety::Warning(format!("array element has FFI warning: {}", msg))
                 }
-            }
+                FfiSafety::Unsafe(msg) => {
+                    FfiSafety::Unsafe(format!("array element is not FFI-safe: {}", msg))
+                }
+            },
 
             // Slices are not FFI-safe (fat pointer)
             TypeKind::Slice { .. } => FfiSafety::Unsafe(
@@ -155,7 +153,8 @@ impl FfiValidator {
                         // Pointer to non-FFI type is still safe (opaque pointer)
                         // but emit a warning
                         FfiSafety::Warning(
-                            "pointer to non-FFI-safe type; ensure foreign code treats it as opaque".to_string()
+                            "pointer to non-FFI-safe type; ensure foreign code treats it as opaque"
+                                .to_string(),
                         )
                     }
                 }
@@ -166,21 +165,22 @@ impl FfiValidator {
                 for (i, param) in params.iter().enumerate() {
                     if let FfiSafety::Unsafe(msg) = self.validate_type_inner(param, visited) {
                         return FfiSafety::Unsafe(format!(
-                            "parameter {} is not FFI-safe: {}", i + 1, msg
+                            "parameter {} is not FFI-safe: {}",
+                            i + 1,
+                            msg
                         ));
                     }
                 }
                 if let FfiSafety::Unsafe(msg) = self.validate_type_inner(ret, visited) {
-                    return FfiSafety::Unsafe(format!(
-                        "return type is not FFI-safe: {}", msg
-                    ));
+                    return FfiSafety::Unsafe(format!("return type is not FFI-safe: {}", msg));
                 }
                 FfiSafety::Safe
             }
 
             // Closures are not FFI-safe (capture environment)
             TypeKind::Closure { .. } => FfiSafety::Unsafe(
-                "closures are not FFI-safe; use function pointers with explicit context".to_string(),
+                "closures are not FFI-safe; use function pointers with explicit context"
+                    .to_string(),
             ),
 
             // ADT types (struct/enum)
@@ -197,14 +197,16 @@ impl FfiValidator {
                     for arg in args {
                         if let FfiSafety::Unsafe(msg) = self.validate_type_inner(arg, visited) {
                             return FfiSafety::Unsafe(format!(
-                                "type argument is not FFI-safe: {}", msg
+                                "type argument is not FFI-safe: {}",
+                                msg
                             ));
                         }
                     }
                     FfiSafety::Safe
                 } else {
                     FfiSafety::Unsafe(
-                        "type is not declared in bridge block or marked with #[repr(C)]".to_string(),
+                        "type is not declared in bridge block or marked with #[repr(C)]"
+                            .to_string(),
                     )
                 }
             }
@@ -222,9 +224,7 @@ impl FfiValidator {
             TypeKind::Never => FfiSafety::Safe,
 
             // Ranges are not FFI-safe
-            TypeKind::Range { .. } => FfiSafety::Unsafe(
-                "range types are not FFI-safe".to_string(),
-            ),
+            TypeKind::Range { .. } => FfiSafety::Unsafe("range types are not FFI-safe".to_string()),
 
             // Error types - don't add more errors
             TypeKind::Error => FfiSafety::Safe,
@@ -236,7 +236,8 @@ impl FfiValidator {
 
             // Anonymous records are not FFI-safe
             TypeKind::Record { .. } => FfiSafety::Unsafe(
-                "anonymous record types are not FFI-safe; use named structs with #[repr(C)]".to_string(),
+                "anonymous record types are not FFI-safe; use named structs with #[repr(C)]"
+                    .to_string(),
             ),
 
             // Forall types are not FFI-safe (polymorphic)
@@ -303,7 +304,8 @@ impl FfiValidator {
 
             // String is heap-allocated with specific layout
             PrimitiveTy::String => FfiSafety::Unsafe(
-                "String has Rust-specific layout; use *const u8 with a length parameter".to_string(),
+                "String has Rust-specific layout; use *const u8 with a length parameter"
+                    .to_string(),
             ),
 
             // Unit is void
@@ -327,15 +329,17 @@ impl FfiValidator {
             FfiSafety::Safe => {}
             FfiSafety::Warning(msg) => {
                 // E0502: FFI portability error - treat warnings as errors
-                self.diagnostics.push(Diagnostic::error(format!(
-                    "[E0502] FFI portability error in {}: {}", context, msg
-                ), span));
+                self.diagnostics.push(Diagnostic::error(
+                    format!("[E0502] FFI portability error in {}: {}", context, msg),
+                    span,
+                ));
             }
             FfiSafety::Unsafe(msg) => {
                 // E0501: FFI unsafe type error
-                self.diagnostics.push(Diagnostic::error(format!(
-                    "[E0501] type in {} is not FFI-safe: {}", context, msg
-                ), span));
+                self.diagnostics.push(Diagnostic::error(
+                    format!("[E0501] type in {} is not FFI-safe: {}", context, msg),
+                    span,
+                ));
             }
         }
     }

@@ -13,8 +13,8 @@
 
 use std::collections::HashSet;
 
-use super::types::{BasicBlockId, Statement, StatementKind};
 use super::body::MirBody;
+use super::types::{BasicBlockId, Statement, StatementKind};
 use crate::span::Span;
 
 /// Insert safepoints into a MIR body.

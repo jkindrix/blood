@@ -5,12 +5,12 @@
 use std::collections::HashMap;
 
 use crate::hir::{
-    Type, TypeKind, LocalId, Body, Local, FnSig,
-    Expr, ExprKind, FieldExpr, LiteralValue, PrimitiveTy,
+    Body, Expr, ExprKind, FieldExpr, FnSig, LiteralValue, Local, LocalId, PrimitiveTy, Type,
+    TypeKind,
 };
 use crate::span::Span;
 
-use super::{DeriveExpander, DeriveRequest, literal_expr, bool_literal, string_literal};
+use super::{bool_literal, literal_expr, string_literal, DeriveExpander, DeriveRequest};
 
 /// Expand Default derive for a struct.
 pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
@@ -29,7 +29,9 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn default() -> Self (static method, no self parameter)
     let sig = FnSig::new(Vec::new(), self_ty.clone());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let return_local = Local {
@@ -41,12 +43,14 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     };
 
     // Build struct expression: Self { field1: Default::default(), ... }
-    let fields: Vec<FieldExpr> = struct_info.fields.iter().map(|field| {
-        FieldExpr {
+    let fields: Vec<FieldExpr> = struct_info
+        .fields
+        .iter()
+        .map(|field| FieldExpr {
             field_idx: field.index,
             value: default_value_for_type(&field.ty, span),
-        }
-    }).collect();
+        })
+        .collect();
 
     let struct_expr = Expr::new(
         ExprKind::Struct {
@@ -93,7 +97,9 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn default() -> Self
     let sig = FnSig::new(Vec::new(), self_ty.clone());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let return_local = Local {
@@ -105,7 +111,10 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     };
 
     // Find the first unit variant as default, or the first variant with all defaultable fields
-    let default_variant = enum_info.variants.iter().find(|v| v.fields.is_empty())
+    let default_variant = enum_info
+        .variants
+        .iter()
+        .find(|v| v.fields.is_empty())
         .or_else(|| enum_info.variants.first());
 
     let result_expr = match default_variant {
@@ -123,9 +132,11 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
                 )
             } else {
                 // Variant with fields - use defaults for each field
-                let fields: Vec<Expr> = variant.fields.iter().map(|field| {
-                    default_value_for_type(&field.ty, span)
-                }).collect();
+                let fields: Vec<Expr> = variant
+                    .fields
+                    .iter()
+                    .map(|field| default_value_for_type(&field.ty, span))
+                    .collect();
 
                 Expr::new(
                     ExprKind::Variant {
@@ -187,7 +198,8 @@ fn default_value_for_type(ty: &Type, span: Span) -> Expr {
             PrimitiveTy::Never => Expr::error(span), // Defensive: also handle via Primitive path
         },
         TypeKind::Tuple(elems) => {
-            let defaults: Vec<Expr> = elems.iter()
+            let defaults: Vec<Expr> = elems
+                .iter()
                 .map(|t| default_value_for_type(t, span))
                 .collect();
             Expr::new(ExprKind::Tuple(defaults), ty.clone(), span)

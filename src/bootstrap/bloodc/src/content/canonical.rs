@@ -1026,8 +1026,10 @@ mod tests {
 
         // Collections
         assert_eq!(
-            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)]).compute_hash(),
-            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)]).compute_hash()
+            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)])
+                .compute_hash(),
+            CanonicalAST::Tuple(vec![CanonicalAST::IntLit(1), CanonicalAST::IntLit(2)])
+                .compute_hash()
         );
         assert_eq!(
             CanonicalAST::Array(vec![CanonicalAST::IntLit(3)]).compute_hash(),
@@ -1069,13 +1071,11 @@ mod tests {
         fn build_handler(effect: ContentHash) -> CanonicalHandler {
             CanonicalHandler {
                 effect,
-                operations: vec![
-                    CanonicalOpImpl {
-                        op_index: 0,
-                        param_count: 1,
-                        body: Box::new(CanonicalAST::IntLit(42)),
-                    },
-                ],
+                operations: vec![CanonicalOpImpl {
+                    op_index: 0,
+                    param_count: 1,
+                    body: Box::new(CanonicalAST::IntLit(42)),
+                }],
                 return_clause: Some(Box::new(CanonicalAST::LocalVar(DeBruijnIndex(0)))),
             }
         }

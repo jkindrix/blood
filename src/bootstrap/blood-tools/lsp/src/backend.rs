@@ -161,7 +161,10 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Hover request at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Hover request at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -178,7 +181,10 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Go to definition at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Go to definition at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -197,20 +203,28 @@ impl LanguageServer for BloodLanguageServer {
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
 
-        debug!("Find references at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Find references at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        Ok(self.references_provider.references(&doc, position, include_declaration))
+        Ok(self
+            .references_provider
+            .references(&doc, position, include_declaration))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        debug!("Completion request at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Completion request at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -264,7 +278,10 @@ impl LanguageServer for BloodLanguageServer {
 
                 let edit = TextEdit {
                     range: Range {
-                        start: Position { line: 0, character: 0 },
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
                         end: Position {
                             line: last_line as u32,
                             character: last_col as u32,
@@ -313,19 +330,22 @@ impl LanguageServer for BloodLanguageServer {
                     edit: Some(WorkspaceEdit {
                         changes: Some({
                             let mut changes = std::collections::HashMap::new();
-                            changes.insert(uri.clone(), vec![TextEdit {
-                                range: Range {
-                                    start: Position {
-                                        line: range.start.line,
-                                        character: brace_pos as u32,
+                            changes.insert(
+                                uri.clone(),
+                                vec![TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: range.start.line,
+                                            character: brace_pos as u32,
+                                        },
+                                        end: Position {
+                                            line: range.start.line,
+                                            character: brace_pos as u32,
+                                        },
                                     },
-                                    end: Position {
-                                        line: range.start.line,
-                                        character: brace_pos as u32,
-                                    },
-                                },
-                                new_text: "/ pure ".to_string(),
-                            }]);
+                                    new_text: "/ pure ".to_string(),
+                                }],
+                            );
                             changes
                         }),
                         ..Default::default()
@@ -346,19 +366,22 @@ impl LanguageServer for BloodLanguageServer {
                     edit: Some(WorkspaceEdit {
                         changes: Some({
                             let mut changes = std::collections::HashMap::new();
-                            changes.insert(uri.clone(), vec![TextEdit {
-                                range: Range {
-                                    start: Position {
-                                        line: range.start.line,
-                                        character: (eq_pos.saturating_sub(1)) as u32,
+                            changes.insert(
+                                uri.clone(),
+                                vec![TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: range.start.line,
+                                            character: (eq_pos.saturating_sub(1)) as u32,
+                                        },
+                                        end: Position {
+                                            line: range.start.line,
+                                            character: eq_pos as u32,
+                                        },
                                     },
-                                    end: Position {
-                                        line: range.start.line,
-                                        character: eq_pos as u32,
-                                    },
-                                },
-                                new_text: ": Type ".to_string(),
-                            }]);
+                                    new_text: ": Type ".to_string(),
+                                }],
+                            );
                             changes
                         }),
                         ..Default::default()
@@ -396,7 +419,10 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Document highlight at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Document highlight at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -412,27 +438,33 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Go to type definition at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Go to type definition at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
         };
 
-        if let Some(location) = self.type_definition_provider.type_definition(&doc, position) {
+        if let Some(location) = self
+            .type_definition_provider
+            .type_definition(&doc, position)
+        {
             Ok(Some(GotoDefinitionResponse::Scalar(location)))
         } else {
             Ok(None)
         }
     }
 
-    async fn signature_help(
-        &self,
-        params: SignatureHelpParams,
-    ) -> Result<Option<SignatureHelp>> {
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Signature help at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Signature help at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -441,15 +473,15 @@ impl LanguageServer for BloodLanguageServer {
         Ok(self.signature_help_provider.signature_help(&doc, position))
     }
 
-    async fn rename(
-        &self,
-        params: RenameParams,
-    ) -> Result<Option<WorkspaceEdit>> {
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let new_name = &params.new_name;
 
-        debug!("Rename at {} line {} char {} -> {}", uri, position.line, position.character, new_name);
+        debug!(
+            "Rename at {} line {} char {} -> {}",
+            uri, position.line, position.character, new_name
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -465,7 +497,10 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document.uri;
         let position = params.position;
 
-        debug!("Prepare rename at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Prepare rename at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -481,7 +516,10 @@ impl LanguageServer for BloodLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        debug!("Go to implementation at {} line {} char {}", uri, position.line, position.character);
+        debug!(
+            "Go to implementation at {} line {} char {}",
+            uri, position.line, position.character
+        );
 
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);
@@ -503,11 +541,15 @@ impl LanguageServer for BloodLanguageServer {
         debug!("Workspace symbol search: '{}'", query);
 
         // Collect all open documents
-        let docs: Vec<(Url, Document)> = self.documents.iter()
+        let docs: Vec<(Url, Document)> = self
+            .documents
+            .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
 
-        let results = self.workspace_symbol_provider.workspace_symbols(query, &docs);
+        let results = self
+            .workspace_symbol_provider
+            .workspace_symbols(query, &docs);
 
         if results.is_empty() {
             Ok(None)

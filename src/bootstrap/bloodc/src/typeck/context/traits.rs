@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 
 use crate::ast;
-use crate::hir::{self, DefId, Type, TypeKind, TyVarId};
+use crate::hir::{self, DefId, TyVarId, Type, TypeKind};
 use crate::span::Span;
 
-use super::{TypeContext, ImplMethodInfo, ImplAssocTypeInfo};
 use super::super::error::{TypeError, TypeErrorKind};
+use super::{ImplAssocTypeInfo, ImplMethodInfo, TypeContext};
 
 impl<'a> TypeContext<'a> {
     /// Check if a type satisfies all trait bounds required by a type parameter.
@@ -19,7 +19,9 @@ impl<'a> TypeContext<'a> {
     ) -> Result<(), Box<TypeError>> {
         for &trait_def_id in bounds {
             if !self.type_implements_trait(ty, trait_def_id) {
-                let trait_name = self.trait_defs.get(&trait_def_id)
+                let trait_name = self
+                    .trait_defs
+                    .get(&trait_def_id)
                     .map(|info| info.name.clone())
                     .unwrap_or_else(|| format!("{:?}", trait_def_id));
                 return Err(Box::new(TypeError::new(
@@ -121,7 +123,10 @@ impl<'a> TypeContext<'a> {
     /// structure, even when defined in user code. This allows user code to define
     /// `trait Freeze {}` and have the compiler auto-derive it for primitives, etc.
     fn is_auto_derived_trait(&self, name: &str) -> bool {
-        matches!(name, "Copy" | "Clone" | "Sized" | "Send" | "Sync" | "Freeze")
+        matches!(
+            name,
+            "Copy" | "Clone" | "Sized" | "Send" | "Sync" | "Freeze"
+        )
     }
 
     /// Check if a type has a built-in implementation of a well-known trait.
@@ -255,13 +260,12 @@ impl<'a> TypeContext<'a> {
             // For ADTs, would need to check all fields - conservative default
             TypeKind::Adt { .. } => true,
             // Trait objects are Send only if they have + Send bound
-            TypeKind::DynTrait { auto_traits, .. } => {
-                auto_traits.iter().any(|trait_id| {
-                    self.trait_defs.get(trait_id)
-                        .map(|info| info.name == "Send")
-                        .unwrap_or(false)
-                })
-            }
+            TypeKind::DynTrait { auto_traits, .. } => auto_traits.iter().any(|trait_id| {
+                self.trait_defs
+                    .get(trait_id)
+                    .map(|info| info.name == "Send")
+                    .unwrap_or(false)
+            }),
             _ => true,
         }
     }
@@ -280,13 +284,12 @@ impl<'a> TypeContext<'a> {
             TypeKind::Closure { .. } => false,
             TypeKind::Adt { .. } => true,
             // Trait objects are Sync only if they have + Sync bound
-            TypeKind::DynTrait { auto_traits, .. } => {
-                auto_traits.iter().any(|trait_id| {
-                    self.trait_defs.get(trait_id)
-                        .map(|info| info.name == "Sync")
-                        .unwrap_or(false)
-                })
-            }
+            TypeKind::DynTrait { auto_traits, .. } => auto_traits.iter().any(|trait_id| {
+                self.trait_defs
+                    .get(trait_id)
+                    .map(|info| info.name == "Sync")
+                    .unwrap_or(false)
+            }),
             _ => true,
         }
     }
@@ -314,7 +317,11 @@ impl<'a> TypeContext<'a> {
             // Primitives are Freeze
             TypeKind::Primitive(_) => true,
             // Shared references are Freeze if inner is Freeze
-            TypeKind::Ref { mutable: false, inner, .. } => self.type_is_freeze(inner),
+            TypeKind::Ref {
+                mutable: false,
+                inner,
+                ..
+            } => self.type_is_freeze(inner),
             // Mutable references are NOT Freeze (they allow mutation)
             TypeKind::Ref { mutable: true, .. } => false,
             // Raw pointers are Freeze (the pointer value itself is immutable)
@@ -384,10 +391,12 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn check_all_trait_object_safety(&mut self) {
         let trait_ids: Vec<DefId> = self.trait_defs.keys().copied().collect();
         for trait_id in trait_ids {
-            let is_safe = self.check_object_safety(
-                trait_id,
-                Span::new(0, 0, 0, 0), // dummy span — actual errors use the `dyn Trait` usage span
-            ).is_ok();
+            let is_safe = self
+                .check_object_safety(
+                    trait_id,
+                    Span::new(0, 0, 0, 0), // dummy span — actual errors use the `dyn Trait` usage span
+                )
+                .is_ok();
             self.object_safe_traits.insert(trait_id, is_safe);
         }
     }
@@ -397,7 +406,10 @@ impl<'a> TypeContext<'a> {
     /// Returns true if the trait passes all four object safety rules.
     /// Must be called after `check_all_trait_object_safety()`.
     pub(crate) fn is_trait_object_safe(&self, trait_id: DefId) -> bool {
-        self.object_safe_traits.get(&trait_id).copied().unwrap_or(false)
+        self.object_safe_traits
+            .get(&trait_id)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Check coherence: detect overlapping impl blocks.
@@ -411,7 +423,10 @@ impl<'a> TypeContext<'a> {
 
         for (idx, impl_block) in self.impl_blocks.iter().enumerate() {
             if let Some(trait_id) = impl_block.trait_ref {
-                trait_impls.entry(trait_id).or_default().push((idx, impl_block));
+                trait_impls
+                    .entry(trait_id)
+                    .or_default()
+                    .push((idx, impl_block));
             }
         }
 
@@ -425,7 +440,9 @@ impl<'a> TypeContext<'a> {
 
                     if self.impls_could_overlap(&impl_a.self_ty, &impl_b.self_ty) {
                         // Get trait name for error message
-                        let trait_name = self.trait_defs.get(trait_id)
+                        let trait_name = self
+                            .trait_defs
+                            .get(trait_id)
                             .map(|t| t.name.clone())
                             .unwrap_or_else(|| format!("trait#{}", trait_id.index()));
 
@@ -456,30 +473,44 @@ impl<'a> TypeContext<'a> {
             (TypeKind::Primitive(a), TypeKind::Primitive(b)) => a == b,
 
             // Same ADT -> overlap
-            (
-                TypeKind::Adt { def_id: a_id, .. },
-                TypeKind::Adt { def_id: b_id, .. },
-            ) => a_id == b_id,
+            (TypeKind::Adt { def_id: a_id, .. }, TypeKind::Adt { def_id: b_id, .. }) => {
+                a_id == b_id
+            }
 
             // Generic type parameter overlaps with anything (blanket impl)
             (TypeKind::Param(_), _) | (_, TypeKind::Param(_)) => true,
 
             // Reference types: check inner types and mutability
             (
-                TypeKind::Ref { mutable: a_mut, inner: a_inner },
-                TypeKind::Ref { mutable: b_mut, inner: b_inner },
+                TypeKind::Ref {
+                    mutable: a_mut,
+                    inner: a_inner,
+                },
+                TypeKind::Ref {
+                    mutable: b_mut,
+                    inner: b_inner,
+                },
             ) => a_mut == b_mut && self.impls_could_overlap(a_inner, b_inner),
 
             // Tuple types: same length and overlapping elements
             (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
                 a_elems.len() == b_elems.len()
-                    && a_elems.iter().zip(b_elems.iter()).all(|(a, b)| self.impls_could_overlap(a, b))
+                    && a_elems
+                        .iter()
+                        .zip(b_elems.iter())
+                        .all(|(a, b)| self.impls_could_overlap(a, b))
             }
 
             // Array types: same size and overlapping elements
             (
-                TypeKind::Array { element: a_elem, size: a_size },
-                TypeKind::Array { element: b_elem, size: b_size },
+                TypeKind::Array {
+                    element: a_elem,
+                    size: a_size,
+                },
+                TypeKind::Array {
+                    element: b_elem,
+                    size: b_size,
+                },
             ) => a_size == b_size && self.impls_could_overlap(a_elem, b_elem),
 
             // Slice types: overlapping elements
@@ -549,18 +580,18 @@ impl<'a> TypeContext<'a> {
 
             // Rule 3: [No-Self-Return] — Self not returned by value
             if self.return_type_contains_self(&method.sig.output) {
-                return Err(Box::new(TypeError::new(
-                    TypeErrorKind::TraitNotObjectSafe {
-                        trait_name: trait_info.name.clone(),
-                        reason: format!(
-                            "method `{}` returns `Self`",
-                            method.name
-                        ),
-                    },
-                    span,
-                ).with_help(
-                    "the caller cannot allocate a return value of unknown size behind `dyn`"
-                )));
+                return Err(Box::new(
+                    TypeError::new(
+                        TypeErrorKind::TraitNotObjectSafe {
+                            trait_name: trait_info.name.clone(),
+                            reason: format!("method `{}` returns `Self`", method.name),
+                        },
+                        span,
+                    )
+                    .with_help(
+                        "the caller cannot allocate a return value of unknown size behind `dyn`",
+                    ),
+                ));
             }
         }
 
@@ -651,7 +682,9 @@ impl<'a> TypeContext<'a> {
                 continue;
             }
 
-            let provided = impl_assoc_types.iter().any(|t| t.name == trait_assoc_type.name);
+            let provided = impl_assoc_types
+                .iter()
+                .any(|t| t.name == trait_assoc_type.name);
             if !provided {
                 return Err(Box::new(TypeError::new(
                     TypeErrorKind::MissingAssocType {
@@ -713,31 +746,43 @@ impl<'a> TypeContext<'a> {
 
                 // ADT: check def_id matches and recursively check type args
                 (
-                    TypeKind::Adt { def_id: p_id, args: p_args },
-                    TypeKind::Adt { def_id: c_id, args: c_args },
+                    TypeKind::Adt {
+                        def_id: p_id,
+                        args: p_args,
+                    },
+                    TypeKind::Adt {
+                        def_id: c_id,
+                        args: c_args,
+                    },
                 ) => {
                     if p_id != c_id || p_args.len() != c_args.len() {
                         return false;
                     }
-                    p_args.iter().zip(c_args.iter()).all(|(p, c)| {
-                        extract_inner(impl_generics, p, c, subst)
-                    })
+                    p_args
+                        .iter()
+                        .zip(c_args.iter())
+                        .all(|(p, c)| extract_inner(impl_generics, p, c, subst))
                 }
 
                 // Reference types
                 (
-                    TypeKind::Ref { mutable: p_mut, inner: p_inner },
-                    TypeKind::Ref { mutable: c_mut, inner: c_inner },
-                ) => {
-                    p_mut == c_mut && extract_inner(impl_generics, p_inner, c_inner, subst)
-                }
+                    TypeKind::Ref {
+                        mutable: p_mut,
+                        inner: p_inner,
+                    },
+                    TypeKind::Ref {
+                        mutable: c_mut,
+                        inner: c_inner,
+                    },
+                ) => p_mut == c_mut && extract_inner(impl_generics, p_inner, c_inner, subst),
 
                 // Tuple types
                 (TypeKind::Tuple(p_elems), TypeKind::Tuple(c_elems)) => {
                     p_elems.len() == c_elems.len()
-                        && p_elems.iter().zip(c_elems.iter()).all(|(p, c)| {
-                            extract_inner(impl_generics, p, c, subst)
-                        })
+                        && p_elems
+                            .iter()
+                            .zip(c_elems.iter())
+                            .all(|(p, c)| extract_inner(impl_generics, p, c, subst))
                 }
 
                 // Primitives must match exactly
@@ -787,7 +832,9 @@ impl<'a> TypeContext<'a> {
             (TypeKind::Primitive(a), TypeKind::Primitive(b)) => a == b,
 
             // ADTs must have the same def_id (type args are checked separately during unification)
-            (TypeKind::Adt { def_id: a_id, .. }, TypeKind::Adt { def_id: b_id, .. }) => a_id == b_id,
+            (TypeKind::Adt { def_id: a_id, .. }, TypeKind::Adt { def_id: b_id, .. }) => {
+                a_id == b_id
+            }
 
             // References: check inner type compatibility
             (TypeKind::Ref { inner: a_inner, .. }, TypeKind::Ref { inner: b_inner, .. }) => {
@@ -797,18 +844,30 @@ impl<'a> TypeContext<'a> {
             // Tuples: check element compatibility
             (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
                 a_elems.len() == b_elems.len()
-                    && a_elems.iter().zip(b_elems.iter()).all(|(a, b)| {
-                        self.types_compatible_for_overload(a, b)
-                    })
+                    && a_elems
+                        .iter()
+                        .zip(b_elems.iter())
+                        .all(|(a, b)| self.types_compatible_for_overload(a, b))
             }
 
             // Function types
-            (TypeKind::Fn { params: a_params, ret: a_ret, .. },
-             TypeKind::Fn { params: b_params, ret: b_ret, .. }) => {
+            (
+                TypeKind::Fn {
+                    params: a_params,
+                    ret: a_ret,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: b_params,
+                    ret: b_ret,
+                    ..
+                },
+            ) => {
                 a_params.len() == b_params.len()
-                    && a_params.iter().zip(b_params.iter()).all(|(a, b)| {
-                        self.types_compatible_for_overload(a, b)
-                    })
+                    && a_params
+                        .iter()
+                        .zip(b_params.iter())
+                        .all(|(a, b)| self.types_compatible_for_overload(a, b))
                     && self.types_compatible_for_overload(a_ret, b_ret)
             }
 
@@ -832,7 +891,10 @@ impl<'a> TypeContext<'a> {
             // Closures implement Fn (simplified - full implementation would check captures)
             TypeKind::Closure { .. } => true,
             // References to Fn types are Fn
-            TypeKind::Ref { inner, mutable: false } => self.type_is_fn(inner),
+            TypeKind::Ref {
+                inner,
+                mutable: false,
+            } => self.type_is_fn(inner),
             _ => false,
         }
     }
@@ -915,9 +977,7 @@ impl<'a> TypeContext<'a> {
         match ty.kind() {
             TypeKind::Primitive(prim) => matches!(
                 prim,
-                hir::PrimitiveTy::Int(_)
-                    | hir::PrimitiveTy::Uint(_)
-                    | hir::PrimitiveTy::Float(_)
+                hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_) | hir::PrimitiveTy::Float(_)
             ),
             TypeKind::Ref { inner, .. } => self.type_is_numeric(inner),
             _ => false,
@@ -929,10 +989,9 @@ impl<'a> TypeContext<'a> {
     /// Signed numeric types support the Neg (unary minus) operation.
     pub(crate) fn type_is_signed_numeric(&self, ty: &Type) -> bool {
         match ty.kind() {
-            TypeKind::Primitive(prim) => matches!(
-                prim,
-                hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Float(_)
-            ),
+            TypeKind::Primitive(prim) => {
+                matches!(prim, hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Float(_))
+            }
             TypeKind::Ref { inner, .. } => self.type_is_signed_numeric(inner),
             _ => false,
         }
@@ -945,9 +1004,7 @@ impl<'a> TypeContext<'a> {
         match ty.kind() {
             TypeKind::Primitive(prim) => matches!(
                 prim,
-                hir::PrimitiveTy::Bool
-                    | hir::PrimitiveTy::Int(_)
-                    | hir::PrimitiveTy::Uint(_)
+                hir::PrimitiveTy::Bool | hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_)
             ),
             TypeKind::Ref { inner, .. } => self.type_is_bool_or_integer(inner),
             _ => false,
@@ -959,10 +1016,9 @@ impl<'a> TypeContext<'a> {
     /// Integer types support bitwise operations (BitAnd, BitOr, BitXor, Shl, Shr).
     pub(crate) fn type_is_integer(&self, ty: &Type) -> bool {
         match ty.kind() {
-            TypeKind::Primitive(prim) => matches!(
-                prim,
-                hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_)
-            ),
+            TypeKind::Primitive(prim) => {
+                matches!(prim, hir::PrimitiveTy::Int(_) | hir::PrimitiveTy::Uint(_))
+            }
             TypeKind::Ref { inner, .. } => self.type_is_integer(inner),
             _ => false,
         }
@@ -982,17 +1038,19 @@ impl<'a> TypeContext<'a> {
             // Arrays are PartialEq if element is
             TypeKind::Array { element, .. } => self.type_is_partial_eq(element),
             // Option<T> is PartialEq if T is
-            TypeKind::Adt { def_id, args } if Some(*def_id) == self.option_def_id => {
-                args.first().map(|t| self.type_is_partial_eq(t)).unwrap_or(true)
-            }
+            TypeKind::Adt { def_id, args } if Some(*def_id) == self.option_def_id => args
+                .first()
+                .map(|t| self.type_is_partial_eq(t))
+                .unwrap_or(true),
             // Result<T, E> is PartialEq if T and E are
             TypeKind::Adt { def_id, args } if Some(*def_id) == self.result_def_id => {
                 args.iter().all(|t| self.type_is_partial_eq(t))
             }
             // Vec<T> is PartialEq if T is
-            TypeKind::Adt { def_id, args } if Some(*def_id) == self.vec_def_id => {
-                args.first().map(|t| self.type_is_partial_eq(t)).unwrap_or(true)
-            }
+            TypeKind::Adt { def_id, args } if Some(*def_id) == self.vec_def_id => args
+                .first()
+                .map(|t| self.type_is_partial_eq(t))
+                .unwrap_or(true),
             _ => false,
         }
     }
@@ -1060,17 +1118,19 @@ impl<'a> TypeContext<'a> {
             // Arrays implement Debug if element does
             TypeKind::Array { element, .. } => self.type_is_display(element),
             // Option<T> implements Debug/Display if T does
-            TypeKind::Adt { def_id, args } if Some(*def_id) == self.option_def_id => {
-                args.first().map(|t| self.type_is_display(t)).unwrap_or(true)
-            }
+            TypeKind::Adt { def_id, args } if Some(*def_id) == self.option_def_id => args
+                .first()
+                .map(|t| self.type_is_display(t))
+                .unwrap_or(true),
             // Result<T, E> implements Debug if T and E do
             TypeKind::Adt { def_id, args } if Some(*def_id) == self.result_def_id => {
                 args.iter().all(|t| self.type_is_display(t))
             }
             // Vec<T> implements Debug if T does
-            TypeKind::Adt { def_id, args } if Some(*def_id) == self.vec_def_id => {
-                args.first().map(|t| self.type_is_display(t)).unwrap_or(true)
-            }
+            TypeKind::Adt { def_id, args } if Some(*def_id) == self.vec_def_id => args
+                .first()
+                .map(|t| self.type_is_display(t))
+                .unwrap_or(true),
             _ => false,
         }
     }
@@ -1152,7 +1212,10 @@ impl<'a> TypeContext<'a> {
             // All primitives support some conversions
             TypeKind::Primitive(_) => true,
             // &str can convert to String
-            TypeKind::Ref { inner, mutable: false } => {
+            TypeKind::Ref {
+                inner,
+                mutable: false,
+            } => {
                 matches!(inner.kind(), TypeKind::Primitive(hir::PrimitiveTy::Str))
             }
             // Vec<T> supports From<[T; N]> etc.

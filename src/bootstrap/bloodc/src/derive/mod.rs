@@ -19,20 +19,19 @@
 //! 2. Store pending derive requests with the type's DefId
 //! 3. In `into_hir()`, expand all derives by generating synthetic impl blocks
 
-mod debug;
 mod clone;
-mod eq;
+mod debug;
 mod default;
+mod eq;
 mod hash;
 
 use std::collections::HashMap;
 
 use crate::hir::{
-    DefId, Type, TypeKind, BodyId, LocalId, TyVarId,
-    Expr, ExprKind, Body, FnSig, LiteralValue,
+    Body, BodyId, DefId, Expr, ExprKind, FnSig, LiteralValue, LocalId, TyVarId, Type, TypeKind,
 };
 use crate::span::Span;
-use crate::typeck::context::{StructInfo, EnumInfo, ImplBlockInfo, ImplMethodInfo};
+use crate::typeck::context::{EnumInfo, ImplBlockInfo, ImplMethodInfo, StructInfo};
 
 /// The kind of derive macro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -233,11 +232,15 @@ impl<'a> DeriveExpander<'a> {
     fn get_self_type(&self, request: &DeriveRequest) -> Type {
         // Get generics from struct or enum
         let generics = if let Some(struct_info) = self.struct_defs.get(&request.type_def_id) {
-            struct_info.generics.iter()
+            struct_info
+                .generics
+                .iter()
                 .map(|&tv| Type::new(TypeKind::Param(tv)))
                 .collect()
         } else if let Some(enum_info) = self.enum_defs.get(&request.type_def_id) {
-            enum_info.generics.iter()
+            enum_info
+                .generics
+                .iter()
                 .map(|&tv| Type::new(TypeKind::Param(tv)))
                 .collect()
         } else {
@@ -350,7 +353,7 @@ pub(crate) fn local_expr(local_id: LocalId, ty: Type, span: Span) -> Expr {
 pub(crate) fn string_literal(s: &str, span: Span) -> Expr {
     literal_expr(
         LiteralValue::String(s.to_string()),
-        Type::str(),  // String literals are str slices
+        Type::str(), // String literals are str slices
         span,
     )
 }

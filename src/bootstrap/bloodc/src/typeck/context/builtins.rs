@@ -1,10 +1,10 @@
 //! Built-in function registration for the type checker.
 
-use crate::hir::{self, Type};
 use crate::hir::ty::{TyVarId, TypeKind};
+use crate::hir::{self, Type};
 use crate::span::Span;
 
-use super::{TypeContext, EnumInfo, VariantInfo, FieldInfo, StructInfo};
+use super::{EnumInfo, FieldInfo, StructInfo, TypeContext, VariantInfo};
 
 impl<'a> TypeContext<'a> {
     /// Register built-in runtime functions.
@@ -25,18 +25,28 @@ impl<'a> TypeContext<'a> {
         let _usize_ty = Type::usize();
         let f32_ty = Type::f32();
         let f64_ty = Type::f64();
-        let str_ty = Type::str();  // str slice
-        let ref_str_ty = Type::reference(str_ty.clone(), false);  // &str for string literals
-        let _string_ty = Type::string();  // owned String (for functions that return owned strings)
+        let str_ty = Type::str(); // str slice
+        let ref_str_ty = Type::reference(str_ty.clone(), false); // &str for string literals
+        let _string_ty = Type::string(); // owned String (for functions that return owned strings)
         let never_ty = Type::never();
 
         // === I/O Functions ===
 
         // print(&str) -> () - convenience function (maps to runtime print_str)
-        self.register_builtin_fn_aliased("print", "print_str", vec![ref_str_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "print",
+            "print_str",
+            vec![ref_str_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // println(&str) -> () - convenience function (prints string + newline, maps to runtime println_str)
-        self.register_builtin_fn_aliased("println", "println_str", vec![ref_str_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "println",
+            "println_str",
+            vec![ref_str_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // print_int(i32) -> ()
         self.register_builtin_fn("print_int", vec![i32_ty.clone()], unit_ty.clone());
@@ -51,10 +61,20 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("println_str", vec![ref_str_ty.clone()], unit_ty.clone());
 
         // eprint(&str) -> () - print to stderr (maps to runtime eprint_str)
-        self.register_builtin_fn_aliased("eprint", "eprint_str", vec![ref_str_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "eprint",
+            "eprint_str",
+            vec![ref_str_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // eprintln(&str) -> () - print to stderr with newline (maps to runtime eprintln_str)
-        self.register_builtin_fn_aliased("eprintln", "eprintln_str", vec![ref_str_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "eprintln",
+            "eprintln_str",
+            vec![ref_str_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // eprint_str(&str) -> () - print to stderr
         self.register_builtin_fn("eprint_str", vec![ref_str_ty.clone()], unit_ty.clone());
@@ -102,16 +122,32 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("println_f32", vec![f32_ty.clone()], unit_ty.clone());
 
         // print_f64_prec(f64, i32) -> () - print with specified decimal precision
-        self.register_builtin_fn("print_f64_prec", vec![f64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "print_f64_prec",
+            vec![f64_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // println_f64_prec(f64, i32) -> () - print with specified decimal precision and newline
-        self.register_builtin_fn("println_f64_prec", vec![f64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "println_f64_prec",
+            vec![f64_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // print_f32_prec(f32, i32) -> () - print with specified decimal precision
-        self.register_builtin_fn("print_f32_prec", vec![f32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "print_f32_prec",
+            vec![f32_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // println_f32_prec(f32, i32) -> () - print with specified decimal precision and newline
-        self.register_builtin_fn("println_f32_prec", vec![f32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "println_f32_prec",
+            vec![f32_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // === Control Flow / Assertions ===
 
@@ -119,34 +155,79 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("panic", vec![ref_str_ty.clone()], never_ty.clone());
 
         // assert(bool) -> () - maps to blood_assert in runtime
-        self.register_builtin_fn_aliased("assert", "blood_assert", vec![bool_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert",
+            "blood_assert",
+            vec![bool_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_int(i32, i32) -> () - maps to blood_assert_eq_int in runtime
-        self.register_builtin_fn_aliased("assert_eq_int", "blood_assert_eq_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_int",
+            "blood_assert_eq_int",
+            vec![i32_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_bool(bool, bool) -> () - maps to blood_assert_eq_bool in runtime
-        self.register_builtin_fn_aliased("assert_eq_bool", "blood_assert_eq_bool", vec![bool_ty.clone(), bool_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_bool",
+            "blood_assert_eq_bool",
+            vec![bool_ty.clone(), bool_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_i64(i64, i64) -> () - maps to blood_assert_eq_i64 in runtime
-        self.register_builtin_fn_aliased("assert_eq_i64", "blood_assert_eq_i64", vec![i64_ty.clone(), i64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_i64",
+            "blood_assert_eq_i64",
+            vec![i64_ty.clone(), i64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_u32(u32, u32) -> () - maps to blood_assert_eq_u32 in runtime
-        self.register_builtin_fn_aliased("assert_eq_u32", "blood_assert_eq_u32", vec![u32_ty.clone(), u32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_u32",
+            "blood_assert_eq_u32",
+            vec![u32_ty.clone(), u32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_u64(u64, u64) -> () - maps to blood_assert_eq_u64 in runtime
-        self.register_builtin_fn_aliased("assert_eq_u64", "blood_assert_eq_u64", vec![u64_ty.clone(), u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_u64",
+            "blood_assert_eq_u64",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_eq_usize(usize, usize) -> () - maps to blood_assert_eq_usize in runtime
         {
             let usize_ty = Type::usize();
-            self.register_builtin_fn_aliased("assert_eq_usize", "blood_assert_eq_usize", vec![usize_ty.clone(), usize_ty.clone()], unit_ty.clone());
+            self.register_builtin_fn_aliased(
+                "assert_eq_usize",
+                "blood_assert_eq_usize",
+                vec![usize_ty.clone(), usize_ty.clone()],
+                unit_ty.clone(),
+            );
         }
 
         // assert_eq_str(&str, &str) -> () - maps to blood_assert_eq_str in runtime
-        self.register_builtin_fn_aliased("assert_eq_str", "blood_assert_eq_str", vec![ref_str_ty.clone(), ref_str_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_eq_str",
+            "blood_assert_eq_str",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // assert_ne_int(i32, i32) -> () - maps to blood_assert_ne_int in runtime
-        self.register_builtin_fn_aliased("assert_ne_int", "blood_assert_ne_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "assert_ne_int",
+            "blood_assert_ne_int",
+            vec![i32_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // unreachable() -> !
         self.register_builtin_fn("unreachable", vec![], never_ty.clone());
@@ -169,198 +250,296 @@ impl<'a> TypeContext<'a> {
         // These use u64 for pointer addresses (void* on 64-bit systems)
 
         // alloc(size: u64) -> u64 - allocate memory, returns address (0 on failure)
-        self.register_builtin_fn_aliased("alloc", "blood_alloc_simple", vec![u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn_aliased(
+            "alloc",
+            "blood_alloc_simple",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // realloc(ptr: u64, size: u64) -> u64 - reallocate memory, returns new address
-        self.register_builtin_fn_aliased("realloc", "blood_realloc", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn_aliased(
+            "realloc",
+            "blood_realloc",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // free(ptr: u64) -> () - free allocated memory
-        self.register_builtin_fn_aliased("free", "blood_free_simple", vec![u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn_aliased(
+            "free",
+            "blood_free_simple",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // memcpy(dest: u64, src: u64, n: u64) -> u64 - copy n bytes, returns dest
-        self.register_builtin_fn_aliased("memcpy", "blood_memcpy", vec![u64_ty.clone(), u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn_aliased(
+            "memcpy",
+            "blood_memcpy",
+            vec![u64_ty.clone(), u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // === Region Memory Management ===
 
         // region_create(initial_size: u64, max_size: u64) -> u64 - create a region, returns region_id
         self.register_builtin_fn_aliased(
-            "region_create", "blood_region_create",
-            vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone(),
+            "region_create",
+            "blood_region_create",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // region_destroy(region_id: u64) -> () - destroy a region and free all its memory
         self.register_builtin_fn_aliased(
-            "region_destroy", "blood_region_destroy",
-            vec![u64_ty.clone()], unit_ty.clone(),
+            "region_destroy",
+            "blood_region_destroy",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
         );
 
         // region_reset(region_id: u64) -> () - reset a region (reuse virtual mapping, free all allocations)
         self.register_builtin_fn_aliased(
-            "region_reset", "blood_region_reset",
-            vec![u64_ty.clone()], unit_ty.clone(),
+            "region_reset",
+            "blood_region_reset",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
         );
 
         // region_protect(region_id: u64, readonly: i32) -> () - set memory protection on region pages
         self.register_builtin_fn_aliased(
-            "region_protect", "blood_region_protect",
-            vec![u64_ty.clone(), i32_ty.clone()], unit_ty.clone(),
+            "region_protect",
+            "blood_region_protect",
+            vec![u64_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
         );
 
         // region_activate(region_id: u64) -> () - route String/Vec/Box allocations to this region
         self.register_builtin_fn_aliased(
-            "region_activate", "blood_region_activate",
-            vec![u64_ty.clone()], unit_ty.clone(),
+            "region_activate",
+            "blood_region_activate",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
         );
 
         // region_deactivate() -> () - revert to global allocation
         self.register_builtin_fn_aliased(
-            "region_deactivate", "blood_region_deactivate",
-            vec![], unit_ty.clone(),
+            "region_deactivate",
+            "blood_region_deactivate",
+            vec![],
+            unit_ty.clone(),
         );
 
         // region_deactivate_get() -> u64 - pop current region and return its handle
         self.register_builtin_fn_aliased(
-            "region_deactivate_get", "blood_region_deactivate_get",
-            vec![], u64_ty.clone(),
+            "region_deactivate_get",
+            "blood_region_deactivate_get",
+            vec![],
+            u64_ty.clone(),
         );
 
         // region_alloc(region_id: u64, size: u64, align: u64) -> u64 - allocate from a region
         self.register_builtin_fn_aliased(
-            "region_alloc", "blood_region_alloc",
-            vec![u64_ty.clone(), u64_ty.clone(), u64_ty.clone()], u64_ty.clone(),
+            "region_alloc",
+            "blood_region_alloc",
+            vec![u64_ty.clone(), u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // region_exit_scope(region_id: u64) -> i32 - exit a region's lexical scope
         self.register_builtin_fn_aliased(
-            "region_exit_scope", "blood_region_exit_scope",
-            vec![u64_ty.clone()], i32_ty.clone(),
+            "region_exit_scope",
+            "blood_region_exit_scope",
+            vec![u64_ty.clone()],
+            i32_ty.clone(),
         );
 
         // region_used(region_id: u64) -> u64 - get current used bytes in region
         self.register_builtin_fn_aliased(
-            "region_used", "blood_region_used",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "region_used",
+            "blood_region_used",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // region_trim(region_id: u64) -> () - release physical pages above current offset
         self.register_builtin_fn_aliased(
-            "region_trim", "blood_region_trim",
-            vec![u64_ty.clone()], unit_ty.clone(),
+            "region_trim",
+            "blood_region_trim",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
         );
 
         // region_committed(region_id: u64) -> u64 - committed bytes in region
         self.register_builtin_fn_aliased(
-            "region_committed", "blood_region_committed",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "region_committed",
+            "blood_region_committed",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // region_alloc_count(region_id: u64) -> u64 - allocation count
         self.register_builtin_fn_aliased(
-            "region_alloc_count", "blood_region_alloc_count",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "region_alloc_count",
+            "blood_region_alloc_count",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // region_active_id() -> u64 - current active region handle
         self.register_builtin_fn_aliased(
-            "region_active_id", "blood_region_active_id",
-            vec![], u64_ty.clone(),
+            "region_active_id",
+            "blood_region_active_id",
+            vec![],
+            u64_ty.clone(),
         );
 
         // system_alloc_live_bytes() -> u64 - non-region live heap bytes
         self.register_builtin_fn_aliased(
-            "system_alloc_live_bytes", "blood_system_alloc_live_bytes",
-            vec![], u64_ty.clone(),
+            "system_alloc_live_bytes",
+            "blood_system_alloc_live_bytes",
+            vec![],
+            u64_ty.clone(),
         );
 
         // Realloc diagnostic counters
         self.register_builtin_fn_aliased(
-            "realloc_diag_count", "blood_realloc_diag_count",
-            vec![], u64_ty.clone(),
+            "realloc_diag_count",
+            "blood_realloc_diag_count",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "realloc_diag_wasted", "blood_realloc_diag_wasted",
-            vec![], u64_ty.clone(),
+            "realloc_diag_wasted",
+            "blood_realloc_diag_wasted",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "realloc_diag_inplace", "blood_realloc_diag_inplace",
-            vec![], u64_ty.clone(),
+            "realloc_diag_inplace",
+            "blood_realloc_diag_inplace",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "realloc_diag_inplace_bytes", "blood_realloc_diag_inplace_bytes",
-            vec![], u64_ty.clone(),
+            "realloc_diag_inplace_bytes",
+            "blood_realloc_diag_inplace_bytes",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "realloc_diag_offset_delta", "blood_realloc_diag_offset_delta",
-            vec![], u64_ty.clone(),
+            "realloc_diag_offset_delta",
+            "blood_realloc_diag_offset_delta",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "realloc_stats_reset", "blood_realloc_stats_reset",
-            vec![], unit_ty.clone(),
+            "realloc_stats_reset",
+            "blood_realloc_stats_reset",
+            vec![],
+            unit_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "print_alloc_hist", "blood_print_alloc_hist",
-            vec![], unit_ty.clone(),
+            "print_alloc_hist",
+            "blood_print_alloc_hist",
+            vec![],
+            unit_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_hist_reset", "blood_alloc_hist_reset",
-            vec![], unit_ty.clone(),
+            "alloc_hist_reset",
+            "blood_alloc_hist_reset",
+            vec![],
+            unit_ty.clone(),
         );
 
         // Allocation tagging
         self.register_builtin_fn_aliased(
-            "alloc_tag_set", "blood_alloc_tag_set",
-            vec![u64_ty.clone()], unit_ty.clone(),
+            "alloc_tag_set",
+            "blood_alloc_tag_set",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_tag_get", "blood_alloc_tag_get",
-            vec![], u64_ty.clone(),
+            "alloc_tag_get",
+            "blood_alloc_tag_get",
+            vec![],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_tag_reset", "blood_alloc_tag_reset",
-            vec![], unit_ty.clone(),
+            "alloc_tag_reset",
+            "blood_alloc_tag_reset",
+            vec![],
+            unit_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_tag_report", "blood_alloc_tag_report",
-            vec![], unit_ty.clone(),
+            "alloc_tag_report",
+            "blood_alloc_tag_report",
+            vec![],
+            unit_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_tag_count", "blood_alloc_tag_count",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "alloc_tag_count",
+            "blood_alloc_tag_count",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
         self.register_builtin_fn_aliased(
-            "alloc_tag_bytes", "blood_alloc_tag_bytes",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "alloc_tag_bytes",
+            "blood_alloc_tag_bytes",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // ptr_read_i32(ptr: u64) -> i32 - read i32 from memory address
         self.register_builtin_fn("ptr_read_i32", vec![u64_ty.clone()], i32_ty.clone());
 
         // ptr_write_i32(ptr: u64, value: i32) -> () - write i32 to memory address
-        self.register_builtin_fn("ptr_write_i32", vec![u64_ty.clone(), i32_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "ptr_write_i32",
+            vec![u64_ty.clone(), i32_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // ptr_read_i64(ptr: u64) -> i64 - read i64 from memory address
         self.register_builtin_fn("ptr_read_i64", vec![u64_ty.clone()], i64_ty.clone());
 
         // ptr_write_i64(ptr: u64, value: i64) -> () - write i64 to memory address
-        self.register_builtin_fn("ptr_write_i64", vec![u64_ty.clone(), i64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "ptr_write_i64",
+            vec![u64_ty.clone(), i64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // ptr_read_u64(ptr: u64) -> u64 - read u64 from memory address
         self.register_builtin_fn("ptr_read_u64", vec![u64_ty.clone()], u64_ty.clone());
 
         // ptr_write_u64(ptr: u64, value: u64) -> () - write u64 to memory address
-        self.register_builtin_fn("ptr_write_u64", vec![u64_ty.clone(), u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "ptr_write_u64",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // ptr_read_u8(ptr: u64) -> u8 - read u8 from memory address
         self.register_builtin_fn("ptr_read_u8", vec![u64_ty.clone()], u8_ty.clone());
 
         // ptr_write_u8(ptr: u64, value: u8) -> () - write u8 to memory address
-        self.register_builtin_fn("ptr_write_u8", vec![u64_ty.clone(), u8_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "ptr_write_u8",
+            vec![u64_ty.clone(), u8_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // ptr_read_f64(ptr: u64) -> f64 - read f64 from memory address
         self.register_builtin_fn("ptr_read_f64", vec![u64_ty.clone()], f64_ty.clone());
 
         // ptr_write_f64(ptr: u64, value: f64) -> () - write f64 to memory address
-        self.register_builtin_fn("ptr_write_f64", vec![u64_ty.clone(), f64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "ptr_write_f64",
+            vec![u64_ty.clone(), f64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // === String Operations ===
 
@@ -368,10 +547,19 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("str_len", vec![ref_str_ty.clone()], i64_ty.clone());
 
         // str_eq(&str, &str) -> bool - compare two strings for equality
-        self.register_builtin_fn("str_eq", vec![ref_str_ty.clone(), ref_str_ty.clone()], bool_ty.clone());
+        self.register_builtin_fn(
+            "str_eq",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            bool_ty.clone(),
+        );
 
         // str_concat(&str, &str) -> &str - concatenate two strings (returns newly allocated BloodStr)
-        self.register_builtin_fn_aliased("str_concat", "blood_str_concat", vec![ref_str_ty.clone(), ref_str_ty.clone()], ref_str_ty.clone());
+        self.register_builtin_fn_aliased(
+            "str_concat",
+            "blood_str_concat",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            ref_str_ty.clone(),
+        );
 
         // === Input Functions ===
 
@@ -475,25 +663,49 @@ impl<'a> TypeContext<'a> {
 
         // file_open(&str, &str) -> i64 - open a file, returns fd or -1 on error
         // Mode: "r" (read), "w" (write), "a" (append), "rw" (read/write), "rw+" (read/write/create)
-        self.register_builtin_fn("file_open", vec![ref_str_ty.clone(), ref_str_ty.clone()], i64_ty.clone());
+        self.register_builtin_fn(
+            "file_open",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            i64_ty.clone(),
+        );
 
         // file_read(fd: i64, buf: u64, count: u64) -> i64 - read from fd, returns bytes read or -1
-        self.register_builtin_fn("file_read", vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()], i64_ty.clone());
+        self.register_builtin_fn(
+            "file_read",
+            vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()],
+            i64_ty.clone(),
+        );
 
         // file_write(fd: i64, buf: u64, count: u64) -> i64 - write to fd, returns bytes written or -1
-        self.register_builtin_fn("file_write", vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()], i64_ty.clone());
+        self.register_builtin_fn(
+            "file_write",
+            vec![i64_ty.clone(), u64_ty.clone(), u64_ty.clone()],
+            i64_ty.clone(),
+        );
 
         // file_close(fd: i64) -> i32 - close fd, returns 0 on success or -1 on error
         self.register_builtin_fn("file_close", vec![i64_ty.clone()], i32_ty.clone());
 
         // file_read_to_string(&str) -> &str - read entire file as string
-        self.register_builtin_fn("file_read_to_string", vec![ref_str_ty.clone()], ref_str_ty.clone());
+        self.register_builtin_fn(
+            "file_read_to_string",
+            vec![ref_str_ty.clone()],
+            ref_str_ty.clone(),
+        );
 
         // file_write_string(&str, &str) -> bool - write string to file (creates/truncates)
-        self.register_builtin_fn("file_write_string", vec![ref_str_ty.clone(), ref_str_ty.clone()], bool_ty.clone());
+        self.register_builtin_fn(
+            "file_write_string",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            bool_ty.clone(),
+        );
 
         // file_append_string(&str, &str) -> bool - append string to file (creates if needed)
-        self.register_builtin_fn("file_append_string", vec![ref_str_ty.clone(), ref_str_ty.clone()], bool_ty.clone());
+        self.register_builtin_fn(
+            "file_append_string",
+            vec![ref_str_ty.clone(), ref_str_ty.clone()],
+            bool_ty.clone(),
+        );
 
         // file_exists(&str) -> bool - check if file exists
         self.register_builtin_fn("file_exists", vec![ref_str_ty.clone()], bool_ty.clone());
@@ -521,7 +733,11 @@ impl<'a> TypeContext<'a> {
         // === Bit Reinterpretation ===
 
         // blood_float64_to_bits(f64) -> u64 - reinterpret f64 as u64 bits
-        self.register_builtin_fn("blood_float64_to_bits", vec![f64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn(
+            "blood_float64_to_bits",
+            vec![f64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // === Command-Line Argument Functions ===
 
@@ -538,14 +754,18 @@ impl<'a> TypeContext<'a> {
 
         // thread_spawn(fn_ptr: u64, arg: u64) -> u64 - spawn OS thread, returns handle
         self.register_builtin_fn_aliased(
-            "thread_spawn", "blood_thread_spawn",
-            vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone(),
+            "thread_spawn",
+            "blood_thread_spawn",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // thread_join(handle: u64) -> u64 - join thread, returns 0 on success
         self.register_builtin_fn_aliased(
-            "thread_join", "blood_thread_join",
-            vec![u64_ty.clone()], u64_ty.clone(),
+            "thread_join",
+            "blood_thread_join",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
         );
 
         // === Fiber/Concurrency Builtins (INFRA-02 Phase 1) ===
@@ -553,10 +773,18 @@ impl<'a> TypeContext<'a> {
         // The stdlib wraps/unwraps typed values (FiberHandle<T>, FiberId, etc.).
 
         // __builtin_fiber_spawn(fn_ptr: u64) -> u64 - spawn fiber, returns fiber_id
-        self.register_builtin_fn("__builtin_fiber_spawn", vec![u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_spawn",
+            vec![u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // __builtin_fiber_spawn_with(config_ptr: u64, fn_ptr: u64) -> u64 - spawn with config
-        self.register_builtin_fn("__builtin_fiber_spawn_with", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_spawn_with",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // __builtin_fiber_join(fiber_id: u64) -> u64 - join fiber, returns result value
         self.register_builtin_fn("__builtin_fiber_join", vec![u64_ty.clone()], u64_ty.clone());
@@ -568,25 +796,49 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_fn("__builtin_fiber_yield", vec![], unit_ty.clone());
 
         // __builtin_fiber_sleep(nanos: u64) -> () - sleep for nanoseconds
-        self.register_builtin_fn("__builtin_fiber_sleep", vec![u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_sleep",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // __builtin_fiber_park() -> () - park current fiber
         self.register_builtin_fn("__builtin_fiber_park", vec![], unit_ty.clone());
 
         // __builtin_fiber_unpark(fiber_id: u64) -> () - unpark a fiber
-        self.register_builtin_fn("__builtin_fiber_unpark", vec![u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_unpark",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // __builtin_fiber_is_finished(fiber_id: u64) -> bool - check if fiber completed
-        self.register_builtin_fn("__builtin_fiber_is_finished", vec![u64_ty.clone()], bool_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_is_finished",
+            vec![u64_ty.clone()],
+            bool_ty.clone(),
+        );
 
         // __builtin_fiber_cancel(fiber_id: u64) -> () - cancel a fiber
-        self.register_builtin_fn("__builtin_fiber_cancel", vec![u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_cancel",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // __builtin_fiber_race(handles_ptr: u64, count: u64) -> u64 - race multiple fibers
-        self.register_builtin_fn("__builtin_fiber_race", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_fiber_race",
+            vec![u64_ty.clone(), u64_ty.clone()],
+            u64_ty.clone(),
+        );
 
         // __builtin_scheduler_init(num_workers: u64) -> () - initialize scheduler
-        self.register_builtin_fn("__builtin_scheduler_init", vec![u64_ty.clone()], unit_ty.clone());
+        self.register_builtin_fn(
+            "__builtin_scheduler_init",
+            vec![u64_ty.clone()],
+            unit_ty.clone(),
+        );
 
         // __builtin_scheduler_shutdown() -> () - shut down scheduler
         self.register_builtin_fn("__builtin_scheduler_shutdown", vec![], unit_ty.clone());
@@ -613,20 +865,22 @@ impl<'a> TypeContext<'a> {
                 _ => unreachable!("fresh_var must return Infer"),
             };
             let t_ty = Type::param(t_var);
-            let def_id = self.resolver.define_item(
-                "persist".to_string(),
-                hir::DefKind::Fn,
-                Span::dummy(),
-            ).expect("BUG: persist builtin registration failed");
-            self.fn_sigs.insert(def_id, hir::FnSig {
-                inputs: vec![t_ty.clone()],
-                output: t_ty,
-                is_const: false,
-                is_fiber: false,
-                is_unsafe: false,
-                generics: vec![t_var],
-                const_generics: Vec::new(),
-            });
+            let def_id = self
+                .resolver
+                .define_item("persist".to_string(), hir::DefKind::Fn, Span::dummy())
+                .expect("BUG: persist builtin registration failed");
+            self.fn_sigs.insert(
+                def_id,
+                hir::FnSig {
+                    inputs: vec![t_ty.clone()],
+                    output: t_ty,
+                    is_const: false,
+                    is_fiber: false,
+                    is_unsafe: false,
+                    generics: vec![t_var],
+                    const_generics: Vec::new(),
+                },
+            );
             self.builtin_fns.insert(def_id, "persist".to_string());
         }
     }
@@ -638,22 +892,31 @@ impl<'a> TypeContext<'a> {
 
     /// Register a builtin function with a user-facing name that maps to a different runtime name.
     /// E.g., `println(String)` maps to runtime function `println_str`.
-    pub(crate) fn register_builtin_fn_aliased(&mut self, user_name: &str, runtime_name: &str, inputs: Vec<Type>, output: Type) {
+    pub(crate) fn register_builtin_fn_aliased(
+        &mut self,
+        user_name: &str,
+        runtime_name: &str,
+        inputs: Vec<Type>,
+        output: Type,
+    ) {
         let def_id = self.resolver.define_item(
             user_name.to_string(),
             hir::DefKind::Fn,
             Span::dummy(),
         ).expect("BUG: builtin registration failed - this indicates a name collision in builtin definitions");
 
-        self.fn_sigs.insert(def_id, hir::FnSig {
-            inputs,
-            output,
-            is_const: false,
-            is_fiber: false,
-            is_unsafe: false,
-            generics: Vec::new(),
-            const_generics: Vec::new(),
-        });
+        self.fn_sigs.insert(
+            def_id,
+            hir::FnSig {
+                inputs,
+                output,
+                is_const: false,
+                is_fiber: false,
+                is_unsafe: false,
+                generics: Vec::new(),
+                const_generics: Vec::new(),
+            },
+        );
 
         // Track runtime function name for codegen to resolve runtime function calls
         self.builtin_fns.insert(def_id, runtime_name.to_string());
@@ -662,12 +925,12 @@ impl<'a> TypeContext<'a> {
     /// Register built-in types like Option<T> and Result<T, E>.
     pub(crate) fn register_builtin_types(&mut self) {
         // Register Option<T> as a built-in enum
-        let option_def_id = self.resolver.define_item(
-            "Option".to_string(),
-            hir::DefKind::Enum,
-            Span::dummy(),
-        ).expect("BUG: Option builtin registration failed");
-        self.resolver.define_type("Option".to_string(), option_def_id, Span::dummy())
+        let option_def_id = self
+            .resolver
+            .define_item("Option".to_string(), hir::DefKind::Enum, Span::dummy())
+            .expect("BUG: Option builtin registration failed");
+        self.resolver
+            .define_type("Option".to_string(), option_def_id, Span::dummy())
             .expect("BUG: Option type registration failed");
 
         // Option has one type parameter T
@@ -677,51 +940,50 @@ impl<'a> TypeContext<'a> {
 
         // Create None variant (unit variant)
         // Use define_item (not define_namespaced_item) to make None accessible globally
-        let none_def_id = self.resolver.define_item(
-            "None".to_string(),
-            hir::DefKind::Variant,
-            Span::dummy(),
-        ).expect("BUG: None variant registration failed");
+        let none_def_id = self
+            .resolver
+            .define_item("None".to_string(), hir::DefKind::Variant, Span::dummy())
+            .expect("BUG: None variant registration failed");
         if let Some(def_info) = self.resolver.def_info.get_mut(&none_def_id) {
             def_info.parent = Some(option_def_id);
         }
 
         // Create Some(T) variant
         // Use define_item (not define_namespaced_item) to make Some accessible globally
-        let some_def_id = self.resolver.define_item(
-            "Some".to_string(),
-            hir::DefKind::Variant,
-            Span::dummy(),
-        ).expect("BUG: Some variant registration failed");
+        let some_def_id = self
+            .resolver
+            .define_item("Some".to_string(), hir::DefKind::Variant, Span::dummy())
+            .expect("BUG: Some variant registration failed");
         if let Some(def_info) = self.resolver.def_info.get_mut(&some_def_id) {
             def_info.parent = Some(option_def_id);
         }
 
         // Register enum info
-        self.enum_defs.insert(option_def_id, EnumInfo {
-            name: "Option".to_string(),
-            variants: vec![
-                VariantInfo {
-                    name: "None".to_string(),
-                    fields: vec![],
-                    index: 0,
-                    def_id: none_def_id,
-                },
-                VariantInfo {
-                    name: "Some".to_string(),
-                    fields: vec![
-                        FieldInfo {
+        self.enum_defs.insert(
+            option_def_id,
+            EnumInfo {
+                name: "Option".to_string(),
+                variants: vec![
+                    VariantInfo {
+                        name: "None".to_string(),
+                        fields: vec![],
+                        index: 0,
+                        def_id: none_def_id,
+                    },
+                    VariantInfo {
+                        name: "Some".to_string(),
+                        fields: vec![FieldInfo {
                             name: "0".to_string(),
                             ty: t_type.clone(),
                             index: 0,
-                        },
-                    ],
-                    index: 1,
-                    def_id: some_def_id,
-                },
-            ],
-            generics: vec![t_var_id],
-        });
+                        }],
+                        index: 1,
+                        def_id: some_def_id,
+                    },
+                ],
+                generics: vec![t_var_id],
+            },
+        );
 
         self.option_def_id = Some(option_def_id);
 
@@ -737,15 +999,27 @@ impl<'a> TypeContext<'a> {
             self.register_builtin_fn("parse_f64", vec![ref_str_ty.clone()], f64_ty.clone());
 
             // Parse string to i64 with given radix, returns 0 on parse failure
-            self.register_builtin_fn("parse_i64_radix", vec![ref_str_ty.clone(), u32_ty.clone()], i64_ty.clone());
+            self.register_builtin_fn(
+                "parse_i64_radix",
+                vec![ref_str_ty.clone(), u32_ty.clone()],
+                i64_ty.clone(),
+            );
 
             // Parse string to u8 with given radix, returns None on parse failure
             let option_u8 = Type::adt(option_def_id, vec![u8_ty.clone()]);
-            self.register_builtin_fn("parse_u8_radix", vec![ref_str_ty.clone(), u32_ty.clone()], option_u8);
+            self.register_builtin_fn(
+                "parse_u8_radix",
+                vec![ref_str_ty.clone(), u32_ty.clone()],
+                option_u8,
+            );
 
             // Parse string to u32 with given radix, returns None on parse failure
             let option_u32 = Type::adt(option_def_id, vec![u32_ty.clone()]);
-            self.register_builtin_fn("parse_u32_radix", vec![ref_str_ty.clone(), u32_ty.clone()], option_u32);
+            self.register_builtin_fn(
+                "parse_u32_radix",
+                vec![ref_str_ty.clone(), u32_ty.clone()],
+                option_u32,
+            );
 
             // Convert u32 code point to char (returns U+FFFD for invalid code points)
             let char_ty = Type::char();
@@ -753,12 +1027,12 @@ impl<'a> TypeContext<'a> {
         }
 
         // Register Result<T, E> as a built-in enum
-        let result_def_id = self.resolver.define_item(
-            "Result".to_string(),
-            hir::DefKind::Enum,
-            Span::dummy(),
-        ).expect("BUG: Result builtin registration failed");
-        self.resolver.define_type("Result".to_string(), result_def_id, Span::dummy())
+        let result_def_id = self
+            .resolver
+            .define_item("Result".to_string(), hir::DefKind::Enum, Span::dummy())
+            .expect("BUG: Result builtin registration failed");
+        self.resolver
+            .define_type("Result".to_string(), result_def_id, Span::dummy())
             .expect("BUG: Result type registration failed");
 
         // Result has two type parameters: T and E
@@ -772,67 +1046,64 @@ impl<'a> TypeContext<'a> {
 
         // Create Ok(T) variant
         // Use define_item (not define_namespaced_item) to make Ok accessible globally
-        let ok_def_id = self.resolver.define_item(
-            "Ok".to_string(),
-            hir::DefKind::Variant,
-            Span::dummy(),
-        ).expect("BUG: Ok variant registration failed");
+        let ok_def_id = self
+            .resolver
+            .define_item("Ok".to_string(), hir::DefKind::Variant, Span::dummy())
+            .expect("BUG: Ok variant registration failed");
         if let Some(def_info) = self.resolver.def_info.get_mut(&ok_def_id) {
             def_info.parent = Some(result_def_id);
         }
 
         // Create Err(E) variant
         // Use define_item (not define_namespaced_item) to make Err accessible globally
-        let err_def_id = self.resolver.define_item(
-            "Err".to_string(),
-            hir::DefKind::Variant,
-            Span::dummy(),
-        ).expect("BUG: Err variant registration failed");
+        let err_def_id = self
+            .resolver
+            .define_item("Err".to_string(), hir::DefKind::Variant, Span::dummy())
+            .expect("BUG: Err variant registration failed");
         if let Some(def_info) = self.resolver.def_info.get_mut(&err_def_id) {
             def_info.parent = Some(result_def_id);
         }
 
         // Register enum info
-        self.enum_defs.insert(result_def_id, EnumInfo {
-            name: "Result".to_string(),
-            variants: vec![
-                VariantInfo {
-                    name: "Ok".to_string(),
-                    fields: vec![
-                        FieldInfo {
+        self.enum_defs.insert(
+            result_def_id,
+            EnumInfo {
+                name: "Result".to_string(),
+                variants: vec![
+                    VariantInfo {
+                        name: "Ok".to_string(),
+                        fields: vec![FieldInfo {
                             name: "0".to_string(),
                             ty: t_type2.clone(),
                             index: 0,
-                        },
-                    ],
-                    index: 0,
-                    def_id: ok_def_id,
-                },
-                VariantInfo {
-                    name: "Err".to_string(),
-                    fields: vec![
-                        FieldInfo {
+                        }],
+                        index: 0,
+                        def_id: ok_def_id,
+                    },
+                    VariantInfo {
+                        name: "Err".to_string(),
+                        fields: vec![FieldInfo {
                             name: "0".to_string(),
                             ty: e_type.clone(),
                             index: 0,
-                        },
-                    ],
-                    index: 1,
-                    def_id: err_def_id,
-                },
-            ],
-            generics: vec![t_var_id2, e_var_id],
-        });
+                        }],
+                        index: 1,
+                        def_id: err_def_id,
+                    },
+                ],
+                generics: vec![t_var_id2, e_var_id],
+            },
+        );
 
         self.result_def_id = Some(result_def_id);
 
         // Register Vec<T> as a built-in struct (opaque for now)
-        let vec_def_id = self.resolver.define_item(
-            "Vec".to_string(),
-            hir::DefKind::Struct,
-            Span::dummy(),
-        ).expect("BUG: Vec builtin registration failed");
-        self.resolver.define_type("Vec".to_string(), vec_def_id, Span::dummy())
+        let vec_def_id = self
+            .resolver
+            .define_item("Vec".to_string(), hir::DefKind::Struct, Span::dummy())
+            .expect("BUG: Vec builtin registration failed");
+        self.resolver
+            .define_type("Vec".to_string(), vec_def_id, Span::dummy())
             .expect("BUG: Vec type registration failed");
 
         // Vec has one type parameter T
@@ -840,23 +1111,26 @@ impl<'a> TypeContext<'a> {
         self.next_type_param_id += 1;
 
         // Register struct info (opaque struct with no exposed fields)
-        self.struct_defs.insert(vec_def_id, StructInfo {
-            name: "Vec".to_string(),
-            fields: vec![],  // opaque - no exposed fields
-            generics: vec![vec_t_var_id],
-            is_packed: false,
-            align: None,
-        });
+        self.struct_defs.insert(
+            vec_def_id,
+            StructInfo {
+                name: "Vec".to_string(),
+                fields: vec![], // opaque - no exposed fields
+                generics: vec![vec_t_var_id],
+                is_packed: false,
+                align: None,
+            },
+        );
 
         self.vec_def_id = Some(vec_def_id);
 
         // Register Box<T> as a built-in struct (opaque for now)
-        let box_def_id = self.resolver.define_item(
-            "Box".to_string(),
-            hir::DefKind::Struct,
-            Span::dummy(),
-        ).expect("BUG: Box builtin registration failed");
-        self.resolver.define_type("Box".to_string(), box_def_id, Span::dummy())
+        let box_def_id = self
+            .resolver
+            .define_item("Box".to_string(), hir::DefKind::Struct, Span::dummy())
+            .expect("BUG: Box builtin registration failed");
+        self.resolver
+            .define_type("Box".to_string(), box_def_id, Span::dummy())
             .expect("BUG: Box type registration failed");
 
         // Box has one type parameter T
@@ -864,23 +1138,26 @@ impl<'a> TypeContext<'a> {
         self.next_type_param_id += 1;
 
         // Register struct info (opaque struct with no exposed fields)
-        self.struct_defs.insert(box_def_id, StructInfo {
-            name: "Box".to_string(),
-            fields: vec![],  // opaque - no exposed fields
-            generics: vec![box_t_var_id],
-            is_packed: false,
-            align: None,
-        });
+        self.struct_defs.insert(
+            box_def_id,
+            StructInfo {
+                name: "Box".to_string(),
+                fields: vec![], // opaque - no exposed fields
+                generics: vec![box_t_var_id],
+                is_packed: false,
+                align: None,
+            },
+        );
 
         self.box_def_id = Some(box_def_id);
 
         // Register Iter<T> as a built-in struct (iterator over T)
-        let iter_def_id = self.resolver.define_item(
-            "Iter".to_string(),
-            hir::DefKind::Struct,
-            Span::dummy(),
-        ).expect("BUG: Iter builtin registration failed");
-        self.resolver.define_type("Iter".to_string(), iter_def_id, Span::dummy())
+        let iter_def_id = self
+            .resolver
+            .define_item("Iter".to_string(), hir::DefKind::Struct, Span::dummy())
+            .expect("BUG: Iter builtin registration failed");
+        self.resolver
+            .define_type("Iter".to_string(), iter_def_id, Span::dummy())
             .expect("BUG: Iter type registration failed");
 
         // Iter has one type parameter T (the item type)
@@ -888,13 +1165,16 @@ impl<'a> TypeContext<'a> {
         self.next_type_param_id += 1;
 
         // Register struct info (opaque struct with no exposed fields)
-        self.struct_defs.insert(iter_def_id, StructInfo {
-            name: "Iter".to_string(),
-            fields: vec![],  // opaque - no exposed fields
-            generics: vec![iter_t_var_id],
-            is_packed: false,
-            align: None,
-        });
+        self.struct_defs.insert(
+            iter_def_id,
+            StructInfo {
+                name: "Iter".to_string(),
+                fields: vec![], // opaque - no exposed fields
+                generics: vec![iter_t_var_id],
+                is_packed: false,
+                align: None,
+            },
+        );
 
         self.iter_def_id = Some(iter_def_id);
 
@@ -921,8 +1201,8 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_method(
             BuiltinMethodType::Str,
             "to_string",
-            false,  // not static, has self
-            vec![Type::reference(Type::str(), false)],  // &self
+            false,                                     // not static, has self
+            vec![Type::reference(Type::str(), false)], // &self
             string_ty.clone(),
             "str_to_string",
         );
@@ -1159,7 +1439,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Str,
             "contains",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_contains",
         );
@@ -1169,7 +1452,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::StrRef,
             "contains",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_contains",
         );
@@ -1179,7 +1465,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Str,
             "starts_with",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_starts_with",
         );
@@ -1189,7 +1478,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::StrRef,
             "starts_with",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_starts_with",
         );
@@ -1199,7 +1491,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Str,
             "ends_with",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_ends_with",
         );
@@ -1209,7 +1504,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::StrRef,
             "ends_with",
             false,
-            vec![Type::reference(Type::str(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(Type::str(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "str_ends_with",
         );
@@ -1352,7 +1650,7 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_method(
             BuiltinMethodType::String,
             "new",
-            true,  // static method
+            true, // static method
             vec![],
             string_ty.clone(),
             "string_new",
@@ -1373,7 +1671,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "push_str",
             false,
-            vec![Type::reference(string_ty.clone(), true), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), true),
+                Type::reference(Type::str(), false),
+            ],
             Type::unit(),
             "string_push_str",
         );
@@ -1429,7 +1730,7 @@ impl<'a> TypeContext<'a> {
             "as_bytes",
             false,
             vec![Type::reference(string_ty.clone(), false)],
-            byte_slice_ty,  // reuse from str method above
+            byte_slice_ty, // reuse from str method above
             "string_as_bytes",
         );
 
@@ -1438,7 +1739,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "contains",
             false,
-            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "string_contains",
         );
@@ -1448,7 +1752,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "starts_with",
             false,
-            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "string_starts_with",
         );
@@ -1458,7 +1765,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "ends_with",
             false,
-            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), false),
+                Type::reference(Type::str(), false),
+            ],
             bool_ty.clone(),
             "string_ends_with",
         );
@@ -1472,7 +1782,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "find",
             false,
-            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), false),
+                Type::reference(Type::str(), false),
+            ],
             option_usize.clone(),
             "string_find",
         );
@@ -1482,7 +1795,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::String,
             "rfind",
             false,
-            vec![Type::reference(string_ty.clone(), false), Type::reference(Type::str(), false)],
+            vec![
+                Type::reference(string_ty.clone(), false),
+                Type::reference(Type::str(), false),
+            ],
             option_usize,
             "string_rfind",
         );
@@ -1669,7 +1985,8 @@ impl<'a> TypeContext<'a> {
         );
 
         // String.parse_bool(&self) -> Result<bool, String>
-        let parse_bool_result = Type::adt(result_def_id_early, vec![Type::bool(), string_ty.clone()]);
+        let parse_bool_result =
+            Type::adt(result_def_id_early, vec![Type::bool(), string_ty.clone()]);
         self.register_builtin_method(
             BuiltinMethodType::String,
             "parse_bool",
@@ -1685,14 +2002,16 @@ impl<'a> TypeContext<'a> {
         // We register a placeholder here for method discovery.
 
         // Get the Option and Vec DefIds
-        let option_def_id = self.option_def_id
+        let option_def_id = self
+            .option_def_id
             .expect("BUG: option_def_id not set before register_builtin_methods");
-        let vec_def_id = self.vec_def_id
+        let vec_def_id = self
+            .vec_def_id
             .expect("BUG: vec_def_id not set before register_builtin_methods");
 
         // Option<T>.unwrap(self) -> T
         // The actual return type is determined by the type argument
-        let t_var_id = TyVarId(9000);  // synthetic placeholder
+        let t_var_id = TyVarId(9000); // synthetic placeholder
         let t_ty = Type::new(TypeKind::Param(t_var_id));
         let option_t = Type::adt(option_def_id, vec![t_ty.clone()]);
         self.register_builtin_method(
@@ -1757,11 +2076,11 @@ impl<'a> TypeContext<'a> {
 
         // Option<T>.ok_or(self, err: E) -> Result<T, E>
         // Note: E is a fresh type parameter
-        let e_var_id = TyVarId(9002);  // synthetic placeholder for E
+        let e_var_id = TyVarId(9002); // synthetic placeholder for E
         let e_ty_opt = Type::new(TypeKind::Param(e_var_id));
         let result_te_opt = Type::adt(
             self.result_def_id.expect("BUG: result_def_id not set"),
-            vec![t_ty.clone(), e_ty_opt.clone()]
+            vec![t_ty.clone(), e_ty_opt.clone()],
         );
         self.register_builtin_method(
             BuiltinMethodType::Option,
@@ -1774,7 +2093,7 @@ impl<'a> TypeContext<'a> {
 
         // Option<T>.and(self, other: Option<U>) -> Option<U>
         // Note: U is a fresh type parameter that must be inferred from the argument
-        let u_var_id = TyVarId(9003);  // synthetic placeholder for U
+        let u_var_id = TyVarId(9003); // synthetic placeholder for U
         let u_ty = Type::new(TypeKind::Param(u_var_id));
         let option_u = Type::adt(option_def_id, vec![u_ty.clone()]);
         self.register_builtin_method_with_generics(
@@ -1784,7 +2103,7 @@ impl<'a> TypeContext<'a> {
             vec![option_t.clone(), option_u.clone()],
             option_u.clone(),
             "option_and",
-            vec![u_var_id],  // U is a method-level type parameter
+            vec![u_var_id], // U is a method-level type parameter
         );
 
         // Option<T>.or(self, other: Option<T>) -> Option<T>
@@ -1879,7 +2198,8 @@ impl<'a> TypeContext<'a> {
 
         // Option<T>.filter(self, predicate: fn(&T) -> bool) -> Option<T>
         // Returns None if Option is None, otherwise calls predicate with the wrapped value
-        let fn_ref_t_to_bool = Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
+        let fn_ref_t_to_bool =
+            Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
         self.register_builtin_method(
             BuiltinMethodType::Option,
             "filter",
@@ -1910,7 +2230,11 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Option,
             "map_or_else",
             false,
-            vec![option_t.clone(), fn_void_to_u.clone(), fn_t_to_u_map_or_else],
+            vec![
+                option_t.clone(),
+                fn_void_to_u.clone(),
+                fn_t_to_u_map_or_else,
+            ],
             u_ty.clone(),
             "option_map_or_else",
             vec![u_var_id],
@@ -2094,7 +2418,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Vec,
             "contains",
             false,
-            vec![Type::reference(vec_t.clone(), false), Type::reference(t_ty.clone(), false)],
+            vec![
+                Type::reference(vec_t.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
             bool_ty.clone(),
             "vec_contains",
         );
@@ -2114,7 +2441,11 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Vec,
             "insert",
             false,
-            vec![Type::reference(vec_t.clone(), true), usize_ty.clone(), t_ty.clone()],
+            vec![
+                Type::reference(vec_t.clone(), true),
+                usize_ty.clone(),
+                t_ty.clone(),
+            ],
             Type::unit(),
             "vec_insert",
         );
@@ -2228,7 +2559,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Vec,
             "append",
             false,
-            vec![Type::reference(vec_t.clone(), true), Type::reference(vec_t.clone(), true)],
+            vec![
+                Type::reference(vec_t.clone(), true),
+                Type::reference(vec_t.clone(), true),
+            ],
             Type::unit(),
             "vec_append",
         );
@@ -2238,7 +2572,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Vec,
             "extend_from_slice",
             false,
-            vec![Type::reference(vec_t.clone(), true), Type::reference(Type::slice(t_ty.clone()), false)],
+            vec![
+                Type::reference(vec_t.clone(), true),
+                Type::reference(Type::slice(t_ty.clone()), false),
+            ],
             Type::unit(),
             "vec_extend_from_slice",
         );
@@ -2255,7 +2592,8 @@ impl<'a> TypeContext<'a> {
 
         // Vec<T>.retain(&mut self, f: F) where F: FnMut(&T) -> bool
         // Retains only elements for which the predicate returns true
-        let retain_pred_ty = Type::function(vec![Type::reference(t_ty.clone(), false)], Type::bool());
+        let retain_pred_ty =
+            Type::function(vec![Type::reference(t_ty.clone(), false)], Type::bool());
         self.register_builtin_method(
             BuiltinMethodType::Vec,
             "retain",
@@ -2280,8 +2618,11 @@ impl<'a> TypeContext<'a> {
         // Sorts using a custom comparator
         // Note: Ordering is represented as i32 (-1, 0, 1) at runtime
         let sort_cmp_ty = Type::function(
-            vec![Type::reference(t_ty.clone(), false), Type::reference(t_ty.clone(), false)],
-            Type::i32(),  // Ordering encoded as i32
+            vec![
+                Type::reference(t_ty.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
+            Type::i32(), // Ordering encoded as i32
         );
         self.register_builtin_method(
             BuiltinMethodType::Vec,
@@ -2295,12 +2636,16 @@ impl<'a> TypeContext<'a> {
         // Vec<T>.binary_search(&self, x: &T) -> Result<usize, usize> where T: Ord
         // Binary search for an element, returns Ok(index) if found or Err(insert_position)
         let result_def_id = self.result_def_id.expect("result_def_id must be set");
-        let binary_search_result = Type::adt(result_def_id, vec![usize_ty.clone(), usize_ty.clone()]);
+        let binary_search_result =
+            Type::adt(result_def_id, vec![usize_ty.clone(), usize_ty.clone()]);
         self.register_builtin_method(
             BuiltinMethodType::Vec,
             "binary_search",
             false,
-            vec![Type::reference(vec_t.clone(), false), Type::reference(t_ty.clone(), false)],
+            vec![
+                Type::reference(vec_t.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
             binary_search_result,
             "vec_binary_search",
         );
@@ -2447,7 +2792,8 @@ impl<'a> TypeContext<'a> {
 
         // Iter<T>.find<F>(&mut self, f: F) -> Option<T> where F: FnMut(&T) -> bool
         // Finds the first element matching the predicate
-        let find_pred_ty = Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
+        let find_pred_ty =
+            Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
         self.register_builtin_method(
             BuiltinMethodType::Iterator,
             "find",
@@ -2583,7 +2929,7 @@ impl<'a> TypeContext<'a> {
 
         // === Closure-based Iterator methods ===
         // Type variable U for map operations
-        let iter_u_var_id = TyVarId(9010);  // synthetic placeholder for U in Iterator context
+        let iter_u_var_id = TyVarId(9010); // synthetic placeholder for U in Iterator context
         let iter_u_ty = Type::new(TypeKind::Param(iter_u_var_id));
         let iter_u = Type::adt(iter_def_id, vec![iter_u_ty.clone()]);
 
@@ -2614,7 +2960,8 @@ impl<'a> TypeContext<'a> {
 
         // Iter<T>.filter<F>(self, predicate: F) -> Iter<T> where F: FnMut(&T) -> bool
         // Filters elements based on a predicate
-        let filter_fn_ty = Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
+        let filter_fn_ty =
+            Type::function(vec![Type::reference(t_ty.clone(), false)], bool_ty.clone());
         self.register_builtin_method(
             BuiltinMethodType::Iterator,
             "filter",
@@ -2680,7 +3027,8 @@ impl<'a> TypeContext<'a> {
 
         // Iter<T>.inspect<F>(self, f: F) -> Iter<T> where F: FnMut(&T)
         // Calls f on each element for side effects, returns original iterator
-        let inspect_fn_ty = Type::function(vec![Type::reference(t_ty.clone(), false)], Type::unit());
+        let inspect_fn_ty =
+            Type::function(vec![Type::reference(t_ty.clone(), false)], Type::unit());
         self.register_builtin_method(
             BuiltinMethodType::Iterator,
             "inspect",
@@ -2806,7 +3154,10 @@ impl<'a> TypeContext<'a> {
         // Iter<T>.max_by<F>(self, compare: F) -> Option<T> where F: FnMut(&T, &T) -> i32
         // Returns max element using a comparison function (i32 represents Ordering)
         let cmp_fn_ty = Type::function(
-            vec![Type::reference(t_ty.clone(), false), Type::reference(t_ty.clone(), false)],
+            vec![
+                Type::reference(t_ty.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
             Type::i32(),
         );
         self.register_builtin_method(
@@ -2831,7 +3182,10 @@ impl<'a> TypeContext<'a> {
 
         // Iter<T>.max_by_key<B, F>(self, f: F) -> Option<T> where F: FnMut(&T) -> B, B: Ord
         // Returns max element by key computed with f
-        let key_fn_ty = Type::function(vec![Type::reference(t_ty.clone(), false)], iter_u_ty.clone());
+        let key_fn_ty = Type::function(
+            vec![Type::reference(t_ty.clone(), false)],
+            iter_u_ty.clone(),
+        );
         self.register_builtin_method_with_generics(
             BuiltinMethodType::Iterator,
             "max_by_key",
@@ -2864,8 +3218,8 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Box,
             "new",
             true,
-            vec![t_ty.clone()],  // Takes value: T
-            box_t.clone(),       // Returns Box<T>
+            vec![t_ty.clone()], // Takes value: T
+            box_t.clone(),      // Returns Box<T>
             "box_new",
         );
 
@@ -2876,8 +3230,8 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Box,
             "as_ref",
             false,
-            vec![box_t.clone()],  // Takes Box<T> by value (which is just a pointer)
-            Type::reference(t_ty.clone(), false),         // Returns &T
+            vec![box_t.clone()], // Takes Box<T> by value (which is just a pointer)
+            Type::reference(t_ty.clone(), false), // Returns &T
             "box_as_ref",
         );
 
@@ -2886,8 +3240,8 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Box,
             "as_mut",
             false,
-            vec![box_t.clone()],  // Takes Box<T> by value
-            Type::reference(t_ty.clone(), true),         // Returns &mut T
+            vec![box_t.clone()],                 // Takes Box<T> by value
+            Type::reference(t_ty.clone(), true), // Returns &mut T
             "box_as_mut",
         );
 
@@ -2897,20 +3251,23 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Box,
             "into_inner",
             false,
-            vec![box_t.clone()],  // Takes Box<T> by value (consumes it)
-            t_ty.clone(),         // Returns T
+            vec![box_t.clone()], // Takes Box<T> by value (consumes it)
+            t_ty.clone(),        // Returns T
             "box_into_inner",
         );
 
         // Box<T>.into_raw(self) -> *mut T
         // Consumes the box and returns a raw pointer
-        let raw_ptr_t = Type::new(TypeKind::Ptr { inner: t_ty.clone(), mutable: true });
+        let raw_ptr_t = Type::new(TypeKind::Ptr {
+            inner: t_ty.clone(),
+            mutable: true,
+        });
         self.register_builtin_method(
             BuiltinMethodType::Box,
             "into_raw",
             false,
-            vec![box_t.clone()],  // Takes Box<T> by value (consumes it)
-            raw_ptr_t.clone(),    // Returns *mut T
+            vec![box_t.clone()], // Takes Box<T> by value (consumes it)
+            raw_ptr_t.clone(),   // Returns *mut T
             "box_into_raw",
         );
 
@@ -2919,9 +3276,9 @@ impl<'a> TypeContext<'a> {
         self.register_builtin_method(
             BuiltinMethodType::Box,
             "from_raw",
-            true,                 // Static method
-            vec![raw_ptr_t],      // Takes *mut T
-            box_t.clone(),        // Returns Box<T>
+            true,            // Static method
+            vec![raw_ptr_t], // Takes *mut T
+            box_t.clone(),   // Returns Box<T>
             "box_from_raw",
         );
 
@@ -2931,8 +3288,8 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Box,
             "leak",
             false,
-            vec![box_t.clone()],                        // Takes Box<T> by value
-            Type::reference(t_ty.clone(), true),        // Returns &mut T (static lifetime implied)
+            vec![box_t.clone()],                 // Takes Box<T> by value
+            Type::reference(t_ty.clone(), true), // Returns &mut T (static lifetime implied)
             "box_leak",
         );
 
@@ -2998,7 +3355,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Slice,
             "contains",
             false,
-            vec![Type::reference(slice_t.clone(), false), Type::reference(t_ty.clone(), false)],
+            vec![
+                Type::reference(slice_t.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
             bool_ty.clone(),
             "slice_contains",
         );
@@ -3022,7 +3382,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Slice,
             "starts_with",
             false,
-            vec![Type::reference(slice_t.clone(), false), Type::reference(slice_t.clone(), false)],
+            vec![
+                Type::reference(slice_t.clone(), false),
+                Type::reference(slice_t.clone(), false),
+            ],
             bool_ty.clone(),
             "slice_starts_with",
         );
@@ -3032,7 +3395,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Slice,
             "ends_with",
             false,
-            vec![Type::reference(slice_t.clone(), false), Type::reference(slice_t.clone(), false)],
+            vec![
+                Type::reference(slice_t.clone(), false),
+                Type::reference(slice_t.clone(), false),
+            ],
             bool_ty.clone(),
             "slice_ends_with",
         );
@@ -3084,8 +3450,11 @@ impl<'a> TypeContext<'a> {
 
         // [T].sort_by(&mut self, compare: F) where F: FnMut(&T, &T) -> Ordering
         let slice_sort_cmp_ty = Type::function(
-            vec![Type::reference(t_ty.clone(), false), Type::reference(t_ty.clone(), false)],
-            Type::i32(),  // Ordering encoded as i32
+            vec![
+                Type::reference(t_ty.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
+            Type::i32(), // Ordering encoded as i32
         );
         self.register_builtin_method(
             BuiltinMethodType::Slice,
@@ -3099,13 +3468,16 @@ impl<'a> TypeContext<'a> {
         // [T].binary_search(&self, x: &T) -> Result<usize, usize> where T: Ord
         let slice_binary_search_result = Type::adt(
             self.result_def_id.expect("result_def_id must be set"),
-            vec![usize_ty.clone(), usize_ty.clone()]
+            vec![usize_ty.clone(), usize_ty.clone()],
         );
         self.register_builtin_method(
             BuiltinMethodType::Slice,
             "binary_search",
             false,
-            vec![Type::reference(slice_t.clone(), false), Type::reference(t_ty.clone(), false)],
+            vec![
+                Type::reference(slice_t.clone(), false),
+                Type::reference(t_ty.clone(), false),
+            ],
             slice_binary_search_result,
             "slice_binary_search",
         );
@@ -3116,7 +3488,10 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Slice,
             "copy_from_slice",
             false,
-            vec![Type::reference(slice_t.clone(), true), Type::reference(slice_t.clone(), false)],
+            vec![
+                Type::reference(slice_t.clone(), true),
+                Type::reference(slice_t.clone(), false),
+            ],
             Type::unit(),
             "slice_copy_from_slice",
         );
@@ -3127,7 +3502,11 @@ impl<'a> TypeContext<'a> {
             BuiltinMethodType::Slice,
             "swap",
             false,
-            vec![Type::reference(slice_t.clone(), true), usize_ty.clone(), usize_ty.clone()],
+            vec![
+                Type::reference(slice_t.clone(), true),
+                usize_ty.clone(),
+                usize_ty.clone(),
+            ],
             Type::unit(),
             "slice_swap",
         );
@@ -3135,7 +3514,10 @@ impl<'a> TypeContext<'a> {
         // [T].iter(&self) -> Iter<&T>
         // Returns an iterator over references to the slice's elements
         let iter_def_id_slice = self.iter_def_id.expect("iter_def_id must be set");
-        let iter_ref_t = Type::adt(iter_def_id_slice, vec![Type::reference(t_ty.clone(), false)]);
+        let iter_ref_t = Type::adt(
+            iter_def_id_slice,
+            vec![Type::reference(t_ty.clone(), false)],
+        );
         self.register_builtin_method(
             BuiltinMethodType::Slice,
             "iter",
@@ -3147,7 +3529,8 @@ impl<'a> TypeContext<'a> {
 
         // [T].iter_mut(&mut self) -> Iter<&mut T>
         // Returns a mutable iterator over the slice's elements
-        let iter_mut_ref_t = Type::adt(iter_def_id_slice, vec![Type::reference(t_ty.clone(), true)]);
+        let iter_mut_ref_t =
+            Type::adt(iter_def_id_slice, vec![Type::reference(t_ty.clone(), true)]);
         self.register_builtin_method(
             BuiltinMethodType::Slice,
             "iter_mut",
@@ -3159,11 +3542,12 @@ impl<'a> TypeContext<'a> {
 
         // === Result<T, E> methods ===
 
-        let result_def_id = self.result_def_id
+        let result_def_id = self
+            .result_def_id
             .expect("BUG: result_def_id not set before register_builtin_methods");
 
         // Use fresh type variable for the error type E
-        let e_var_id = TyVarId(9001);  // synthetic placeholder
+        let e_var_id = TyVarId(9001); // synthetic placeholder
         let e_ty = Type::new(TypeKind::Param(e_var_id));
 
         // Result<T, E>
@@ -3273,7 +3657,7 @@ impl<'a> TypeContext<'a> {
 
         // Result<T, E>.and(self, other: Result<U, E>) -> Result<U, E>
         // Note: U is a fresh type parameter that must be inferred from the argument
-        let u_var_id_res = TyVarId(9004);  // synthetic placeholder for U
+        let u_var_id_res = TyVarId(9004); // synthetic placeholder for U
         let u_ty_res = Type::new(TypeKind::Param(u_var_id_res));
         let result_ue = Type::adt(result_def_id, vec![u_ty_res.clone(), e_ty.clone()]);
         self.register_builtin_method_with_generics(
@@ -3283,12 +3667,12 @@ impl<'a> TypeContext<'a> {
             vec![result_te.clone(), result_ue.clone()],
             result_ue.clone(),
             "result_and",
-            vec![u_var_id_res],  // U is a method-level type parameter
+            vec![u_var_id_res], // U is a method-level type parameter
         );
 
         // Result<T, E>.or(self, other: Result<T, F>) -> Result<T, F>
         // Note: F is a fresh type parameter that must be inferred from the argument
-        let f_var_id = TyVarId(9005);  // synthetic placeholder for F
+        let f_var_id = TyVarId(9005); // synthetic placeholder for F
         let f_ty = Type::new(TypeKind::Param(f_var_id));
         let result_tf = Type::adt(result_def_id, vec![t_ty.clone(), f_ty.clone()]);
         self.register_builtin_method_with_generics(
@@ -3298,13 +3682,16 @@ impl<'a> TypeContext<'a> {
             vec![result_te.clone(), result_tf.clone()],
             result_tf.clone(),
             "result_or",
-            vec![f_var_id],  // F is a method-level type parameter
+            vec![f_var_id], // F is a method-level type parameter
         );
 
         // Result<T, E>.as_ref(&self) -> Result<&T, &E>
         let result_ref_t_ref_e = Type::adt(
             result_def_id,
-            vec![Type::reference(t_ty.clone(), false), Type::reference(e_ty.clone(), false)]
+            vec![
+                Type::reference(t_ty.clone(), false),
+                Type::reference(e_ty.clone(), false),
+            ],
         );
         self.register_builtin_method(
             BuiltinMethodType::Result,
@@ -3318,7 +3705,10 @@ impl<'a> TypeContext<'a> {
         // Result<T, E>.as_mut(&mut self) -> Result<&mut T, &mut E>
         let result_ref_mut_t_ref_mut_e = Type::adt(
             result_def_id,
-            vec![Type::reference(t_ty.clone(), true), Type::reference(e_ty.clone(), true)]
+            vec![
+                Type::reference(t_ty.clone(), true),
+                Type::reference(e_ty.clone(), true),
+            ],
         );
         self.register_builtin_method(
             BuiltinMethodType::Result,
@@ -3332,7 +3722,7 @@ impl<'a> TypeContext<'a> {
         // === Result closure-accepting methods ===
 
         // Type variable U for map operations
-        let u_var_id_res = TyVarId(9006);  // synthetic placeholder for U in Result context
+        let u_var_id_res = TyVarId(9006); // synthetic placeholder for U in Result context
         let u_ty_res = Type::new(TypeKind::Param(u_var_id_res));
         let result_ue = Type::adt(result_def_id, vec![u_ty_res.clone(), e_ty.clone()]);
 
@@ -3350,7 +3740,7 @@ impl<'a> TypeContext<'a> {
         );
 
         // Type variable F for map_err operations
-        let f_var_id = TyVarId(9007);  // synthetic placeholder for F
+        let f_var_id = TyVarId(9007); // synthetic placeholder for F
         let f_ty = Type::new(TypeKind::Param(f_var_id));
         let result_tf = Type::adt(result_def_id, vec![t_ty.clone(), f_ty.clone()]);
 
@@ -3452,7 +3842,8 @@ impl<'a> TypeContext<'a> {
         generics: Vec<TyVarId>,
     ) {
         // Create a DefId for this method
-        let method_name = format!("__builtin_{}_{}",
+        let method_name = format!(
+            "__builtin_{}_{}",
             match &type_match {
                 super::BuiltinMethodType::Str => "str",
                 super::BuiltinMethodType::StrRef => "str_ref",
@@ -3468,22 +3859,24 @@ impl<'a> TypeContext<'a> {
             name
         );
 
-        let def_id = self.resolver.define_item(
-            method_name,
-            hir::DefKind::Fn,
-            Span::dummy(),
-        ).expect("BUG: builtin method registration failed");
+        let def_id = self
+            .resolver
+            .define_item(method_name, hir::DefKind::Fn, Span::dummy())
+            .expect("BUG: builtin method registration failed");
 
         // Register the function signature
-        self.fn_sigs.insert(def_id, hir::FnSig {
-            inputs,
-            output,
-            is_const: false,
-            is_fiber: false,
-            is_unsafe: false,
-            generics,
-            const_generics: Vec::new(),
-        });
+        self.fn_sigs.insert(
+            def_id,
+            hir::FnSig {
+                inputs,
+                output,
+                is_const: false,
+                is_fiber: false,
+                is_unsafe: false,
+                generics,
+                const_generics: Vec::new(),
+            },
+        );
 
         // Track runtime function name
         self.builtin_fns.insert(def_id, runtime_name.to_string());

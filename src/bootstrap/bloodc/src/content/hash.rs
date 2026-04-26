@@ -127,8 +127,7 @@ impl TryFrom<String> for ContentHash {
 
         let mut bytes = [0u8; 32];
         for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
-            let hex_str = std::str::from_utf8(chunk)
-                .map_err(|_| "invalid UTF-8 in hex string")?;
+            let hex_str = std::str::from_utf8(chunk).map_err(|_| "invalid UTF-8 in hex string")?;
             bytes[i] = u8::from_str_radix(hex_str, 16)
                 .map_err(|_| format!("invalid hex at position {}", i * 2))?;
         }
@@ -293,7 +292,9 @@ mod tests {
         assert!(full.len() <= 52);
 
         // Should only contain base32 characters
-        assert!(short.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(short
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 
     #[test]
@@ -380,7 +381,8 @@ mod tests {
         assert_eq!(empty_hash1, empty_hash2);
 
         // Test 3: Unicode input
-        let unicode_input = "fn greet(name: String) -> String { format!(\"Hello, {}!\", name) }".as_bytes();
+        let unicode_input =
+            "fn greet(name: String) -> String { format!(\"Hello, {}!\", name) }".as_bytes();
         let unicode_hash1 = ContentHash::compute(unicode_input);
         let unicode_hash2 = ContentHash::compute(unicode_input);
         assert_eq!(unicode_hash1, unicode_hash2);
@@ -424,8 +426,14 @@ mod tests {
         let deserialized2 = ContentHash::try_from(serialized2.clone()).unwrap();
 
         // All should be equal
-        assert_eq!(serialized1, serialized2, "Serialized form should be deterministic");
-        assert_eq!(deserialized1, deserialized2, "Round-trip should preserve hash");
+        assert_eq!(
+            serialized1, serialized2,
+            "Serialized form should be deterministic"
+        );
+        assert_eq!(
+            deserialized1, deserialized2,
+            "Round-trip should preserve hash"
+        );
     }
 
     #[test]
@@ -443,7 +451,10 @@ mod tests {
         hasher2.update_str("additional data");
         let compound2 = hasher2.finalize();
 
-        assert_eq!(compound1, compound2, "Hashing a hash should be deterministic");
+        assert_eq!(
+            compound1, compound2,
+            "Hashing a hash should be deterministic"
+        );
     }
 
     #[test]
@@ -467,9 +478,15 @@ mod tests {
     fn test_builtin_hash_determinism() {
         // Test that builtin hashes are stable
         let builtins = [
-            "Int.add", "Int.sub", "Int.mul", "Int.div",
-            "Bool.and", "Bool.or", "Bool.not",
-            "String.concat", "Array.length",
+            "Int.add",
+            "Int.sub",
+            "Int.mul",
+            "Int.div",
+            "Bool.and",
+            "Bool.or",
+            "Bool.not",
+            "String.concat",
+            "Array.length",
         ];
 
         for name in builtins {
@@ -485,7 +502,10 @@ mod tests {
             for j in (i + 1)..builtins.len() {
                 let hash_i = ContentHash::builtin(builtins[i]);
                 let hash_j = ContentHash::builtin(builtins[j]);
-                assert_ne!(hash_i, hash_j, "Different builtins should have different hashes");
+                assert_ne!(
+                    hash_i, hash_j,
+                    "Different builtins should have different hashes"
+                );
             }
         }
     }

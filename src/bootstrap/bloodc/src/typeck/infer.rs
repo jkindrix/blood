@@ -10,8 +10,8 @@
 //! The main inference logic is integrated into TypeContext; this module
 //! provides supporting infrastructure.
 
-use crate::hir::{Type, TypeKind};
 use super::unify::Unifier;
+use crate::hir::{Type, TypeKind};
 
 /// Type inference state.
 #[derive(Debug)]

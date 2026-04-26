@@ -267,7 +267,10 @@ impl Formatter {
     fn next_is(&self, tokens: &[Token], i: usize, kind: TokenKind) -> bool {
         tokens
             .get(i + 1)
-            .map(|t| t.kind == kind || (t.kind == TokenKind::Whitespace && self.next_is(tokens, i + 1, kind)))
+            .map(|t| {
+                t.kind == kind
+                    || (t.kind == TokenKind::Whitespace && self.next_is(tokens, i + 1, kind))
+            })
             .unwrap_or(false)
     }
 
@@ -280,7 +283,9 @@ impl Formatter {
             .get(i - 1)
             .map(|t| {
                 t.kind == kind
-                    || (t.kind == TokenKind::Whitespace && i > 1 && self.prev_is(tokens, i - 1, kind))
+                    || (t.kind == TokenKind::Whitespace
+                        && i > 1
+                        && self.prev_is(tokens, i - 1, kind))
             })
             .unwrap_or(false)
     }

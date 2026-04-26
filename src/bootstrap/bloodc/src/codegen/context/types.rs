@@ -2,11 +2,11 @@
 //!
 //! This module handles conversion from Blood types to LLVM types.
 
-use inkwell::types::{BasicTypeEnum, BasicType, BasicMetadataTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::AddressSpace;
 
-use crate::hir::{Type, TypeKind, PrimitiveTy};
 use crate::hir::def::{IntTy, UintTy};
+use crate::hir::{PrimitiveTy, Type, TypeKind};
 use crate::ice;
 
 use super::CodegenContext;
@@ -21,9 +21,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.context.i8_type().into()
             }
             TypeKind::Tuple(fields) => {
-                let field_types: Vec<BasicTypeEnum> = fields.iter()
-                    .map(|f| self.lower_type(f))
-                    .collect();
+                let field_types: Vec<BasicTypeEnum> =
+                    fields.iter().map(|f| self.lower_type(f)).collect();
                 self.context.struct_type(&field_types, false).into()
             }
             TypeKind::Array { element, size } => {
@@ -41,7 +40,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let _elem_type = self.lower_type(element);
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
-                self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), len_type.into()], false)
+                    .into()
             }
             TypeKind::Ref { inner, .. } => {
                 // References carry a generation tag: { ptr, i32 }
@@ -59,13 +60,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     TypeKind::DynTrait { .. } => {
                         // &dyn Trait is { data_ptr, vtable_ptr } — needs two pointers
                         let ptr_type = self.context.ptr_type(AddressSpace::default());
-                        self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                        self.context
+                            .struct_type(&[ptr_type.into(), ptr_type.into()], false)
+                            .into()
                     }
                     _ => {
                         // Generational reference: { ptr, gen:i32 }
                         let ptr_type = self.context.ptr_type(AddressSpace::default());
                         let gen_type = self.context.i32_type();
-                        self.context.struct_type(&[ptr_type.into(), gen_type.into()], false).into()
+                        self.context
+                            .struct_type(&[ptr_type.into(), gen_type.into()], false)
+                            .into()
                     }
                 }
             }
@@ -75,12 +80,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     TypeKind::Primitive(PrimitiveTy::Str) => {
                         self.lower_primitive(&PrimitiveTy::Str)
                     }
-                    TypeKind::Slice { .. } => {
-                        self.lower_type(inner)
-                    }
-                    _ => {
-                        self.context.ptr_type(AddressSpace::default()).into()
-                    }
+                    TypeKind::Slice { .. } => self.lower_type(inner),
+                    _ => self.context.ptr_type(AddressSpace::default()).into(),
                 }
             }
             TypeKind::Adt { def_id, args } => {
@@ -93,13 +94,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // All pointers are opaque `ptr` in LLVM 18
                     let ptr_type = self.context.ptr_type(AddressSpace::default());
                     let i64_type = self.context.i64_type();
-                    self.context.struct_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false).into()
+                    self.context
+                        .struct_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false)
+                        .into()
                 } else if Some(*def_id) == self.option_def_id {
                     // Option<T> is { tag: i32, payload: T }
                     let tag_type = self.context.i32_type();
                     if let Some(inner_ty) = args.first() {
                         let payload_type = self.lower_type(inner_ty);
-                        self.context.struct_type(&[tag_type.into(), payload_type], false).into()
+                        self.context
+                            .struct_type(&[tag_type.into(), payload_type], false)
+                            .into()
                     } else {
                         // Option with no type arg - just tag
                         tag_type.into()
@@ -110,22 +115,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let ok_size = if let Some(ok_ty) = args.first() {
                         let llvm_ty = self.lower_type(ok_ty);
                         self.get_type_size_approx(llvm_ty)
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     let err_size = if args.len() > 1 {
                         let llvm_ty = self.lower_type(&args[1]);
                         self.get_type_size_approx(llvm_ty)
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     let payload_type = if ok_size >= err_size {
                         args.first().map(|t| self.lower_type(t))
                     } else {
                         args.get(1).map(|t| self.lower_type(t))
                     };
                     if let Some(payload) = payload_type {
-                        self.context.struct_type(&[tag_type.into(), payload], false).into()
+                        self.context
+                            .struct_type(&[tag_type.into(), payload], false)
+                            .into()
                     } else {
                         tag_type.into()
                     }
-                } else if self.struct_defs.contains_key(def_id) || self.enum_defs.contains_key(def_id) {
+                } else if self.struct_defs.contains_key(def_id)
+                    || self.enum_defs.contains_key(def_id)
+                {
                     // Cycle detection for recursive types (e.g. enum List { Cons(i32, List), Nil }).
                     // If we're already lowering this ADT, we've hit a recursive cycle.
                     // Recursive types have infinite size and cannot be stack-allocated;
@@ -134,7 +147,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     if !self.lowering_adts.borrow_mut().insert(ty.clone()) {
                         // Already lowering this exact ADT instantiation → true recursive cycle.
                         // Look up the type name for a useful error message.
-                        let type_name = self.def_paths.get(def_id)
+                        let type_name = self
+                            .def_paths
+                            .get(def_id)
                             .cloned()
                             .unwrap_or_else(|| format!("{:?}", def_id));
                         self.type_lowering_errors.borrow_mut().push(
@@ -145,15 +160,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                     type_name, type_name
                                 ),
                                 self.current_span(),
-                            )
+                            ),
                         );
                         return self.context.ptr_type(AddressSpace::default()).into();
                     }
 
                     let result = if let Some(fields) = self.struct_defs.get(def_id).cloned() {
-                    // Look up struct definition
+                        // Look up struct definition
                         // Substitute type parameters with concrete type arguments
-                        let field_types: Vec<BasicTypeEnum> = fields.iter()
+                        let field_types: Vec<BasicTypeEnum> = fields
+                            .iter()
                             .map(|f| {
                                 let substituted = self.substitute_type_params(f, args);
                                 self.lower_type(&substituted)
@@ -163,7 +179,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             // Unit struct - use i8 placeholder
                             self.context.i8_type().into()
                         } else {
-                            let is_packed = self.struct_layout_attrs.get(def_id)
+                            let is_packed = self
+                                .struct_layout_attrs
+                                .get(def_id)
                                 .map(|(packed, _)| *packed)
                                 .unwrap_or(false);
                             self.context.struct_type(&field_types, is_packed).into()
@@ -190,15 +208,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             if !variant_fields.is_empty() {
                                 has_payload = true;
                                 // Build the variant's struct type to get its size and alignment
-                                let variant_field_types: Vec<BasicTypeEnum> = variant_fields.iter()
+                                let variant_field_types: Vec<BasicTypeEnum> = variant_fields
+                                    .iter()
                                     .map(|field_ty| {
-                                        let substituted = self.substitute_type_params(field_ty, args);
+                                        let substituted =
+                                            self.substitute_type_params(field_ty, args);
                                         self.lower_type(&substituted)
                                     })
                                     .collect();
-                                let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
-                                let variant_size = self.get_type_size_approx(variant_struct_ty.into()) as u64;
-                                let variant_align = self.get_max_field_alignment(&variant_field_types);
+                                let variant_struct_ty =
+                                    self.context.struct_type(&variant_field_types, false);
+                                let variant_size =
+                                    self.get_type_size_approx(variant_struct_ty.into()) as u64;
+                                let variant_align =
+                                    self.get_max_field_alignment(&variant_field_types);
 
                                 if variant_size > max_payload_size {
                                     max_payload_size = variant_size;
@@ -235,9 +258,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 self.context.i16_type().array_type(num_i16s as u32).into()
                             } else {
                                 // 1-byte alignment: use [i8 x N]
-                                self.context.i8_type().array_type(max_payload_size as u32).into()
+                                self.context
+                                    .i8_type()
+                                    .array_type(max_payload_size as u32)
+                                    .into()
                             };
-                            self.context.struct_type(&[tag_type.into(), payload_type], false).into()
+                            self.context
+                                .struct_type(&[tag_type.into(), payload_type], false)
+                                .into()
                         }
                     } else {
                         unreachable!()
@@ -251,7 +279,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     panic!(
                         "ICE: Unknown ADT in codegen: def_id={:?}, type_args={:?}. \
                          Known structs: {}, known enums: {}",
-                        def_id, args, self.struct_defs.len(), self.enum_defs.len()
+                        def_id,
+                        args,
+                        self.struct_defs.len(),
+                        self.enum_defs.len()
                     );
                 }
             }
@@ -261,12 +292,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // When a regular function (no captures) is passed, env_ptr is null.
                 // When calling through fn(), the env_ptr is passed as the first argument.
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
-                self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), ptr_type.into()], false)
+                    .into()
             }
             TypeKind::DynTrait { .. } => {
                 // Trait object: fat pointer { data_ptr, vtable_ptr }
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
-                self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), ptr_type.into()], false)
+                    .into()
             }
             TypeKind::Never => {
                 // Never type - use i8 as placeholder (will never actually be used)
@@ -275,16 +310,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             TypeKind::Infer(id) => {
                 // Unresolved inference variable reached codegen — type inference
                 // should have resolved this. This is a hard error.
-                self.type_lowering_errors.borrow_mut().push(
-                    crate::diagnostics::Diagnostic::error(
+                self.type_lowering_errors
+                    .borrow_mut()
+                    .push(crate::diagnostics::Diagnostic::error(
                         format!(
                             "unresolved inference variable {:?} reached codegen; \
                              type inference should have resolved this",
                             id
                         ),
                         self.current_span(),
-                    )
-                );
+                    ));
                 self.context.i8_type().into()
             }
             TypeKind::Error => {
@@ -304,7 +339,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 id
                             ),
                             self.current_span(),
-                        )
+                        ),
                     );
                 }
                 // Return opaque ptr as placeholder — handler bodies use the i64
@@ -314,13 +349,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             TypeKind::Closure { .. } => {
                 // Closure: fat pointer { fn_ptr, env_ptr }
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
-                self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), ptr_type.into()], false)
+                    .into()
             }
             TypeKind::Range { element, .. } => {
                 // Range: { start, end } of the element type
                 // For simplicity, use { i64, i64 } for now
                 let elem_type = self.lower_type(element);
-                self.context.struct_type(&[elem_type, elem_type], false).into()
+                self.context
+                    .struct_type(&[elem_type, elem_type], false)
+                    .into()
             }
             TypeKind::Record { fields, .. } => {
                 // Record: anonymous struct with named fields
@@ -328,9 +367,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // Empty record - use i8 placeholder
                     self.context.i8_type().into()
                 } else {
-                    let field_types: Vec<BasicTypeEnum> = fields.iter()
-                        .map(|f| self.lower_type(&f.ty))
-                        .collect();
+                    let field_types: Vec<BasicTypeEnum> =
+                        fields.iter().map(|f| self.lower_type(&f.ty)).collect();
                     self.context.struct_type(&field_types, false).into()
                 }
             }
@@ -374,13 +412,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // String slice: { ptr, len }
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
-                self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), len_type.into()], false)
+                    .into()
             }
             PrimitiveTy::String => {
                 // Heap-allocated string: { ptr, len, capacity }
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
                 let len_type = self.context.i64_type();
-                self.context.struct_type(&[ptr_type.into(), len_type.into(), len_type.into()], false).into()
+                self.context
+                    .struct_type(&[ptr_type.into(), len_type.into(), len_type.into()], false)
+                    .into()
             }
             PrimitiveTy::Unit => {
                 // Unit type - use i8 as placeholder
@@ -395,8 +437,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Create an LLVM function type from a Blood function signature.
-    pub(super) fn fn_type_from_sig(&self, sig: &crate::hir::FnSig) -> inkwell::types::FunctionType<'ctx> {
-        let param_types: Vec<BasicMetadataTypeEnum> = sig.inputs.iter()
+    pub(super) fn fn_type_from_sig(
+        &self,
+        sig: &crate::hir::FnSig,
+    ) -> inkwell::types::FunctionType<'ctx> {
+        let param_types: Vec<BasicMetadataTypeEnum> = sig
+            .inputs
+            .iter()
             .map(|p| self.lower_type(p).into())
             .collect();
 
@@ -442,7 +489,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 bits.div_ceil(8)
             }
             BasicTypeEnum::FloatType(t) => {
-                if t == self.context.f32_type() { 4 } else { 8 }
+                if t == self.context.f32_type() {
+                    4
+                } else {
+                    8
+                }
             }
             BasicTypeEnum::PointerType(_) => 8, // 64-bit pointers
             BasicTypeEnum::StructType(st) => {
@@ -517,7 +568,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
             TypeKind::Tuple(fields) => {
-                let substituted: Vec<Type> = fields.iter()
+                let substituted: Vec<Type> = fields
+                    .iter()
                     .map(|f| self.substitute_type_params(f, args))
                     .collect();
                 Type::tuple(substituted)
@@ -536,17 +588,25 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
             TypeKind::Ptr { inner, mutable } => {
                 let substituted = self.substitute_type_params(inner, args);
-                Type::new(TypeKind::Ptr { inner: substituted, mutable: *mutable })
+                Type::new(TypeKind::Ptr {
+                    inner: substituted,
+                    mutable: *mutable,
+                })
             }
-            TypeKind::Adt { def_id, args: inner_args } => {
+            TypeKind::Adt {
+                def_id,
+                args: inner_args,
+            } => {
                 // Recursively substitute in the ADT's own type arguments
-                let substituted_args: Vec<Type> = inner_args.iter()
+                let substituted_args: Vec<Type> = inner_args
+                    .iter()
                     .map(|a| self.substitute_type_params(a, args))
                     .collect();
                 Type::adt(*def_id, substituted_args)
             }
             TypeKind::Fn { params, ret, .. } => {
-                let substituted_params: Vec<Type> = params.iter()
+                let substituted_params: Vec<Type> = params
+                    .iter()
                     .map(|p| self.substitute_type_params(p, args))
                     .collect();
                 let substituted_ret = self.substitute_type_params(ret, args);

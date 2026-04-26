@@ -2,12 +2,9 @@
 //!
 //! Generates `fn debug(&self) -> String` that formats the type's fields.
 
-use crate::hir::{
-    self, Type, LocalId, Body, Local, FnSig,
-    Expr, ExprKind,
-};
+use crate::hir::{self, Body, Expr, ExprKind, FnSig, Local, LocalId, Type};
 
-use super::{DeriveExpander, DeriveRequest, string_literal, local_expr};
+use super::{local_expr, string_literal, DeriveExpander, DeriveRequest};
 
 /// Expand Debug derive for a struct.
 pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
@@ -28,7 +25,9 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Note: Returns str slice rather than heap-allocated String
     let sig = FnSig::new(vec![self_ref_ty.clone()], Type::str());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let self_local_id = LocalId::new(1);
@@ -52,9 +51,7 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Build the debug string: "TypeName { field1, field2, ... }"
     // For now, just return the struct name with field names (not values)
     // This simplification avoids complex string concatenation and format! expansion
-    let field_names: Vec<String> = struct_info.fields.iter()
-        .map(|f| f.name.clone())
-        .collect();
+    let field_names: Vec<String> = struct_info.fields.iter().map(|f| f.name.clone()).collect();
     let debug_str = if field_names.is_empty() {
         struct_info.name.clone()
     } else {
@@ -95,7 +92,9 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn debug(&self) -> str
     let sig = FnSig::new(vec![self_ref_ty.clone()], Type::str());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body with match expression
     let self_local_id = LocalId::new(1);
@@ -135,13 +134,17 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
                 kind: hir::PatternKind::Variant {
                     def_id: request.type_def_id,
                     variant_idx: variant.index,
-                    fields: variant.fields.iter().map(|_| {
-                        hir::Pattern {
-                            kind: hir::PatternKind::Wildcard,
-                            ty: Type::error(), // Type doesn't matter for wildcard
-                            span,
-                        }
-                    }).collect(),
+                    fields: variant
+                        .fields
+                        .iter()
+                        .map(|_| {
+                            hir::Pattern {
+                                kind: hir::PatternKind::Wildcard,
+                                ty: Type::error(), // Type doesn't matter for wildcard
+                                span,
+                            }
+                        })
+                        .collect(),
                 },
                 ty: self_ty.clone(),
                 span,
@@ -153,7 +156,10 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
             string_literal(&format!("{}::{}", enum_info.name, variant.name), span)
         } else {
             // For variants with fields, show "Enum::Variant { ... }"
-            string_literal(&format!("{}::{} {{ ... }}", enum_info.name, variant.name), span)
+            string_literal(
+                &format!("{}::{} {{ ... }}", enum_info.name, variant.name),
+                span,
+            )
         };
 
         arms.push(hir::MatchArm {
@@ -165,7 +171,11 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
 
     // Scrutinee: *self
     let scrutinee = Expr::new(
-        ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
+        ExprKind::Deref(Box::new(local_expr(
+            self_local_id,
+            self_ref_ty.clone(),
+            span,
+        ))),
         self_ty.clone(),
         span,
     );

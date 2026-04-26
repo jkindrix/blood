@@ -52,9 +52,20 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 self.error_expected_one_of(&[
-                    "`fn`", "`struct`", "`enum`", "`trait`", "`impl`",
-                    "`effect`", "`handler`", "`type`", "`const`", "`static`",
-                    "`bridge`", "`extern`", "`mod`", "`macro`",
+                    "`fn`",
+                    "`struct`",
+                    "`enum`",
+                    "`trait`",
+                    "`impl`",
+                    "`effect`",
+                    "`handler`",
+                    "`type`",
+                    "`const`",
+                    "`static`",
+                    "`bridge`",
+                    "`extern`",
+                    "`mod`",
+                    "`macro`",
                 ]);
                 self.synchronize();
                 None
@@ -1462,8 +1473,14 @@ impl<'src> Parser<'src> {
             TokenKind::Union => Some(BridgeItem::Union(self.parse_bridge_union(attrs))),
             _ => {
                 self.error_expected_one_of(&[
-                    "`fn`", "`const`", "`type`", "`struct`", "`enum`",
-                    "`union`", "`callback`", "`#[link(...)]`",
+                    "`fn`",
+                    "`const`",
+                    "`type`",
+                    "`struct`",
+                    "`enum`",
+                    "`union`",
+                    "`callback`",
+                    "`#[link(...)]`",
                 ]);
                 self.synchronize();
                 None
@@ -2172,7 +2189,11 @@ impl<'src> Parser<'src> {
                 let frag_str = self.text(&self.previous.span);
                 let fragment = FragmentKind::from_str(frag_str).unwrap_or_else(|| {
                     use crate::diagnostics::ErrorCode;
-                    self.error_at(self.previous.span, &format!("unknown fragment specifier `{}`", frag_str), ErrorCode::InvalidMacroFragment);
+                    self.error_at(
+                        self.previous.span,
+                        &format!("unknown fragment specifier `{}`", frag_str),
+                        ErrorCode::InvalidMacroFragment,
+                    );
                     FragmentKind::Expr
                 });
 
@@ -2182,7 +2203,9 @@ impl<'src> Parser<'src> {
                     span: start.merge(self.previous.span),
                 }
             } else {
-                self.error_expected("fragment specifier (expr, ty, pat, ident, literal, block, stmt, item, tt)");
+                self.error_expected(
+                    "fragment specifier (expr, ty, pat, ident, literal, block, stmt, item, tt)",
+                );
                 MacroPatternPart::Capture {
                     name,
                     fragment: FragmentKind::Expr,
@@ -2240,7 +2263,9 @@ impl<'src> Parser<'src> {
             if self.check(TokenKind::Dollar) {
                 // Flush accumulated tokens
                 if !current_tokens.is_empty() {
-                    parts.push(MacroExpansionPart::Tokens(std::mem::take(&mut current_tokens)));
+                    parts.push(MacroExpansionPart::Tokens(std::mem::take(
+                        &mut current_tokens,
+                    )));
                 }
 
                 let dollar_span = self.current.span;
@@ -2302,7 +2327,9 @@ impl<'src> Parser<'src> {
             } else if self.check(TokenKind::LParen) {
                 // Flush accumulated tokens
                 if !current_tokens.is_empty() {
-                    parts.push(MacroExpansionPart::Tokens(std::mem::take(&mut current_tokens)));
+                    parts.push(MacroExpansionPart::Tokens(std::mem::take(
+                        &mut current_tokens,
+                    )));
                 }
                 // Nested group
                 let start = self.current.span;
@@ -2316,7 +2343,9 @@ impl<'src> Parser<'src> {
                 });
             } else if self.check(TokenKind::LBracket) {
                 if !current_tokens.is_empty() {
-                    parts.push(MacroExpansionPart::Tokens(std::mem::take(&mut current_tokens)));
+                    parts.push(MacroExpansionPart::Tokens(std::mem::take(
+                        &mut current_tokens,
+                    )));
                 }
                 let start = self.current.span;
                 self.advance();
@@ -2329,7 +2358,9 @@ impl<'src> Parser<'src> {
                 });
             } else if self.check(TokenKind::LBrace) {
                 if !current_tokens.is_empty() {
-                    parts.push(MacroExpansionPart::Tokens(std::mem::take(&mut current_tokens)));
+                    parts.push(MacroExpansionPart::Tokens(std::mem::take(
+                        &mut current_tokens,
+                    )));
                 }
                 let start = self.current.span;
                 self.advance();

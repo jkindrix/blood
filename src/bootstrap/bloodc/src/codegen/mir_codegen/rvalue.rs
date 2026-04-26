@@ -4,17 +4,15 @@
 //! to LLVM IR.
 
 use inkwell::intrinsics::Intrinsic;
-use inkwell::values::{BasicValue, BasicValueEnum};
 use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValue, BasicValueEnum};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::diagnostics::Diagnostic;
+use crate::hir::LocalId;
 use crate::hir::{PrimitiveTy, Type, TypeKind};
 use crate::mir::body::MirBody;
-use crate::mir::types::{
-    Rvalue, Operand, Constant, ConstantKind, BinOp, UnOp, AggregateKind,
-};
-use crate::hir::LocalId;
+use crate::mir::types::{AggregateKind, BinOp, Constant, ConstantKind, Operand, Rvalue, UnOp};
 use crate::mir::{EscapeResults, EscapeState};
 
 use crate::ice_err;
@@ -71,9 +69,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         dest_local: Option<LocalId>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
         match rvalue {
-            Rvalue::Use(operand) => {
-                self.compile_mir_operand(operand, body, escape_results)
-            }
+            Rvalue::Use(operand) => self.compile_mir_operand(operand, body, escape_results),
 
             Rvalue::Ref { place, mutable: _ } => {
                 let ptr = self.compile_mir_place(place, body, escape_results)?;
@@ -81,18 +77,30 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Generation is 0 for now (wired to actual gen tracking later)
                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                 let gen_type = self.context.i32_type();
-                let gen_ref_type = self.context.struct_type(&[ptr_type.into(), gen_type.into()], false);
+                let gen_ref_type = self
+                    .context
+                    .struct_type(&[ptr_type.into(), gen_type.into()], false);
                 let fat_ref = gen_ref_type.const_zero();
-                let fat_ref = self.builder.build_insert_value(fat_ref, ptr, 0, "gen_ref_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), body.span
-                    )])?
+                let fat_ref = self
+                    .builder
+                    .build_insert_value(fat_ref, ptr, 0, "gen_ref_ptr")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            body.span,
+                        )]
+                    })?
                     .into_struct_value();
                 let gen_val = gen_type.const_int(0, false);
-                let fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "gen_ref_gen")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), body.span
-                    )])?
+                let fat_ref = self
+                    .builder
+                    .build_insert_value(fat_ref, gen_val, 1, "gen_ref_gen")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            body.span,
+                        )]
+                    })?
                     .into_struct_value();
                 Ok(fat_ref.into())
             }
@@ -112,7 +120,10 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::CheckedBinaryOp { op, left, right } => {
-                if self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                if self
+                    .unchecked_checks
+                    .contains(&crate::ast::UncheckedCheck::Overflow)
+                {
                     // Unchecked overflow — emit plain operation without overflow check
                     let operand_ty = self.get_operand_type(left, body);
                     let is_float = self.is_float_type(&operand_ty);
@@ -159,10 +170,15 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     };
                     // Load the pointer from the current location
                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                    let loaded = self.builder.build_load(ptr_ty, ptr, "deref_discr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM load error: {}", e), self.current_span()
-                        )])?;
+                    let loaded = self
+                        .builder
+                        .build_load(ptr_ty, ptr, "deref_discr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     if let Some(inst) = loaded.as_instruction_value() {
                         let _ = inst.set_alignment(8); // pointer alignment
                     }
@@ -179,15 +195,25 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // With opaque pointers, no pointer cast is needed — use GEP directly
                     let struct_ty = llvm_ty.into_struct_type();
 
-                    let discr_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "discr_ptr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM struct gep error: {}", e), self.current_span()
-                        )])?;
+                    let discr_ptr = self
+                        .builder
+                        .build_struct_gep(struct_ty, ptr, 0, "discr_ptr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM struct gep error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     let i32_type = self.context.i32_type();
-                    let discr = self.builder.build_load(i32_type, discr_ptr, "discr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM load error: {}", e), self.current_span()
-                        )])?;
+                    let discr = self
+                        .builder
+                        .build_load(i32_type, discr_ptr, "discr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     // Set proper alignment for discriminant load (i32 = 4 bytes)
                     if let Some(inst) = discr.as_instruction_value() {
                         let _ = inst.set_alignment(4);
@@ -197,10 +223,15 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // Tag-only enum: represented as bare i32
                     // With opaque pointers, load directly with the i32 type
                     let i32_type = self.context.i32_type();
-                    let discr = self.builder.build_load(i32_type, ptr, "discr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM load error: {}", e), self.current_span()
-                        )])?;
+                    let discr = self
+                        .builder
+                        .build_load(i32_type, ptr, "discr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     // Set proper alignment for discriminant load (i32 = 4 bytes)
                     if let Some(inst) = discr.as_instruction_value() {
                         let _ = inst.set_alignment(4);
@@ -209,13 +240,9 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
             }
 
-            Rvalue::Len(place) => {
-                self.compile_len_rvalue(place, body, escape_results)
-            }
+            Rvalue::Len(place) => self.compile_len_rvalue(place, body, escape_results),
 
-            Rvalue::VecLen(place) => {
-                self.compile_vec_len_rvalue(place, body, escape_results)
-            }
+            Rvalue::VecLen(place) => self.compile_vec_len_rvalue(place, body, escape_results),
 
             Rvalue::Aggregate { kind, operands } => {
                 self.compile_aggregate(kind, operands, body, escape_results, dest_local)
@@ -225,16 +252,34 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let val = self.compile_mir_operand(operand, body, escape_results)?;
                 if let BasicValueEnum::PointerValue(ptr) = val {
                     let null = ptr.get_type().const_null();
-                    let is_null = self.builder.build_int_compare(
-                        IntPredicate::NE,
-                        self.builder.build_ptr_to_int(ptr, self.context.i64_type(), "ptr_int")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?,
-                        self.builder.build_ptr_to_int(null, self.context.i64_type(), "null_int")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?,
-                        "not_null"
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM compare error: {}", e), self.current_span()
-                    )])?;
+                    let is_null = self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            self.builder
+                                .build_ptr_to_int(ptr, self.context.i64_type(), "ptr_int")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?,
+                            self.builder
+                                .build_ptr_to_int(null, self.context.i64_type(), "null_int")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?,
+                            "not_null",
+                        )
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM compare error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(is_null.into())
                 } else {
                     Ok(self.context.bool_type().const_int(1, false).into())
@@ -245,9 +290,11 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 self.compile_read_generation(place, body, escape_results)
             }
 
-            Rvalue::MakeGenPtr { address, generation, metadata } => {
-                self.compile_make_gen_ptr(address, generation, metadata, body, escape_results)
-            }
+            Rvalue::MakeGenPtr {
+                address,
+                generation,
+                metadata,
+            } => self.compile_make_gen_ptr(address, generation, metadata, body, escape_results),
 
             Rvalue::ZeroInit(ty) => {
                 // Create a zero-initialized value of the given type
@@ -261,11 +308,15 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let base_val = self.compile_mir_operand(base, body, escape_results)?;
                 let index_val = self.compile_mir_operand(index, body, escape_results)?;
 
-                let func = self.module.get_function("str_char_at_index")
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        "Runtime function 'str_char_at_index' not declared",
-                        body.span,
-                    )])?;
+                let func = self
+                    .module
+                    .get_function("str_char_at_index")
+                    .ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "Runtime function 'str_char_at_index' not declared",
+                            body.span,
+                        )]
+                    })?;
 
                 // Convert index to i64 if needed
                 let idx_i64 = match index_val {
@@ -273,11 +324,19 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         if iv.get_type().get_bit_width() == 64 {
                             iv
                         } else {
-                            self.builder.build_int_z_extend(iv, self.context.i64_type(), "idx.zext")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
+                            self.builder
+                                .build_int_z_extend(iv, self.context.i64_type(), "idx.zext")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                                })?
                         }
                     }
-                    _ => return Err(vec![Diagnostic::error("String index must be integer", body.span)]),
+                    _ => {
+                        return Err(vec![Diagnostic::error(
+                            "String index must be integer",
+                            body.span,
+                        )])
+                    }
                 };
 
                 // Get a pointer to the string struct for the function call
@@ -285,51 +344,79 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let str_ptr = match base_val {
                     BasicValueEnum::PointerValue(ptr) => ptr,
                     BasicValueEnum::StructValue(sv) => {
-                        let alloca = self.builder
+                        let alloca = self
+                            .builder
                             .build_alloca(sv.get_type(), "str.tmp")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
-                        self.builder.build_store(alloca, sv)
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                            })?;
+                        self.builder.build_store(alloca, sv).map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                        })?;
                         alloca
                     }
-                    _ => return Err(vec![Diagnostic::error("String indexing requires string type", body.span)]),
+                    _ => {
+                        return Err(vec![Diagnostic::error(
+                            "String indexing requires string type",
+                            body.span,
+                        )])
+                    }
                 };
 
                 // Call str_char_at_index(str_ptr, index)
-                let result = self.builder
+                let result = self
+                    .builder
                     .build_call(func, &[str_ptr.into(), idx_i64.into()], "char_at_result")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
                     .try_as_basic_value()
                     .basic()
-                    .ok_or_else(|| vec![Diagnostic::error("str_char_at_index should return value", body.span)])?;
+                    .ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "str_char_at_index should return value",
+                            body.span,
+                        )]
+                    })?;
 
                 // Result is {i32 tag, i32 value} - extract tag and value
                 // tag=0 means None (out of bounds), tag=1 means Some(char)
                 let result_struct = result.into_struct_value();
 
-                if self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Bounds) {
+                if self
+                    .unchecked_checks
+                    .contains(&crate::ast::UncheckedCheck::Bounds)
+                {
                     // Bounds check elided by unchecked(bounds) — extract value directly
-                    let char_val = self.builder
+                    let char_val = self
+                        .builder
                         .build_extract_value(result_struct, 1, "char_val")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                        .map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                        })?;
                     return Ok(char_val);
                 }
 
                 // Extract the tag to check for out-of-bounds
-                let tag = self.builder
+                let tag = self
+                    .builder
                     .build_extract_value(result_struct, 0, "tag")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
                     .into_int_value();
 
                 // Check if tag == 0 (None/out-of-bounds)
                 let zero = self.context.i32_type().const_zero();
-                let is_none = self.builder
+                let is_none = self
+                    .builder
                     .build_int_compare(IntPredicate::EQ, tag, zero, "is_none")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                    })?;
 
                 // Get current function for creating basic blocks
                 let fn_value = self.current_fn.ok_or_else(|| {
-                    vec![Diagnostic::error("No current function for string index bounds check", body.span)]
+                    vec![Diagnostic::error(
+                        "No current function for string index bounds check",
+                        body.span,
+                    )]
                 })?;
 
                 // Create basic blocks for bounds check
@@ -337,41 +424,56 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let continue_bb = self.context.append_basic_block(fn_value, "str_index_ok");
 
                 // Branch: if tag == 0, panic; else continue
-                self.builder.build_conditional_branch(is_none, panic_bb, continue_bb)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                self.builder
+                    .build_conditional_branch(is_none, panic_bb, continue_bb)
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                    })?;
 
                 // Panic block: call blood_panic with out-of-bounds message
                 self.builder.position_at_end(panic_bb);
 
-                let panic_fn = self.module.get_function("blood_panic")
-                    .unwrap_or_else(|| {
-                        let void_type = self.context.void_type();
-                        let ptr_type = self.context.ptr_type(AddressSpace::default());
-                        let panic_type = void_type.fn_type(&[ptr_type.into()], false);
-                        self.module.add_function("blood_panic", panic_type, None)
-                    });
+                let panic_fn = self.module.get_function("blood_panic").unwrap_or_else(|| {
+                    let void_type = self.context.void_type();
+                    let ptr_type = self.context.ptr_type(AddressSpace::default());
+                    let panic_type = void_type.fn_type(&[ptr_type.into()], false);
+                    self.module.add_function("blood_panic", panic_type, None)
+                });
 
-                let msg_global = self.builder
+                let msg_global = self
+                    .builder
                     .build_global_string_ptr("string index out of bounds", "str_oob_msg")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                    })?;
 
-                self.builder.build_call(panic_fn, &[msg_global.as_pointer_value().into()], "")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                self.builder
+                    .build_call(panic_fn, &[msg_global.as_pointer_value().into()], "")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                    })?;
 
-                self.builder.build_unreachable()
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                self.builder.build_unreachable().map_err(|e| {
+                    vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                })?;
 
                 // Continue block: extract and return the char value
                 self.builder.position_at_end(continue_bb);
 
-                let char_val = self.builder
+                let char_val = self
+                    .builder
                     .build_extract_value(result_struct, 1, "char_val")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)]
+                    })?;
 
                 Ok(char_val)
             }
 
-            Rvalue::ArrayToSlice { array_ref, array_len } => {
+            Rvalue::ArrayToSlice {
+                array_ref,
+                array_len,
+            } => {
                 // Array-to-slice coercion: &[T; N] -> &[T]
                 // Creates a fat pointer struct { T*, i64 } from an array reference.
 
@@ -382,16 +484,22 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     BasicValueEnum::PointerValue(ptr) => ptr,
                     BasicValueEnum::StructValue(sv) => {
                         // Gen ref { ptr, i32 } — extract the data pointer
-                        self.builder.build_extract_value(sv, 0, "array_ref_ptr")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM extract_value error: {}", e), body.span
-                            )])?
+                        self.builder
+                            .build_extract_value(sv, 0, "array_ref_ptr")
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM extract_value error: {}", e),
+                                    body.span,
+                                )]
+                            })?
                             .into_pointer_value()
                     }
-                    _ => return Err(vec![Diagnostic::error(
-                        "ArrayToSlice expects pointer or gen ref value for array reference",
-                        body.span,
-                    )]),
+                    _ => {
+                        return Err(vec![Diagnostic::error(
+                            "ArrayToSlice expects pointer or gen ref value for array reference",
+                            body.span,
+                        )])
+                    }
                 };
 
                 // Create the length constant
@@ -412,31 +520,39 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 };
                 let array_ty = array_elem_llvm_ty.array_type(*array_len as u32);
                 let elem_ptr = unsafe {
-                    self.builder.build_in_bounds_gep(
-                        array_ty,
-                        array_ptr,
-                        &[self.context.i64_type().const_zero(), self.context.i64_type().const_zero()],
-                        "slice_data_ptr"
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM GEP error: {}", e),
-                        body.span,
-                    )])?
+                    self.builder
+                        .build_in_bounds_gep(
+                            array_ty,
+                            array_ptr,
+                            &[
+                                self.context.i64_type().const_zero(),
+                                self.context.i64_type().const_zero(),
+                            ],
+                            "slice_data_ptr",
+                        )
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM GEP error: {}", e),
+                                body.span,
+                            )]
+                        })?
                 };
 
                 // Create the slice struct type { ptr, i64 }
                 let ptr_type = self.context.ptr_type(AddressSpace::default());
-                let slice_struct_type = self.context.struct_type(
-                    &[ptr_type.into(), self.context.i64_type().into()],
-                    false,
-                );
+                let slice_struct_type = self
+                    .context
+                    .struct_type(&[ptr_type.into(), self.context.i64_type().into()], false);
 
                 // Build the struct value
                 let mut slice_struct = slice_struct_type.get_undef();
-                slice_struct = self.builder
+                slice_struct = self
+                    .builder
                     .build_insert_value(slice_struct, elem_ptr, 0, "slice.ptr")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
                     .into_struct_value();
-                slice_struct = self.builder
+                slice_struct = self
+                    .builder
                     .build_insert_value(slice_struct, len_val, 1, "slice.len")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?
                     .into_struct_value();
@@ -457,9 +573,7 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 self.compile_mir_place_load(place, body, escape_results)
             }
 
-            Operand::Constant(constant) => {
-                self.compile_constant(constant)
-            }
+            Operand::Constant(constant) => self.compile_constant(constant),
         }
     }
 }
@@ -477,7 +591,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // For slices, we load the length from the fat pointer (field 1 of slice struct)
 
         // Get the base type from the local
-        let base_ty = body.locals[place.local_unchecked().index() as usize].ty.clone();
+        let base_ty = body.locals[place.local_unchecked().index() as usize]
+            .ty
+            .clone();
 
         // Compute the effective type after applying projections
         let effective_ty = self.compute_place_type(&base_ty, &place.projection);
@@ -498,26 +614,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Slice struct type: { ptr, i64 }
                 let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                let slice_struct_ty = self.context.struct_type(
-                    &[ptr_ty.into(), self.context.i64_type().into()], false
-                );
+                let slice_struct_ty = self
+                    .context
+                    .struct_type(&[ptr_ty.into(), self.context.i64_type().into()], false);
 
                 // Get pointer to the length field (index 1)
-                let len_ptr = self.builder.build_struct_gep(
-                    slice_struct_ty,
-                    slice_ptr,
-                    1,
-                    "slice_len_ptr"
-                ).map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM struct gep error: {}", e), self.current_span()
-                )])?;
+                let len_ptr = self
+                    .builder
+                    .build_struct_gep(slice_struct_ty, slice_ptr, 1, "slice_len_ptr")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM struct gep error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
 
                 // Load the length value
                 let i64_ty = self.context.i64_type();
-                let len_val = self.builder.build_load(i64_ty, len_ptr, "slice_len")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM load error: {}", e), self.current_span()
-                    )])?;
+                let len_val = self
+                    .builder
+                    .build_load(i64_ty, len_ptr, "slice_len")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM load error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
 
                 Ok(len_val)
             }
@@ -532,47 +654,55 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     TypeKind::Slice { .. } => {
                         // For &[T], the local contains the fat pointer struct { ptr*, len } directly.
                         // We need to GEP to field 1 (length) and load it.
-                        let slice_storage_ptr = self.compile_mir_place(place, body, escape_results)?;
+                        let slice_storage_ptr =
+                            self.compile_mir_place(place, body, escape_results)?;
 
                         // Slice struct type: { ptr, i64 }
                         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                        let slice_struct_ty = self.context.struct_type(
-                            &[ptr_ty.into(), self.context.i64_type().into()], false
-                        );
+                        let slice_struct_ty = self
+                            .context
+                            .struct_type(&[ptr_ty.into(), self.context.i64_type().into()], false);
 
                         // Get pointer to the length field (index 1) in the fat pointer struct
-                        let len_ptr = self.builder.build_struct_gep(
-                            slice_struct_ty,
-                            slice_storage_ptr,
-                            1,
-                            "slice_len_ptr"
-                        ).map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM struct gep error: {}", e), self.current_span()
-                        )])?;
+                        let len_ptr = self
+                            .builder
+                            .build_struct_gep(
+                                slice_struct_ty,
+                                slice_storage_ptr,
+                                1,
+                                "slice_len_ptr",
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM struct gep error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
 
                         // Load the length value
                         let i64_ty = self.context.i64_type();
-                        let len_val = self.builder.build_load(i64_ty, len_ptr, "slice_len")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM load error: {}", e), self.current_span()
-                            )])?;
+                        let len_val = self
+                            .builder
+                            .build_load(i64_ty, len_ptr, "slice_len")
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM load error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
 
                         Ok(len_val)
                     }
-                    _ => {
-                        Err(vec![Diagnostic::error(
-                            format!("Cannot compute length of type {:?}", inner.kind()),
-                            self.current_span()
-                        )])
-                    }
+                    _ => Err(vec![Diagnostic::error(
+                        format!("Cannot compute length of type {:?}", inner.kind()),
+                        self.current_span(),
+                    )]),
                 }
             }
-            _ => {
-                Err(vec![Diagnostic::error(
-                    format!("Cannot compute length of type {:?}", effective_ty.kind()),
-                    self.current_span()
-                )])
-            }
+            _ => Err(vec![Diagnostic::error(
+                format!("Cannot compute length of type {:?}", effective_ty.kind()),
+                self.current_span(),
+            )]),
         }
     }
 
@@ -596,57 +726,79 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Vec struct type: { ptr, i64, i64 } (data_ptr, len, capacity)
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        let vec_struct_ty = self.context.struct_type(
-            &[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false
-        );
+        let vec_struct_ty = self
+            .context
+            .struct_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false);
 
         // Load the Vec struct pointer from the reference
-        let vec_struct_ptr = self.builder.build_load(ptr_ty, vec_ptr, "vec_ptr")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM load error: {}", e), self.current_span()
-            )])?;
+        let vec_struct_ptr = self
+            .builder
+            .build_load(ptr_ty, vec_ptr, "vec_ptr")
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM load error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // If it's a pointer value, use it to access the len field
         if let BasicValueEnum::PointerValue(struct_ptr) = vec_struct_ptr {
             // GEP to field 1 (len) of the Vec struct
-            let len_ptr = self.builder.build_struct_gep(
-                vec_struct_ty,
-                struct_ptr,
-                1,
-                "vec_len_ptr"
-            ).map_err(|e| vec![Diagnostic::error(
-                format!("LLVM struct gep error: {}", e), self.current_span()
-            )])?;
+            let len_ptr = self
+                .builder
+                .build_struct_gep(vec_struct_ty, struct_ptr, 1, "vec_len_ptr")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM struct gep error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             // Load the length value
-            let len_val = self.builder.build_load(i64_ty, len_ptr, "vec_len")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM load error: {}", e), self.current_span()
-                )])?;
+            let len_val = self
+                .builder
+                .build_load(i64_ty, len_ptr, "vec_len")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM load error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             Ok(len_val)
         } else if let BasicValueEnum::StructValue(sv) = vec_struct_ptr {
             // If we got a struct value directly, extract field 1
-            let len_val = self.builder.build_extract_value(sv, 1, "vec_len")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM extract error: {}", e), self.current_span()
-                )])?;
+            let len_val = self
+                .builder
+                .build_extract_value(sv, 1, "vec_len")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM extract error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             Ok(len_val)
         } else {
             // The place directly holds a Vec struct, try GEP on it
-            let len_ptr = self.builder.build_struct_gep(
-                vec_struct_ty,
-                vec_ptr,
-                1,
-                "vec_len_ptr"
-            ).map_err(|e| vec![Diagnostic::error(
-                format!("LLVM struct gep error for Vec: {}", e), self.current_span()
-            )])?;
+            let len_ptr = self
+                .builder
+                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "vec_len_ptr")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM struct gep error for Vec: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
-            let len_val = self.builder.build_load(i64_ty, len_ptr, "vec_len")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM load error: {}", e), self.current_span()
-                )])?;
+            let len_val = self
+                .builder
+                .build_load(i64_ty, len_ptr, "vec_len")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM load error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             Ok(len_val)
         }
@@ -666,24 +818,35 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Load the BloodPtr struct
         // BloodPtr type: { i64, i32, i32 }
         let blood_ptr_ty = self.context.struct_type(
-            &[self.context.i64_type().into(), self.context.i32_type().into(), self.context.i32_type().into()],
-            false
+            &[
+                self.context.i64_type().into(),
+                self.context.i32_type().into(),
+                self.context.i32_type().into(),
+            ],
+            false,
         );
-        let blood_ptr_val = self.builder.build_load(blood_ptr_ty, ptr, "blood_ptr")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM load error: {}", e),
-                self.current_span()
-            )])?;
+        let blood_ptr_val = self
+            .builder
+            .build_load(blood_ptr_ty, ptr, "blood_ptr")
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM load error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Extract the generation field (index 1) from the struct
         if blood_ptr_val.is_struct_value() {
             let struct_val = blood_ptr_val.into_struct_value();
-            let gen_val = self.builder
+            let gen_val = self
+                .builder
                 .build_extract_value(struct_val, 1, "generation")
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("Failed to extract generation field from BloodPtr: {}", e),
-                    self.current_span()
-                )])?;
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("Failed to extract generation field from BloodPtr: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             Ok(gen_val)
         } else {
             // The place might be a raw pointer, not a BloodPtr struct
@@ -710,41 +873,40 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Create the BloodPtr struct type: { i64, i32, i32 }
         let i64_ty = self.context.i64_type();
         let i32_ty = self.context.i32_type();
-        let blood_ptr_type = self.context.struct_type(
-            &[i64_ty.into(), i32_ty.into(), i32_ty.into()],
-            false
-        );
+        let blood_ptr_type = self
+            .context
+            .struct_type(&[i64_ty.into(), i32_ty.into(), i32_ty.into()], false);
 
         // Ensure operands have correct types
         let addr_i64 = if addr_val.is_pointer_value() {
             // Convert pointer to i64
-            self.builder.build_ptr_to_int(
-                addr_val.into_pointer_value(),
-                i64_ty,
-                "addr_as_i64"
-            ).map_err(|e| vec![Diagnostic::error(
-                format!("LLVM ptr_to_int error: {}", e),
-                self.current_span()
-            )])?
+            self.builder
+                .build_ptr_to_int(addr_val.into_pointer_value(), i64_ty, "addr_as_i64")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM ptr_to_int error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
         } else if addr_val.is_int_value() {
             let int_val = addr_val.into_int_value();
             if int_val.get_type().get_bit_width() == 64 {
                 int_val
             } else {
                 // Zero-extend or truncate to i64
-                self.builder.build_int_z_extend_or_bit_cast(
-                    int_val,
-                    i64_ty,
-                    "addr_i64"
-                ).map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM int cast error: {}", e),
-                    self.current_span()
-                )])?
+                self.builder
+                    .build_int_z_extend_or_bit_cast(int_val, i64_ty, "addr_i64")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
             }
         } else {
             return Err(vec![Diagnostic::error(
                 "MakeGenPtr address must be a pointer or integer".to_string(),
-                self.current_span()
+                self.current_span(),
             )]);
         };
 
@@ -753,19 +915,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if int_val.get_type().get_bit_width() == 32 {
                 int_val
             } else {
-                self.builder.build_int_truncate_or_bit_cast(
-                    int_val,
-                    i32_ty,
-                    "gen_i32"
-                ).map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM int cast error: {}", e),
-                    self.current_span()
-                )])?
+                self.builder
+                    .build_int_truncate_or_bit_cast(int_val, i32_ty, "gen_i32")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
             }
         } else {
             return Err(vec![Diagnostic::error(
                 "MakeGenPtr generation must be an integer".to_string(),
-                self.current_span()
+                self.current_span(),
             )]);
         };
 
@@ -774,44 +936,53 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if int_val.get_type().get_bit_width() == 32 {
                 int_val
             } else {
-                self.builder.build_int_truncate_or_bit_cast(
-                    int_val,
-                    i32_ty,
-                    "meta_i32"
-                ).map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM int cast error: {}", e),
-                    self.current_span()
-                )])?
+                self.builder
+                    .build_int_truncate_or_bit_cast(int_val, i32_ty, "meta_i32")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM int cast error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
             }
         } else {
             return Err(vec![Diagnostic::error(
                 "MakeGenPtr metadata must be an integer".to_string(),
-                self.current_span()
+                self.current_span(),
             )]);
         };
 
         // Build the BloodPtr struct value
         let mut blood_ptr_val = blood_ptr_type.get_undef();
-        blood_ptr_val = self.builder
+        blood_ptr_val = self
+            .builder
             .build_insert_value(blood_ptr_val, addr_i64, 0, "with_addr")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("Failed to insert address into BloodPtr: {}", e),
-                self.current_span()
-            )])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("Failed to insert address into BloodPtr: {}", e),
+                    self.current_span(),
+                )]
+            })?
             .into_struct_value();
-        blood_ptr_val = self.builder
+        blood_ptr_val = self
+            .builder
             .build_insert_value(blood_ptr_val, gen_i32, 1, "with_gen")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("Failed to insert generation into BloodPtr: {}", e),
-                self.current_span()
-            )])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("Failed to insert generation into BloodPtr: {}", e),
+                    self.current_span(),
+                )]
+            })?
             .into_struct_value();
-        blood_ptr_val = self.builder
+        blood_ptr_val = self
+            .builder
             .build_insert_value(blood_ptr_val, meta_i32, 2, "with_meta")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("Failed to insert metadata into BloodPtr: {}", e),
-                self.current_span()
-            )])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("Failed to insert metadata into BloodPtr: {}", e),
+                    self.current_span(),
+                )]
+            })?
             .into_struct_value();
 
         Ok(blood_ptr_val.into())
@@ -847,7 +1018,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Handle type mismatches for boolean operations (i1 vs i8)
         // This can happen when one operand is a loaded bool (i1) and the other
         // is a constant with a different integer type (e.g., i8 from unit type).
-        let (lhs_int, rhs_int) = if lhs_int.get_type().get_bit_width() != rhs_int.get_type().get_bit_width() {
+        let (lhs_int, rhs_int) = if lhs_int.get_type().get_bit_width()
+            != rhs_int.get_type().get_bit_width()
+        {
             let lhs_width = lhs_int.get_type().get_bit_width();
             let rhs_width = rhs_int.get_type().get_bit_width();
 
@@ -858,19 +1031,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     lhs_int
                 } else {
                     // Truncate to i1 (non-zero becomes true)
-                    self.builder.build_int_truncate(lhs_int, bool_ty, "bool_trunc")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM truncate error: {}", e), self.current_span()
-                        )])?
+                    self.builder
+                        .build_int_truncate(lhs_int, bool_ty, "bool_trunc")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM truncate error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                 };
                 let new_rhs = if rhs_width == 1 {
                     rhs_int
                 } else {
                     // Truncate to i1 (non-zero becomes true)
-                    self.builder.build_int_truncate(rhs_int, bool_ty, "bool_trunc")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM truncate error: {}", e), self.current_span()
-                        )])?
+                    self.builder
+                        .build_int_truncate(rhs_int, bool_ty, "bool_trunc")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM truncate error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                 };
                 (new_lhs, new_rhs)
             } else {
@@ -885,9 +1066,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.builder.build_int_s_extend(lhs_int, target_ty, "sext")
                     } else {
                         self.builder.build_int_z_extend(lhs_int, target_ty, "zext")
-                    }.map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM extend error: {}", e), self.current_span()
-                        )])?
+                    }
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM extend error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                 } else {
                     lhs_int
                 };
@@ -896,9 +1081,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.builder.build_int_s_extend(rhs_int, target_ty, "sext")
                     } else {
                         self.builder.build_int_z_extend(rhs_int, target_ty, "zext")
-                    }.map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM extend error: {}", e), self.current_span()
-                        )])?
+                    }
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM extend error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                 } else {
                     rhs_int
                 };
@@ -913,55 +1102,97 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             BinOp::Sub => self.builder.build_int_sub(lhs_int, rhs_int, "sub"),
             BinOp::Mul => self.builder.build_int_mul(lhs_int, rhs_int, "mul"),
             BinOp::Div => {
-                if !self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                if !self
+                    .unchecked_checks
+                    .contains(&crate::ast::UncheckedCheck::Overflow)
+                {
                     self.emit_div_zero_check(rhs_int)?;
                 }
                 if is_signed {
                     self.builder.build_int_signed_div(lhs_int, rhs_int, "sdiv")
                 } else {
-                    self.builder.build_int_unsigned_div(lhs_int, rhs_int, "udiv")
+                    self.builder
+                        .build_int_unsigned_div(lhs_int, rhs_int, "udiv")
                 }
-            },
+            }
             BinOp::Rem => {
-                if !self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                if !self
+                    .unchecked_checks
+                    .contains(&crate::ast::UncheckedCheck::Overflow)
+                {
                     self.emit_div_zero_check(rhs_int)?;
                 }
                 if is_signed {
                     self.builder.build_int_signed_rem(lhs_int, rhs_int, "srem")
                 } else {
-                    self.builder.build_int_unsigned_rem(lhs_int, rhs_int, "urem")
+                    self.builder
+                        .build_int_unsigned_rem(lhs_int, rhs_int, "urem")
                 }
-            },
+            }
             BinOp::BitAnd => self.builder.build_and(lhs_int, rhs_int, "and"),
             BinOp::BitOr => self.builder.build_or(lhs_int, rhs_int, "or"),
             BinOp::BitXor => self.builder.build_xor(lhs_int, rhs_int, "xor"),
             BinOp::Shl => self.builder.build_left_shift(lhs_int, rhs_int, "shl"),
-            BinOp::Shr => self.builder.build_right_shift(lhs_int, rhs_int, is_signed, "shr"),
-            BinOp::Eq => self.builder.build_int_compare(IntPredicate::EQ, lhs_int, rhs_int, "eq"),
-            BinOp::Ne => self.builder.build_int_compare(IntPredicate::NE, lhs_int, rhs_int, "ne"),
+            BinOp::Shr => self
+                .builder
+                .build_right_shift(lhs_int, rhs_int, is_signed, "shr"),
+            BinOp::Eq => self
+                .builder
+                .build_int_compare(IntPredicate::EQ, lhs_int, rhs_int, "eq"),
+            BinOp::Ne => self
+                .builder
+                .build_int_compare(IntPredicate::NE, lhs_int, rhs_int, "ne"),
             BinOp::Lt => self.builder.build_int_compare(
-                if is_signed { IntPredicate::SLT } else { IntPredicate::ULT },
-                lhs_int, rhs_int, "lt"
+                if is_signed {
+                    IntPredicate::SLT
+                } else {
+                    IntPredicate::ULT
+                },
+                lhs_int,
+                rhs_int,
+                "lt",
             ),
             BinOp::Le => self.builder.build_int_compare(
-                if is_signed { IntPredicate::SLE } else { IntPredicate::ULE },
-                lhs_int, rhs_int, "le"
+                if is_signed {
+                    IntPredicate::SLE
+                } else {
+                    IntPredicate::ULE
+                },
+                lhs_int,
+                rhs_int,
+                "le",
             ),
             BinOp::Gt => self.builder.build_int_compare(
-                if is_signed { IntPredicate::SGT } else { IntPredicate::UGT },
-                lhs_int, rhs_int, "gt"
+                if is_signed {
+                    IntPredicate::SGT
+                } else {
+                    IntPredicate::UGT
+                },
+                lhs_int,
+                rhs_int,
+                "gt",
             ),
             BinOp::Ge => self.builder.build_int_compare(
-                if is_signed { IntPredicate::SGE } else { IntPredicate::UGE },
-                lhs_int, rhs_int, "ge"
+                if is_signed {
+                    IntPredicate::SGE
+                } else {
+                    IntPredicate::UGE
+                },
+                lhs_int,
+                rhs_int,
+                "ge",
             ),
             BinOp::Offset => {
                 // Pointer offset - treat as add for now
                 self.builder.build_int_add(lhs_int, rhs_int, "offset")
             }
-        }.map_err(|e| vec![Diagnostic::error(
-            format!("LLVM binary op error: {}", e), self.current_span()
-        )])?;
+        }
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM binary op error: {}", e),
+                self.current_span(),
+            )]
+        })?;
 
         Ok(result.into())
     }
@@ -973,33 +1204,47 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         divisor: inkwell::values::IntValue<'ctx>,
     ) -> Result<(), Vec<Diagnostic>> {
         let zero = divisor.get_type().const_zero();
-        let is_zero = self.builder.build_int_compare(
-            inkwell::IntPredicate::EQ, divisor, zero, "div_zero_check"
-        ).map_err(|e| vec![Diagnostic::error(
-            format!("LLVM icmp error: {}", e), self.current_span()
-        )])?;
+        let is_zero = self
+            .builder
+            .build_int_compare(inkwell::IntPredicate::EQ, divisor, zero, "div_zero_check")
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM icmp error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         let current_fn = self.current_fn.expect("no current function");
         let div_panic_bb = self.context.append_basic_block(current_fn, "div_panic");
         let div_ok_bb = self.context.append_basic_block(current_fn, "div_ok");
 
-        self.builder.build_conditional_branch(is_zero, div_panic_bb, div_ok_bb)
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM branch error: {}", e), self.current_span()
-            )])?;
+        self.builder
+            .build_conditional_branch(is_zero, div_panic_bb, div_ok_bb)
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM branch error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // Panic block
         self.builder.position_at_end(div_panic_bb);
-        let panic_fn = self.module.get_function("blood_panic_div_zero")
+        let panic_fn = self
+            .module
+            .get_function("blood_panic_div_zero")
             .expect("blood_panic_div_zero not declared");
-        self.builder.build_call(panic_fn, &[], "")
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM call error: {}", e), self.current_span()
-            )])?;
-        self.builder.build_unreachable()
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM unreachable error: {}", e), self.current_span()
-            )])?;
+        self.builder.build_call(panic_fn, &[], "").map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM call error: {}", e),
+                self.current_span(),
+            )]
+        })?;
+        self.builder.build_unreachable().map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM unreachable error: {}", e),
+                self.current_span(),
+            )]
+        })?;
 
         // Continue in the ok block
         self.builder.position_at_end(div_ok_bb);
@@ -1019,43 +1264,128 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let rhs_float = rhs.into_float_value();
 
         let result: BasicValueEnum<'ctx> = match op {
-            BinOp::Add => self.builder.build_float_add(lhs_float, rhs_float, "fadd")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float add error: {}", e), self.current_span())])?
+            BinOp::Add => self
+                .builder
+                .build_float_add(lhs_float, rhs_float, "fadd")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float add error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Sub => self.builder.build_float_sub(lhs_float, rhs_float, "fsub")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float sub error: {}", e), self.current_span())])?
+            BinOp::Sub => self
+                .builder
+                .build_float_sub(lhs_float, rhs_float, "fsub")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float sub error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Mul => self.builder.build_float_mul(lhs_float, rhs_float, "fmul")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float mul error: {}", e), self.current_span())])?
+            BinOp::Mul => self
+                .builder
+                .build_float_mul(lhs_float, rhs_float, "fmul")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float mul error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Div => self.builder.build_float_div(lhs_float, rhs_float, "fdiv")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float div error: {}", e), self.current_span())])?
+            BinOp::Div => self
+                .builder
+                .build_float_div(lhs_float, rhs_float, "fdiv")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float div error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Rem => self.builder.build_float_rem(lhs_float, rhs_float, "frem")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float rem error: {}", e), self.current_span())])?
+            BinOp::Rem => self
+                .builder
+                .build_float_rem(lhs_float, rhs_float, "frem")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float rem error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Eq => self.builder.build_float_compare(FloatPredicate::OEQ, lhs_float, rhs_float, "feq")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Eq => self
+                .builder
+                .build_float_compare(FloatPredicate::OEQ, lhs_float, rhs_float, "feq")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Ne => self.builder.build_float_compare(FloatPredicate::ONE, lhs_float, rhs_float, "fne")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Ne => self
+                .builder
+                .build_float_compare(FloatPredicate::ONE, lhs_float, rhs_float, "fne")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Lt => self.builder.build_float_compare(FloatPredicate::OLT, lhs_float, rhs_float, "flt")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Lt => self
+                .builder
+                .build_float_compare(FloatPredicate::OLT, lhs_float, rhs_float, "flt")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Le => self.builder.build_float_compare(FloatPredicate::OLE, lhs_float, rhs_float, "fle")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Le => self
+                .builder
+                .build_float_compare(FloatPredicate::OLE, lhs_float, rhs_float, "fle")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Gt => self.builder.build_float_compare(FloatPredicate::OGT, lhs_float, rhs_float, "fgt")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Gt => self
+                .builder
+                .build_float_compare(FloatPredicate::OGT, lhs_float, rhs_float, "fgt")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
-            BinOp::Ge => self.builder.build_float_compare(FloatPredicate::OGE, lhs_float, rhs_float, "fge")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM float compare error: {}", e), self.current_span())])?
+            BinOp::Ge => self
+                .builder
+                .build_float_compare(FloatPredicate::OGE, lhs_float, rhs_float, "fge")
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM float compare error: {}", e),
+                        self.current_span(),
+                    )]
+                })?
                 .into(),
             // Bitwise operations not supported for floats
-            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::Offset => {
+            BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::Offset => {
                 return Err(vec![Diagnostic::error(
-                    format!("bitwise operation {:?} not supported for floating-point types", op),
+                    format!(
+                        "bitwise operation {:?} not supported for floating-point types",
+                        op
+                    ),
                     self.current_span(),
                 )]);
             }
@@ -1094,20 +1424,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Build a struct with result and false (no overflow)
                 let bool_type = self.context.bool_type();
                 let no_overflow = bool_type.const_zero();
-                let struct_type = self.context.struct_type(
-                    &[int_type.into(), bool_type.into()],
-                    false,
-                );
+                let struct_type = self
+                    .context
+                    .struct_type(&[int_type.into(), bool_type.into()], false);
                 let mut struct_val = struct_type.get_undef();
-                struct_val = self.builder.build_insert_value(struct_val, result.into_int_value(), 0, "checked_result")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), self.current_span()
-                    )])?
+                struct_val = self
+                    .builder
+                    .build_insert_value(struct_val, result.into_int_value(), 0, "checked_result")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                     .into_struct_value();
-                struct_val = self.builder.build_insert_value(struct_val, no_overflow, 1, "checked_overflow")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), self.current_span()
-                    )])?
+                struct_val = self
+                    .builder
+                    .build_insert_value(struct_val, no_overflow, 1, "checked_overflow")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                     .into_struct_value();
                 return Ok(struct_val.into());
             }
@@ -1132,15 +1471,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             })?;
 
         // Call the intrinsic
-        let call_result = self.builder
+        let call_result = self
+            .builder
             .build_call(
                 intrinsic_fn,
                 &[lhs_int.into(), rhs_int.into()],
                 "checked_op",
             )
-            .map_err(|e| vec![Diagnostic::error(
-                format!("LLVM call error: {}", e), self.current_span()
-            )])?;
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM call error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
         // The intrinsic returns {iN, i1} - extract as a struct value
         let result_struct = call_result.try_as_basic_value().basic().ok_or_else(|| {
@@ -1163,33 +1506,42 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             UnOp::Not => {
                 // Not only applies to integers (booleans)
                 let val_int = val.into_int_value();
-                let result = self.builder.build_not(val_int, "not")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM not error: {}", e), self.current_span()
-                    )])?;
+                let result = self.builder.build_not(val_int, "not").map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM not error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
                 Ok(result.into())
             }
             UnOp::Neg => {
                 // Neg applies to both integers and floats
                 match val {
                     BasicValueEnum::IntValue(int_val) => {
-                        let result = self.builder.build_int_neg(int_val, "neg")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM int neg error: {}", e), self.current_span()
-                            )])?;
+                        let result = self.builder.build_int_neg(int_val, "neg").map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM int neg error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                         Ok(result.into())
                     }
                     BasicValueEnum::FloatValue(float_val) => {
-                        let result = self.builder.build_float_neg(float_val, "fneg")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM float neg error: {}", e), self.current_span()
-                            )])?;
+                        let result =
+                            self.builder
+                                .build_float_neg(float_val, "fneg")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM float neg error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
                         Ok(result.into())
                     }
                     _ => Err(vec![Diagnostic::error(
                         format!("Cannot negate value of type {:?}", val.get_type()),
-                        self.current_span()
-                    )])
+                        self.current_span(),
+                    )]),
                 }
             }
         }
@@ -1222,44 +1574,68 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let is_signed = self.is_signed_type(source_ty);
                     if is_signed {
                         // Signed int: sign extend (i32 -> i64)
-                        let cast = self.builder.build_int_s_extend(int_val, int_ty, "sext")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM sext error: {}", e), self.current_span()
-                            )])?;
+                        let cast = self
+                            .builder
+                            .build_int_s_extend(int_val, int_ty, "sext")
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM sext error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
                         Ok(cast.into())
                     } else {
                         // Unsigned int or bool: zero extend (u32 -> u64)
-                        let cast = self.builder.build_int_z_extend(int_val, int_ty, "zext")
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM zext error: {}", e), self.current_span()
-                            )])?;
+                        let cast = self
+                            .builder
+                            .build_int_z_extend(int_val, int_ty, "zext")
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM zext error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
                         Ok(cast.into())
                     }
                 } else if dst_bits == 1 {
                     // Numeric → bool: use icmp ne 0 (not truncate, which gives low bit)
                     let zero = int_val.get_type().const_zero();
-                    let cast = self.builder.build_int_compare(
-                        inkwell::IntPredicate::NE, int_val, zero, "to_bool")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM icmp error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_int_compare(inkwell::IntPredicate::NE, int_val, zero, "to_bool")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM icmp error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 } else {
                     // Truncating
-                    let cast = self.builder.build_int_truncate(int_val, int_ty, "trunc")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM trunc error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_int_truncate(int_val, int_ty, "trunc")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM trunc error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 }
             }
 
             // Float to Int (signed)
             (BasicValueEnum::FloatValue(float_val), BasicTypeEnum::IntType(int_ty)) => {
-                let cast = self.builder.build_float_to_signed_int(float_val, int_ty, "fptosi")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM fptosi error: {}", e), self.current_span()
-                    )])?;
+                let cast = self
+                    .builder
+                    .build_float_to_signed_int(float_val, int_ty, "fptosi")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM fptosi error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 Ok(cast.into())
             }
 
@@ -1268,10 +1644,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Determine if the integer is signed based on bit width
                 // Blood's i32/i64 are signed, u32/u64 are unsigned
                 // For now, assume signed conversion
-                let cast = self.builder.build_signed_int_to_float(int_val, float_ty, "sitofp")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM sitofp error: {}", e), self.current_span()
-                    )])?;
+                let cast = self
+                    .builder
+                    .build_signed_int_to_float(int_val, float_ty, "sitofp")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM sitofp error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 Ok(cast.into())
             }
 
@@ -1281,38 +1662,58 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 if float_val.get_type() == float_ty {
                     Ok(float_val.into())
                 } else {
-                    let cast = self.builder.build_float_cast(float_val, float_ty, "fpcast")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM fpcast error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_float_cast(float_val, float_ty, "fpcast")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM fpcast error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 }
             }
 
             // Pointer to Pointer
             (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::PointerType(ptr_ty)) => {
-                let cast = self.builder.build_pointer_cast(ptr_val, ptr_ty, "ptrcast")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM ptrcast error: {}", e), self.current_span()
-                    )])?;
+                let cast = self
+                    .builder
+                    .build_pointer_cast(ptr_val, ptr_ty, "ptrcast")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM ptrcast error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 Ok(cast.into())
             }
 
             // Pointer to Int (for raw address operations)
             (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::IntType(int_ty)) => {
-                let cast = self.builder.build_ptr_to_int(ptr_val, int_ty, "ptrtoint")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM ptrtoint error: {}", e), self.current_span()
-                    )])?;
+                let cast = self
+                    .builder
+                    .build_ptr_to_int(ptr_val, int_ty, "ptrtoint")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM ptrtoint error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 Ok(cast.into())
             }
 
             // Int to Pointer
             (BasicValueEnum::IntValue(int_val), BasicTypeEnum::PointerType(ptr_ty)) => {
-                let cast = self.builder.build_int_to_ptr(int_val, ptr_ty, "inttoptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM inttoptr error: {}", e), self.current_span()
-                    )])?;
+                let cast = self
+                    .builder
+                    .build_int_to_ptr(int_val, ptr_ty, "inttoptr")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM inttoptr error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 Ok(cast.into())
             }
 
@@ -1320,21 +1721,34 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // This handles cases like &str -> *const u8 where &str is { i8*, i64 }
             (BasicValueEnum::StructValue(struct_val), BasicTypeEnum::PointerType(ptr_ty)) => {
                 // Extract the data pointer from field 0 of the fat pointer
-                let data_ptr = self.builder.build_extract_value(struct_val, 0, "fat_ptr_data")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM extract_value error: {}", e), self.current_span()
-                    )])?;
+                let data_ptr = self
+                    .builder
+                    .build_extract_value(struct_val, 0, "fat_ptr_data")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM extract_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 // Cast to the target pointer type if needed
                 if let BasicValueEnum::PointerValue(ptr_val) = data_ptr {
-                    let cast = self.builder.build_pointer_cast(ptr_val, ptr_ty, "fat_to_thin_ptr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM ptrcast error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_pointer_cast(ptr_val, ptr_ty, "fat_to_thin_ptr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM ptrcast error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Fat pointer field 0 is not a pointer: {:?}", data_ptr.get_type()),
-                        self.current_span()
+                        format!(
+                            "Fat pointer field 0 is not a pointer: {:?}",
+                            data_ptr.get_type()
+                        ),
+                        self.current_span(),
                     )])
                 }
             }
@@ -1342,26 +1756,44 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Fat pointer (struct) to Int - extract field 0 (fn_ptr or data_ptr) and convert to u64
             // Handles `fn as u64` where fn is { fn_ptr: i8*, env_ptr: i8* }
             (BasicValueEnum::StructValue(struct_val), BasicTypeEnum::IntType(int_ty)) => {
-                let field0 = self.builder.build_extract_value(struct_val, 0, "struct_field0")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM extract_value error: {}", e), self.current_span()
-                    )])?;
+                let field0 = self
+                    .builder
+                    .build_extract_value(struct_val, 0, "struct_field0")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM extract_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 if let BasicValueEnum::PointerValue(ptr_val) = field0 {
-                    let cast = self.builder.build_ptr_to_int(ptr_val, int_ty, "fat_to_int")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM ptrtoint error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_ptr_to_int(ptr_val, int_ty, "fat_to_int")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM ptrtoint error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 } else if let BasicValueEnum::IntValue(int_val) = field0 {
-                    let cast = self.builder.build_int_cast(int_val, int_ty, "field0_intcast")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM intcast error: {}", e), self.current_span()
-                        )])?;
+                    let cast = self
+                        .builder
+                        .build_int_cast(int_val, int_ty, "field0_intcast")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM intcast error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(cast.into())
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Cannot cast struct field 0 type {:?} to integer", field0.get_type()),
-                        self.current_span()
+                        format!(
+                            "Cannot cast struct field 0 type {:?} to integer",
+                            field0.get_type()
+                        ),
+                        self.current_span(),
                     )])
                 }
             }
@@ -1372,23 +1804,34 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // where the destination type expects a gen ref).
             (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::StructType(struct_ty))
                 if struct_ty.count_fields() == 2
-                    && struct_ty.get_field_type_at_index(0)
+                    && struct_ty
+                        .get_field_type_at_index(0)
                         .map_or(false, |t| t.is_pointer_type())
-                    && struct_ty.get_field_type_at_index(1)
-                        .map_or(false, |t| t.is_int_type()
-                            && t.into_int_type().get_bit_width() == 32) =>
+                    && struct_ty.get_field_type_at_index(1).map_or(false, |t| {
+                        t.is_int_type() && t.into_int_type().get_bit_width() == 32
+                    }) =>
             {
                 let mut fat_ref = struct_ty.get_undef();
-                fat_ref = self.builder.build_insert_value(fat_ref, ptr_val, 0, "cast_gen_ref_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), self.current_span()
-                    )])?
+                fat_ref = self
+                    .builder
+                    .build_insert_value(fat_ref, ptr_val, 0, "cast_gen_ref_ptr")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                     .into_struct_value();
                 let gen_val = self.context.i32_type().const_int(0, false);
-                fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "cast_gen_ref_gen")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM insert_value error: {}", e), self.current_span()
-                    )])?
+                fat_ref = self
+                    .builder
+                    .build_insert_value(fat_ref, gen_val, 1, "cast_gen_ref_gen")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM insert_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                     .into_struct_value();
                 Ok(fat_ref.into())
             }
@@ -1397,12 +1840,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             _ if val.get_type() == target_llvm => Ok(val),
 
             // Unsupported cast
-            _ => {
-                Err(vec![Diagnostic::error(
-                    format!("Unsupported cast from {:?} to {:?}", val.get_type(), target_llvm),
-                    self.current_span()
-                )])
-            }
+            _ => Err(vec![Diagnostic::error(
+                format!(
+                    "Unsupported cast from {:?} to {:?}",
+                    val.get_type(),
+                    target_llvm
+                ),
+                self.current_span(),
+            )]),
         }
     }
 
@@ -1421,12 +1866,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Determine if the target type involves dyn Trait
         let trait_id = match target_ty.kind() {
             TypeKind::DynTrait { trait_id, .. } => *trait_id,
-            TypeKind::Ref { inner, .. } => {
-                match inner.kind() {
-                    TypeKind::DynTrait { trait_id, .. } => *trait_id,
-                    _ => return Ok(None),
-                }
-            }
+            TypeKind::Ref { inner, .. } => match inner.kind() {
+                TypeKind::DynTrait { trait_id, .. } => *trait_id,
+                _ => return Ok(None),
+            },
             _ => return Ok(None),
         };
 
@@ -1443,24 +1886,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             BasicValueEnum::PointerValue(ptr) => ptr,
             BasicValueEnum::StructValue(sv) if matches!(source_ty.kind(), TypeKind::Ref { .. }) => {
                 // Gen ref { ptr, i32 } — extract the data pointer
-                self.builder.build_extract_value(sv, 0, "gen_ref_data_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM extract_value error: {}", e), self.current_span()
-                    )])?
+                self.builder
+                    .build_extract_value(sv, 0, "gen_ref_data_ptr")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM extract_value error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?
                     .into_pointer_value()
             }
             _ => {
                 // Non-pointer: allocate stack storage and take address
-                let alloca = self.builder
+                let alloca = self
+                    .builder
                     .build_alloca(val.get_type(), "trait_obj_data")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), self.current_span()
-                    )])?;
-                self.builder
-                    .build_store(alloca, val)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), self.current_span()
-                    )])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
+                self.builder.build_store(alloca, val).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
                 alloca
             }
         };
@@ -1481,15 +1933,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Build fat pointer: { data_ptr, vtable_ptr }
-        let fat_ptr_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fat_ptr_ty = self
+            .context
+            .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
         let mut fat_ptr = fat_ptr_ty.get_undef();
-        fat_ptr = self.builder
+        fat_ptr = self
+            .builder
             .build_insert_value(fat_ptr, data_ptr, 0, "fat_ptr.data")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?
             .into_struct_value();
-        fat_ptr = self.builder
+        fat_ptr = self
+            .builder
             .build_insert_value(fat_ptr, vtable_ptr, 1, "fat_ptr.vtable")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?
             .into_struct_value();
 
         Ok(Some(fat_ptr.into()))
@@ -1509,7 +1975,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         escape_results: Option<&EscapeResults>,
         dest_local: Option<LocalId>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
-        let vals: Vec<BasicValueEnum> = operands.iter()
+        let vals: Vec<BasicValueEnum> = operands
+            .iter()
             .map(|op| self.compile_mir_operand(op, body, escape_results))
             .collect::<Result<_, _>>()?;
 
@@ -1524,10 +1991,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let struct_ty = self.context.struct_type(&types, false);
                     let mut agg = struct_ty.get_undef();
                     for (i, val) in vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("tuple_{}", i))
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM insert error: {}", e), self.current_span()
-                            )])?
+                        agg = self
+                            .builder
+                            .build_insert_value(agg, *val, i as u32, &format!("tuple_{}", i))
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?
                             .into_struct_value();
                     }
                     Ok(agg.into())
@@ -1543,17 +2015,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let array_ty = elem_ty.array_type(vals.len() as u32);
                     let mut agg = array_ty.get_undef();
                     for (i, val) in vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("arr_{}", i))
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM insert error: {}", e), self.current_span()
-                            )])?
+                        agg = self
+                            .builder
+                            .build_insert_value(agg, *val, i as u32, &format!("arr_{}", i))
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?
                             .into_array_value();
                     }
                     Ok(agg.into())
                 }
             }
 
-            AggregateKind::Adt { def_id, variant_idx, type_args } => {
+            AggregateKind::Adt {
+                def_id,
+                variant_idx,
+                type_args,
+            } => {
                 // Look up struct/enum definition
                 if self.struct_defs.contains_key(def_id) {
                     // Use the concrete types of the operand values directly.
@@ -1568,10 +2049,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         let struct_ty = self.context.struct_type(&types, false);
                         let mut agg = struct_ty.get_undef();
                         for (i, val) in vals.iter().enumerate() {
-                            agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("field_{}", i))
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM insert error: {}", e), self.current_span()
-                                )])?
+                            agg = self
+                                .builder
+                                .build_insert_value(agg, *val, i as u32, &format!("field_{}", i))
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM insert error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                                 .into_struct_value();
                         }
                         Ok(agg.into())
@@ -1580,27 +2066,39 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // Enum variant - first field is tag, followed by payload fields
                     // For enums with heterogeneous variant payloads (different sizes/types),
                     // we use alloca + pointer casting since insertvalue requires exact type match.
-                    let variant_index = variant_idx.ok_or_else(|| vec![ice_err!(
-                        self.current_span(),
-                        "enum construction without variant index";
-                        "def_id" => def_id
-                    )])?;
+                    let variant_index = variant_idx.ok_or_else(|| {
+                        vec![ice_err!(
+                            self.current_span(),
+                            "enum construction without variant index";
+                            "def_id" => def_id
+                        )]
+                    })?;
 
                     // Get the full enum type using lower_type with concrete type arguments
                     let enum_ty = Type::adt(*def_id, type_args.clone());
                     let full_enum_llvm_ty = self.lower_type(&enum_ty);
 
                     // Build the aggregate with proper padding
-                    let tag = self.context.i32_type().const_int(variant_index as u64, false);
+                    let tag = self
+                        .context
+                        .i32_type()
+                        .const_int(variant_index as u64, false);
 
                     if let BasicTypeEnum::StructType(struct_ty) = full_enum_llvm_ty {
                         // Check if we can use direct insertvalue (types match) or need alloca approach
                         let types_match = vals.iter().enumerate().all(|(i, val)| {
-                            if let Some(field_ty) = struct_ty.get_field_type_at_index((i + 1) as u32) {
+                            if let Some(field_ty) =
+                                struct_ty.get_field_type_at_index((i + 1) as u32)
+                            {
                                 let matches = val.get_type() == field_ty;
                                 if std::env::var("BLOOD_DEBUG_ENUM").is_ok() {
-                                    eprintln!("[Enum] Field {}: val_ty={:?} field_ty={:?} matches={}",
-                                        i, val.get_type().print_to_string(), field_ty.print_to_string(), matches);
+                                    eprintln!(
+                                        "[Enum] Field {}: val_ty={:?} field_ty={:?} matches={}",
+                                        i,
+                                        val.get_type().print_to_string(),
+                                        field_ty.print_to_string(),
+                                        matches
+                                    );
                                 }
                                 matches
                             } else {
@@ -1616,26 +2114,46 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         if types_match && !vals.is_empty() {
                             // Fast path: variant field types match struct field types
                             let mut agg = struct_ty.get_undef();
-                            agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM insert error: {}", e), self.current_span()
-                                )])?
+                            agg = self
+                                .builder
+                                .build_insert_value(agg, tag, 0, "enum_tag")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM insert error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                                 .into_struct_value();
                             for (i, val) in vals.iter().enumerate() {
-                                agg = self.builder.build_insert_value(agg, *val, (i + 1) as u32, &format!("enum_field_{}", i))
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM insert error: {}", e), self.current_span()
-                                    )])?
+                                agg = self
+                                    .builder
+                                    .build_insert_value(
+                                        agg,
+                                        *val,
+                                        (i + 1) as u32,
+                                        &format!("enum_field_{}", i),
+                                    )
+                                    .map_err(|e| {
+                                        vec![Diagnostic::error(
+                                            format!("LLVM insert error: {}", e),
+                                            self.current_span(),
+                                        )]
+                                    })?
                                     .into_struct_value();
                             }
                             Ok(agg.into())
                         } else if vals.is_empty() {
                             // Unit variant - just set tag
                             let mut agg = struct_ty.get_undef();
-                            agg = self.builder.build_insert_value(agg, tag, 0, "enum_tag")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM insert error: {}", e), self.current_span()
-                                )])?
+                            agg = self
+                                .builder
+                                .build_insert_value(agg, tag, 0, "enum_tag")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM insert error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                                 .into_struct_value();
                             Ok(agg.into())
                         } else {
@@ -1648,20 +2166,28 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             // This caused SIGSEGV when storing i128 values that require 16-byte alignment.
                             let alloca = {
                                 // Save current insertion point
-                                let current_block = self.builder.get_insert_block()
-                                    .ok_or_else(|| vec![Diagnostic::error(
-                                        "No current block for alloca".to_string(), self.current_span()
-                                    )])?;
+                                let current_block =
+                                    self.builder.get_insert_block().ok_or_else(|| {
+                                        vec![Diagnostic::error(
+                                            "No current block for alloca".to_string(),
+                                            self.current_span(),
+                                        )]
+                                    })?;
 
                                 // Get the entry block of the current function
-                                let function = current_block.get_parent()
-                                    .ok_or_else(|| vec![Diagnostic::error(
-                                        "No parent function for current block".to_string(), self.current_span()
-                                    )])?;
-                                let entry_block = function.get_first_basic_block()
-                                    .ok_or_else(|| vec![Diagnostic::error(
-                                        "No entry block in function".to_string(), self.current_span()
-                                    )])?;
+                                let function = current_block.get_parent().ok_or_else(|| {
+                                    vec![Diagnostic::error(
+                                        "No parent function for current block".to_string(),
+                                        self.current_span(),
+                                    )]
+                                })?;
+                                let entry_block =
+                                    function.get_first_basic_block().ok_or_else(|| {
+                                        vec![Diagnostic::error(
+                                            "No entry block in function".to_string(),
+                                            self.current_span(),
+                                        )]
+                                    })?;
 
                                 // Position at the start of entry block for the alloca
                                 // We insert after any existing instructions (other allocas)
@@ -1672,15 +2198,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 }
 
                                 // Build the alloca in the entry block
-                                let alloca = self.builder.build_alloca(struct_ty, "enum_tmp")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM alloca error: {}", e), self.current_span()
-                                    )])?;
+                                let alloca = self
+                                    .builder
+                                    .build_alloca(struct_ty, "enum_tmp")
+                                    .map_err(|e| {
+                                        vec![Diagnostic::error(
+                                            format!("LLVM alloca error: {}", e),
+                                            self.current_span(),
+                                        )]
+                                    })?;
 
                                 // Set proper alignment for the alloca based on struct type.
                                 // This is critical for types containing i128/u128 which require
                                 // 16-byte alignment.
-                                let alloca_alignment = self.get_type_alignment_for_size(struct_ty.into()) as u32;
+                                let alloca_alignment =
+                                    self.get_type_alignment_for_size(struct_ty.into()) as u32;
                                 if let Some(inst) = alloca.as_instruction() {
                                     let _ = inst.set_alignment(alloca_alignment);
                                 }
@@ -1692,39 +2224,67 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             };
 
                             // Store tag at field 0
-                            let tag_ptr = self.builder.build_struct_gep(struct_ty, alloca, 0, "tag_ptr")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM GEP error: {}", e), self.current_span()
-                                )])?;
-                            let tag_store = self.builder.build_store(tag_ptr, tag)
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM store error: {}", e), self.current_span()
-                                )])?;
+                            let tag_ptr = self
+                                .builder
+                                .build_struct_gep(struct_ty, alloca, 0, "tag_ptr")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM GEP error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
+                            let tag_store =
+                                self.builder.build_store(tag_ptr, tag).map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM store error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
                             let _ = tag_store.set_alignment(4); // i32 tag alignment
 
                             // Get pointer to payload area (field 1)
-                            let payload_ptr = self.builder.build_struct_gep(struct_ty, alloca, 1, "payload_ptr")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM GEP error: {}", e), self.current_span()
-                                )])?;
+                            let payload_ptr = self
+                                .builder
+                                .build_struct_gep(struct_ty, alloca, 1, "payload_ptr")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM GEP error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
 
                             // Build the actual variant payload struct type
-                            let variant_field_types: Vec<BasicTypeEnum> = vals.iter().map(|v| v.get_type()).collect();
-                            let variant_struct_ty = self.context.struct_type(&variant_field_types, false);
+                            let variant_field_types: Vec<BasicTypeEnum> =
+                                vals.iter().map(|v| v.get_type()).collect();
+                            let variant_struct_ty =
+                                self.context.struct_type(&variant_field_types, false);
 
                             // With opaque pointers, pointer cast is a no-op but keeps the code clear
                             let variant_ptr = payload_ptr;
 
                             // Store each field
                             for (i, val) in vals.iter().enumerate() {
-                                let field_ptr = self.builder.build_struct_gep(variant_struct_ty, variant_ptr, i as u32, &format!("field_{}_ptr", i))
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM GEP error: {}", e), self.current_span()
-                                    )])?;
-                                let field_store = self.builder.build_store(field_ptr, *val)
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM store error: {}", e), self.current_span()
-                                    )])?;
+                                let field_ptr = self
+                                    .builder
+                                    .build_struct_gep(
+                                        variant_struct_ty,
+                                        variant_ptr,
+                                        i as u32,
+                                        &format!("field_{}_ptr", i),
+                                    )
+                                    .map_err(|e| {
+                                        vec![Diagnostic::error(
+                                            format!("LLVM GEP error: {}", e),
+                                            self.current_span(),
+                                        )]
+                                    })?;
+                                let field_store =
+                                    self.builder.build_store(field_ptr, *val).map_err(|e| {
+                                        vec![Diagnostic::error(
+                                            format!("LLVM store error: {}", e),
+                                            self.current_span(),
+                                        )]
+                                    })?;
                                 // Set proper alignment for enum field store.
                                 // Use natural alignment — the alloca has correct alignment set.
                                 let alignment = self.get_type_alignment_for_value(*val);
@@ -1732,10 +2292,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             }
 
                             // Load and return the full enum struct
-                            let result = self.builder.build_load(struct_ty, alloca, "enum_val")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM load error: {}", e), self.current_span()
-                                )])?;
+                            let result = self
+                                .builder
+                                .build_load(struct_ty, alloca, "enum_val")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM load error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
                             // Set proper alignment for the aggregate load.
                             // Use natural alignment — the alloca has correct alignment set.
                             if let Some(inst) = result.as_instruction_value() {
@@ -1750,7 +2315,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Unknown ADT {:?}", def_id), self.current_span()
+                        format!("Unknown ADT {:?}", def_id),
+                        self.current_span(),
                     )])
                 }
             }
@@ -1760,16 +2326,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Get the closure function pointer
                 let fn_ptr = if let Some(&fn_value) = self.functions.get(def_id) {
-                    self.builder.build_pointer_cast(
-                        fn_value.as_global_value().as_pointer_value(),
-                        i8_ptr_ty,
-                        "closure.fn_ptr"
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM pointer cast error: {}", e), self.current_span()
-                    )])?
+                    self.builder
+                        .build_pointer_cast(
+                            fn_value.as_global_value().as_pointer_value(),
+                            i8_ptr_ty,
+                            "closure.fn_ptr",
+                        )
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM pointer cast error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                 } else {
                     return Err(vec![Diagnostic::error(
-                        format!("Closure function {:?} not found", def_id), self.current_span()
+                        format!("Closure function {:?} not found", def_id),
+                        self.current_span(),
                     )]);
                 };
 
@@ -1779,13 +2351,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // instead of through a separate env_ptr allocation:
                 //   { fn_ptr: i8*, env_ptr: i8* }
                 // This eliminates one alloca and improves cache locality.
-                let use_inline_env = !vals.is_empty()
-                    && self.should_inline_closure_env(def_id, dest_local);
+                let use_inline_env =
+                    !vals.is_empty() && self.should_inline_closure_env(def_id, dest_local);
 
                 if use_inline_env {
                     // Inline environment: captures stored directly in closure struct.
                     // Struct layout: { fn_ptr: i8*, capture_0: T0, capture_1: T1, ... }
-                    let mut field_types: Vec<inkwell::types::BasicTypeEnum> = Vec::with_capacity(vals.len() + 1);
+                    let mut field_types: Vec<inkwell::types::BasicTypeEnum> =
+                        Vec::with_capacity(vals.len() + 1);
                     field_types.push(i8_ptr_ty.into());
                     for val in vals.iter() {
                         field_types.push(val.get_type());
@@ -1793,28 +2366,40 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let inline_struct_ty = self.context.struct_type(&field_types, false);
 
                     let mut closure_val = inline_struct_ty.get_undef();
-                    closure_val = self.builder.build_insert_value(closure_val, fn_ptr, 0, "closure.fn_ptr")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM insert error: {}", e), self.current_span()
-                        )])?
+                    closure_val = self
+                        .builder
+                        .build_insert_value(closure_val, fn_ptr, 0, "closure.fn_ptr")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
                     for (i, val) in vals.iter().enumerate() {
-                        closure_val = self.builder.build_insert_value(
-                            closure_val, *val, (i + 1) as u32,
-                            &format!("closure.capture_{}", i)
-                        )
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM insert error: {}", e), self.current_span()
-                        )])?
-                        .into_struct_value();
+                        closure_val = self
+                            .builder
+                            .build_insert_value(
+                                closure_val,
+                                *val,
+                                (i + 1) as u32,
+                                &format!("closure.capture_{}", i),
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?
+                            .into_struct_value();
                     }
 
                     Ok(closure_val.into())
                 } else {
                     // Standard fat pointer: { fn_ptr: i8*, env_ptr: i8* }
-                    let closure_struct_ty = self.context.struct_type(
-                        &[i8_ptr_ty.into(), i8_ptr_ty.into()], false
-                    );
+                    let closure_struct_ty = self
+                        .context
+                        .struct_type(&[i8_ptr_ty.into(), i8_ptr_ty.into()], false);
 
                     // Check if the closure escapes (is returned from a function or stored
                     // in a heap-allocated location). If so, we must heap-allocate the
@@ -1834,91 +2419,160 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         let captures_struct_ty = self.context.struct_type(&types, false);
                         let mut captures_val = captures_struct_ty.get_undef();
                         for (i, val) in vals.iter().enumerate() {
-                            captures_val = self.builder.build_insert_value(captures_val, *val, i as u32, &format!("capture_{}", i))
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM insert error: {}", e), self.current_span()
-                                )])?
+                            captures_val = self
+                                .builder
+                                .build_insert_value(
+                                    captures_val,
+                                    *val,
+                                    i as u32,
+                                    &format!("capture_{}", i),
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM insert error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                                 .into_struct_value();
                         }
 
                         if closure_escapes {
                             // Closure escapes - heap-allocate the environment
                             let i32_ty = self.context.i32_type();
-                            let alloc_fn = self.module.get_function("blood_alloc_or_abort")
-                                .ok_or_else(|| vec![Diagnostic::error(
-                                    "Runtime function blood_alloc_or_abort not found", self.current_span()
-                                )])?;
+                            let alloc_fn = self
+                                .module
+                                .get_function("blood_alloc_or_abort")
+                                .ok_or_else(|| {
+                                    vec![Diagnostic::error(
+                                        "Runtime function blood_alloc_or_abort not found",
+                                        self.current_span(),
+                                    )]
+                                })?;
 
-                            let size_of_captures = captures_struct_ty.size_of()
-                                .ok_or_else(|| vec![Diagnostic::error(
-                                    "Cannot determine size of closure captures struct", self.current_span()
-                                )])?;
+                            let size_of_captures =
+                                captures_struct_ty.size_of().ok_or_else(|| {
+                                    vec![Diagnostic::error(
+                                        "Cannot determine size of closure captures struct",
+                                        self.current_span(),
+                                    )]
+                                })?;
 
-                            let gen_alloca = self.builder.build_alloca(i32_ty, "closure_env_gen")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM alloca error: {}", e), self.current_span()
-                                )])?;
+                            let gen_alloca = self
+                                .builder
+                                .build_alloca(i32_ty, "closure_env_gen")
+                                .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM alloca error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?;
 
-                            let heap_addr = self.builder.build_call(
-                                alloc_fn,
-                                &[size_of_captures.into(), gen_alloca.into()],
-                                "closure_env_addr"
-                            ).map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM call error: {}", e), self.current_span()
-                            )])?
-                            .try_as_basic_value()
-                            .basic()
-                            .ok_or_else(|| vec![Diagnostic::error(
-                                "blood_alloc_or_abort did not return a value", self.current_span()
-                            )])?
-                            .into_int_value();
+                            let heap_addr = self
+                                .builder
+                                .build_call(
+                                    alloc_fn,
+                                    &[size_of_captures.into(), gen_alloca.into()],
+                                    "closure_env_addr",
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM call error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
+                                .try_as_basic_value()
+                                .basic()
+                                .ok_or_else(|| {
+                                    vec![Diagnostic::error(
+                                        "blood_alloc_or_abort did not return a value",
+                                        self.current_span(),
+                                    )]
+                                })?
+                                .into_int_value();
 
-                            let heap_ptr = self.builder.build_int_to_ptr(
-                                heap_addr,
-                                self.context.ptr_type(AddressSpace::default()),
-                                "closure_env_ptr"
-                            ).map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM int_to_ptr error: {}", e), self.current_span()
-                            )])?;
+                            let heap_ptr = self
+                                .builder
+                                .build_int_to_ptr(
+                                    heap_addr,
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    "closure_env_ptr",
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM int_to_ptr error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
 
-                            self.builder.build_store(heap_ptr, captures_val)
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM store error: {}", e), self.current_span()
-                                )])?;
+                            self.builder
+                                .build_store(heap_ptr, captures_val)
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM store error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
 
-                            self.builder.build_pointer_cast(heap_ptr, i8_ptr_ty, "env_ptr")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM pointer cast error: {}", e), self.current_span()
-                                )])?
+                            self.builder
+                                .build_pointer_cast(heap_ptr, i8_ptr_ty, "env_ptr")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM pointer cast error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                         } else {
                             // Closure doesn't escape - use stack allocation
-                            let captures_alloca = self.builder.build_alloca(captures_struct_ty, "closure_env")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM alloca error: {}", e), self.current_span()
-                                )])?;
-                            self.builder.build_store(captures_alloca, captures_val)
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM store error: {}", e), self.current_span()
-                                )])?;
+                            let captures_alloca = self
+                                .builder
+                                .build_alloca(captures_struct_ty, "closure_env")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM alloca error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
+                            self.builder
+                                .build_store(captures_alloca, captures_val)
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM store error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?;
 
-                            self.builder.build_pointer_cast(captures_alloca, i8_ptr_ty, "env_ptr")
-                                .map_err(|e| vec![Diagnostic::error(
-                                    format!("LLVM pointer cast error: {}", e), self.current_span()
-                                )])?
+                            self.builder
+                                .build_pointer_cast(captures_alloca, i8_ptr_ty, "env_ptr")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(
+                                        format!("LLVM pointer cast error: {}", e),
+                                        self.current_span(),
+                                    )]
+                                })?
                         }
                     };
 
                     // Build the closure fat pointer struct { fn_ptr, env_ptr }
                     let mut closure_val = closure_struct_ty.get_undef();
-                    closure_val = self.builder.build_insert_value(closure_val, fn_ptr, 0, "closure.with_fn")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM insert error: {}", e), self.current_span()
-                        )])?
+                    closure_val = self
+                        .builder
+                        .build_insert_value(closure_val, fn_ptr, 0, "closure.with_fn")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
-                    closure_val = self.builder.build_insert_value(closure_val, env_ptr, 1, "closure.with_env")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM insert error: {}", e), self.current_span()
-                        )])?
+                    closure_val = self
+                        .builder
+                        .build_insert_value(closure_val, env_ptr, 1, "closure.with_env")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
 
                     Ok(closure_val.into())
@@ -1935,10 +2589,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let struct_ty = self.context.struct_type(&types, false);
                     let mut agg = struct_ty.get_undef();
                     for (i, val) in vals.iter().enumerate() {
-                        agg = self.builder.build_insert_value(agg, *val, i as u32, &format!("record_{}", i))
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM insert error: {}", e), self.current_span()
-                            )])?
+                        agg = self
+                            .builder
+                            .build_insert_value(agg, *val, i as u32, &format!("record_{}", i))
+                            .map_err(|e| {
+                                vec![Diagnostic::error(
+                                    format!("LLVM insert error: {}", e),
+                                    self.current_span(),
+                                )]
+                            })?
                             .into_struct_value();
                     }
                     Ok(agg.into())
@@ -1954,22 +2613,42 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     if vals.len() != 3 {
                         return Err(vec![Diagnostic::error(
                             format!("RangeInclusive expects 3 fields, got {}", vals.len()),
-                            self.current_span()
+                            self.current_span(),
                         )]);
                     }
-                    let struct_ty = self.context.struct_type(
-                        &[elem_ty, elem_ty, self.context.bool_type().into()],
-                        false
-                    );
+                    let struct_ty = self
+                        .context
+                        .struct_type(&[elem_ty, elem_ty, self.context.bool_type().into()], false);
                     let mut range_val = struct_ty.get_undef();
-                    range_val = self.builder.build_insert_value(range_val, vals[0], 0, "start")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM insert error: {}", e), self.current_span())])?
+                    range_val = self
+                        .builder
+                        .build_insert_value(range_val, vals[0], 0, "start")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
-                    range_val = self.builder.build_insert_value(range_val, vals[1], 1, "end")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM insert error: {}", e), self.current_span())])?
+                    range_val = self
+                        .builder
+                        .build_insert_value(range_val, vals[1], 1, "end")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
-                    range_val = self.builder.build_insert_value(range_val, vals[2], 2, "exhausted")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM insert error: {}", e), self.current_span())])?
+                    range_val = self
+                        .builder
+                        .build_insert_value(range_val, vals[2], 2, "exhausted")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
                     Ok(range_val.into())
                 } else {
@@ -1977,16 +2656,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     if vals.len() != 2 {
                         return Err(vec![Diagnostic::error(
                             format!("Range expects 2 fields, got {}", vals.len()),
-                            self.current_span()
+                            self.current_span(),
                         )]);
                     }
                     let struct_ty = self.context.struct_type(&[elem_ty, elem_ty], false);
                     let mut range_val = struct_ty.get_undef();
-                    range_val = self.builder.build_insert_value(range_val, vals[0], 0, "start")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM insert error: {}", e), self.current_span())])?
+                    range_val = self
+                        .builder
+                        .build_insert_value(range_val, vals[0], 0, "start")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
-                    range_val = self.builder.build_insert_value(range_val, vals[1], 1, "end")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM insert error: {}", e), self.current_span())])?
+                    range_val = self
+                        .builder
+                        .build_insert_value(range_val, vals[1], 1, "end")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM insert error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?
                         .into_struct_value();
                     Ok(range_val.into())
                 }
@@ -2048,24 +2741,31 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Ok(self.context.bool_type().const_int(*v as u64, false).into())
             }
 
-            ConstantKind::Char(v) => {
-                Ok(self.context.i32_type().const_int(*v as u64, false).into())
-            }
+            ConstantKind::Char(v) => Ok(self.context.i32_type().const_int(*v as u64, false).into()),
 
             ConstantKind::String(s) => {
                 // Create global string constant and str slice {ptr, len}
-                let global = self.builder.build_global_string_ptr(s, "str")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM string error: {}", e), self.current_span()
-                    )])?;
+                let global = self
+                    .builder
+                    .build_global_string_ptr(s, "str")
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM string error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 let ptr = global.as_pointer_value();
                 let len = self.context.i64_type().const_int(s.len() as u64, false);
 
                 // Create str slice struct {ptr, len}
                 let str_type = self.context.struct_type(
-                    &[self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                      self.context.i64_type().into()],
-                    false
+                    &[
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
                 );
                 let str_val = str_type.const_named_struct(&[ptr.into(), len.into()]);
                 Ok(str_val.into())
@@ -2084,17 +2784,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Create byte slice struct {ptr, len}
                 let slice_type = self.context.struct_type(
-                    &[self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                      self.context.i64_type().into()],
-                    false
+                    &[
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
                 );
                 let slice_val = slice_type.const_named_struct(&[ptr.into(), len.into()]);
                 Ok(slice_val.into())
             }
 
-            ConstantKind::Unit => {
-                Ok(self.context.i8_type().const_int(0, false).into())
-            }
+            ConstantKind::Unit => Ok(self.context.i8_type().const_int(0, false).into()),
 
             ConstantKind::FnDef(def_id) => {
                 // Function reference - get the function pointer
@@ -2110,17 +2812,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let null_env = ptr_type.const_null();
 
                     // Create fat pointer struct { wrapper_fn_ptr, null_env }
-                    let fat_ptr_type = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
-                    let fat_ptr = fat_ptr_type.const_named_struct(&[fn_ptr.into(), null_env.into()]);
+                    let fat_ptr_type = self
+                        .context
+                        .struct_type(&[ptr_type.into(), ptr_type.into()], false);
+                    let fat_ptr =
+                        fat_ptr_type.const_named_struct(&[fn_ptr.into(), null_env.into()]);
                     Ok(fat_ptr.into())
                 } else if self.functions.contains_key(def_id) {
                     // Wrapper creation failed but function exists - this shouldn't happen
                     Err(vec![Diagnostic::error(
-                        format!("Failed to create fn pointer wrapper for {:?}", def_id), self.current_span()
+                        format!("Failed to create fn pointer wrapper for {:?}", def_id),
+                        self.current_span(),
                     )])
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Unknown function {:?}", def_id), self.current_span()
+                        format!("Unknown function {:?}", def_id),
+                        self.current_span(),
                     )])
                 }
             }
@@ -2129,17 +2836,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Const item reference - load from global constant
                 if let Some(global) = self.const_globals.get(def_id) {
                     let global_any_ty = global.get_value_type();
-                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| vec![Diagnostic::error(
-                        format!("Const global {:?} has non-basic type", def_id), self.current_span()
-                    )])?;
-                    let val = self.builder.build_load(global_ty, global.as_pointer_value(), "const_load")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM load error: {}", e), self.current_span()
-                        )])?;
+                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| {
+                        vec![Diagnostic::error(
+                            format!("Const global {:?} has non-basic type", def_id),
+                            self.current_span(),
+                        )]
+                    })?;
+                    let val = self
+                        .builder
+                        .build_load(global_ty, global.as_pointer_value(), "const_load")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(val)
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Unknown const {:?}", def_id), self.current_span()
+                        format!("Unknown const {:?}", def_id),
+                        self.current_span(),
                     )])
                 }
             }
@@ -2148,24 +2864,31 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Static item reference - load from global variable
                 if let Some(global) = self.static_globals.get(def_id) {
                     let global_any_ty = global.get_value_type();
-                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| vec![Diagnostic::error(
-                        format!("Static global {:?} has non-basic type", def_id), self.current_span()
-                    )])?;
-                    let val = self.builder.build_load(global_ty, global.as_pointer_value(), "static_load")
-                        .map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM load error: {}", e), self.current_span()
-                        )])?;
+                    let global_ty: BasicTypeEnum = global_any_ty.try_into().map_err(|_| {
+                        vec![Diagnostic::error(
+                            format!("Static global {:?} has non-basic type", def_id),
+                            self.current_span(),
+                        )]
+                    })?;
+                    let val = self
+                        .builder
+                        .build_load(global_ty, global.as_pointer_value(), "static_load")
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM load error: {}", e),
+                                self.current_span(),
+                            )]
+                        })?;
                     Ok(val)
                 } else {
                     Err(vec![Diagnostic::error(
-                        format!("Unknown static {:?}", def_id), self.current_span()
+                        format!("Unknown static {:?}", def_id),
+                        self.current_span(),
                     )])
                 }
             }
 
-            ConstantKind::ZeroSized => {
-                Ok(self.context.i8_type().const_int(0, false).into())
-            }
+            ConstantKind::ZeroSized => Ok(self.context.i8_type().const_int(0, false).into()),
 
             ConstantKind::ConstParam(id) => {
                 panic!("unsubstituted const param {:?} in codegen — monomorphization should have replaced this", id);

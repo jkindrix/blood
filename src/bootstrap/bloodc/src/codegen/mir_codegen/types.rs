@@ -55,13 +55,13 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 let f16_ty = self.context.f16_type();
 
                 if t == f64_ty {
-                    8  // 64-bit double
+                    8 // 64-bit double
                 } else if t == f32_ty {
-                    4  // 32-bit float
+                    4 // 32-bit float
                 } else if t == f128_ty {
                     16 // 128-bit quad precision
                 } else if t == f16_ty {
-                    2  // 16-bit half
+                    2 // 16-bit half
                 } else {
                     // Unknown float type - use target data layout as fallback
                     // For safety, assume 8 bytes (double) as conservative default
@@ -168,7 +168,9 @@ impl<'ctx, 'a> MirTypesCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             BasicValueEnum::StructValue(v) => BasicTypeEnum::StructType(v.get_type()),
             BasicValueEnum::ArrayValue(v) => BasicTypeEnum::ArrayType(v.get_type()),
             BasicValueEnum::VectorValue(v) => BasicTypeEnum::VectorType(v.get_type()),
-            BasicValueEnum::ScalableVectorValue(v) => BasicTypeEnum::ScalableVectorType(v.get_type()),
+            BasicValueEnum::ScalableVectorValue(v) => {
+                BasicTypeEnum::ScalableVectorType(v.get_type())
+            }
         };
         self.get_type_alignment_for_size(ty) as u32
     }
@@ -215,7 +217,9 @@ pub(super) fn type_may_contain_genref_impl(ty: &Type) -> bool {
         TypeKind::Infer(_) | TypeKind::Param(_) => true,
 
         // Records may contain genrefs if any field does
-        TypeKind::Record { fields, .. } => fields.iter().any(|f| type_may_contain_genref_impl(&f.ty)),
+        TypeKind::Record { fields, .. } => {
+            fields.iter().any(|f| type_may_contain_genref_impl(&f.ty))
+        }
 
         // Forall types may contain genrefs if body does
         TypeKind::Forall { body, .. } => type_may_contain_genref_impl(body),

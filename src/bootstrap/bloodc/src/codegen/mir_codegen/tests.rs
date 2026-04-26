@@ -1,10 +1,12 @@
 //! Tests for MIR code generation.
 
 use super::*;
-use crate::hir::{Crate as HirCrate, Item, ItemKind, Body, BodyId, Expr, ExprKind,
-                LiteralValue, Local, FnSig, FnDef, Generics, Stmt, DefId, LocalId, Type};
-use crate::mir::lowering::MirLowering;
+use crate::hir::{
+    Body, BodyId, Crate as HirCrate, DefId, Expr, ExprKind, FnDef, FnSig, Generics, Item, ItemKind,
+    LiteralValue, Local, LocalId, Stmt, Type,
+};
 use crate::mir::escape::EscapeAnalyzer;
+use crate::mir::lowering::MirLowering;
 use crate::span::Span;
 use inkwell::context::Context;
 use std::collections::HashMap;
@@ -134,8 +136,11 @@ fn test_mir_codegen_int_literal() {
 
     let ir_str = ir.unwrap();
     // Should contain the constant 42
-    assert!(ir_str.contains("42") || ir_str.contains("i32"),
-        "IR should contain the literal: {}", ir_str);
+    assert!(
+        ir_str.contains("42") || ir_str.contains("i32"),
+        "IR should contain the literal: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -158,8 +163,11 @@ fn test_mir_codegen_binary_op() {
 
     let ir_str = ir.unwrap();
     // Should contain add instruction
-    assert!(ir_str.contains("add") || ir_str.contains("10") || ir_str.contains("5"),
-        "IR should contain add operation: {}", ir_str);
+    assert!(
+        ir_str.contains("add") || ir_str.contains("10") || ir_str.contains("5"),
+        "IR should contain add operation: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -172,10 +180,13 @@ fn test_mir_codegen_declares_runtime_functions() {
 
     let ir_str = ir.unwrap();
     // Should declare generation validation function
-    assert!(ir_str.contains("blood_validate_generation") ||
-            ir_str.contains("blood_alloc") ||
-            ir_str.contains("blood_"),
-        "IR should declare runtime functions: {}", ir_str);
+    assert!(
+        ir_str.contains("blood_validate_generation")
+            || ir_str.contains("blood_alloc")
+            || ir_str.contains("blood_"),
+        "IR should declare runtime functions: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -204,8 +215,11 @@ fn test_mir_codegen_if_expression() {
 
     let ir_str = ir.unwrap();
     // Should have conditional branch
-    assert!(ir_str.contains("br") || ir_str.contains("label"),
-        "IR should contain branch instructions: {}", ir_str);
+    assert!(
+        ir_str.contains("br") || ir_str.contains("label"),
+        "IR should contain branch instructions: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -234,8 +248,11 @@ fn test_mir_codegen_while_loop() {
 
     let ir_str = ir.unwrap();
     // Should have loop structure
-    assert!(ir_str.contains("br") || ir_str.contains("loop"),
-        "IR should contain loop structure: {}", ir_str);
+    assert!(
+        ir_str.contains("br") || ir_str.contains("loop"),
+        "IR should contain loop structure: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -338,8 +355,11 @@ fn test_mir_codegen_let_binding() {
 
     let ir_str = ir.unwrap();
     // Should allocate and store
-    assert!(ir_str.contains("alloca") || ir_str.contains("store"),
-        "IR should contain stack allocation: {}", ir_str);
+    assert!(
+        ir_str.contains("alloca") || ir_str.contains("store"),
+        "IR should contain stack allocation: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -353,11 +373,17 @@ fn test_mir_path_compiles_function() {
 
     let ir_str = ir.unwrap();
     // Should have a function definition
-    assert!(ir_str.contains("define"),
-        "IR should define a function: {}", ir_str);
+    assert!(
+        ir_str.contains("define"),
+        "IR should define a function: {}",
+        ir_str
+    );
     // Should have a return
-    assert!(ir_str.contains("ret"),
-        "IR should have return instruction: {}", ir_str);
+    assert!(
+        ir_str.contains("ret"),
+        "IR should have return instruction: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -373,7 +399,11 @@ fn test_mir_codegen_tuple() {
     let hir_crate = make_test_crate(expr, Type::tuple(vec![i32_type(), i32_type()]));
 
     let ir = compile_via_mir(&hir_crate);
-    assert!(ir.is_ok(), "MIR codegen should handle tuples: {:?}", ir.err());
+    assert!(
+        ir.is_ok(),
+        "MIR codegen should handle tuples: {:?}",
+        ir.err()
+    );
 }
 
 #[test]
@@ -390,7 +420,11 @@ fn test_mir_codegen_array() {
     let hir_crate = make_test_crate(expr, Type::array(i32_type(), 3));
 
     let ir = compile_via_mir(&hir_crate);
-    assert!(ir.is_ok(), "MIR codegen should handle arrays: {:?}", ir.err());
+    assert!(
+        ir.is_ok(),
+        "MIR codegen should handle arrays: {:?}",
+        ir.err()
+    );
 }
 
 // =========================================================================
@@ -408,8 +442,11 @@ fn test_mir_declares_blood_validate_generation() {
 
     let ir_str = ir.unwrap();
     // The runtime function should be declared
-    assert!(ir_str.contains("blood_validate_generation"),
-        "IR should declare blood_validate_generation: {}", ir_str);
+    assert!(
+        ir_str.contains("blood_validate_generation"),
+        "IR should declare blood_validate_generation: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -423,9 +460,11 @@ fn test_mir_declares_blood_alloc_or_abort() {
 
     let ir_str = ir.unwrap();
     // The allocation function should be declared
-    assert!(ir_str.contains("blood_alloc_or_abort") ||
-            ir_str.contains("blood_alloc"),
-        "IR should declare blood_alloc_or_abort: {}", ir_str);
+    assert!(
+        ir_str.contains("blood_alloc_or_abort") || ir_str.contains("blood_alloc"),
+        "IR should declare blood_alloc_or_abort: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -439,9 +478,11 @@ fn test_mir_declares_stale_reference_panic() {
 
     let ir_str = ir.unwrap();
     // The panic function should be declared
-    assert!(ir_str.contains("blood_stale_reference_panic") ||
-            ir_str.contains("panic"),
-        "IR should declare stale reference panic function: {}", ir_str);
+    assert!(
+        ir_str.contains("blood_stale_reference_panic") || ir_str.contains("panic"),
+        "IR should declare stale reference panic function: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -455,9 +496,11 @@ fn test_mir_declares_effect_context_functions() {
 
     let ir_str = ir.unwrap();
     // The effect context functions should be declared
-    assert!(ir_str.contains("blood_effect_context") ||
-            ir_str.contains("effect_context"),
-        "IR should declare effect context functions: {}", ir_str);
+    assert!(
+        ir_str.contains("blood_effect_context") || ir_str.contains("effect_context"),
+        "IR should declare effect context functions: {}",
+        ir_str
+    );
 }
 
 #[test]
@@ -479,8 +522,12 @@ fn test_mir_codegen_runtime_declarations_complete() {
     ];
 
     for func in &critical_functions {
-        assert!(ir_str.contains(func),
-            "IR should declare {}: {}", func, ir_str);
+        assert!(
+            ir_str.contains(func),
+            "IR should declare {}: {}",
+            func,
+            ir_str
+        );
     }
 }
 
@@ -497,11 +544,10 @@ fn create_mir_body_with_escape_pattern(
     escape_to_return: bool,
 ) -> (crate::mir::body::MirBody, DefId) {
     use crate::mir::body::MirBody;
-    use crate::mir::LocalKind;
     use crate::mir::types::{
-        Operand, Place, Rvalue, StatementKind, AggregateKind,
-        Terminator, TerminatorKind,
+        AggregateKind, Operand, Place, Rvalue, StatementKind, Terminator, TerminatorKind,
     };
+    use crate::mir::LocalKind;
 
     let def_id = DefId::new(0);
     let mut body = MirBody::new(def_id, Span::dummy());
@@ -511,7 +557,11 @@ fn create_mir_body_with_escape_pattern(
     let non_primitive_ty = Type::reference(Type::i32(), false);
 
     // Create return place (local 0)
-    let return_local = body.new_local(non_primitive_ty.clone(), LocalKind::ReturnPlace, Span::dummy());
+    let return_local = body.new_local(
+        non_primitive_ty.clone(),
+        LocalKind::ReturnPlace,
+        Span::dummy(),
+    );
 
     // Create a temp local (local 1)
     let temp_local = body.new_local(non_primitive_ty.clone(), LocalKind::Temp, Span::dummy());
@@ -520,32 +570,47 @@ fn create_mir_body_with_escape_pattern(
     let bb = body.new_block();
 
     // Initialize temp with aggregate construction
-    body.push_statement(bb, crate::mir::types::Statement::new(
-        StatementKind::Assign(
-            Place::local(temp_local),
-            Rvalue::Aggregate { kind: AggregateKind::Tuple, operands: vec![] },
+    body.push_statement(
+        bb,
+        crate::mir::types::Statement::new(
+            StatementKind::Assign(
+                Place::local(temp_local),
+                Rvalue::Aggregate {
+                    kind: AggregateKind::Tuple,
+                    operands: vec![],
+                },
+            ),
+            Span::dummy(),
         ),
-        Span::dummy(),
-    ));
+    );
 
     if escape_to_return {
         // Assign temp to return place: _0 = _1 (causes temp to escape via ArgEscape)
-        body.push_statement(bb, crate::mir::types::Statement::new(
-            StatementKind::Assign(
-                Place::local(return_local),
-                Rvalue::Use(Operand::Copy(Place::local(temp_local))),
+        body.push_statement(
+            bb,
+            crate::mir::types::Statement::new(
+                StatementKind::Assign(
+                    Place::local(return_local),
+                    Rvalue::Use(Operand::Copy(Place::local(temp_local))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
     } else {
         // Initialize return separately - temp doesn't escape
-        body.push_statement(bb, crate::mir::types::Statement::new(
-            StatementKind::Assign(
-                Place::local(return_local),
-                Rvalue::Aggregate { kind: AggregateKind::Tuple, operands: vec![] },
+        body.push_statement(
+            bb,
+            crate::mir::types::Statement::new(
+                StatementKind::Assign(
+                    Place::local(return_local),
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Tuple,
+                        operands: vec![],
+                    },
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
     }
 
     // Return terminator
@@ -577,8 +642,12 @@ fn test_escape_analysis_affects_allocation_tier() {
     let tier = results.recommended_tier(temp_local);
     // NoEscape → Stack tier
     if temp_state == EscapeState::NoEscape {
-        assert_eq!(tier, MemoryTier::Stack,
-            "NoEscape local should recommend Stack tier, got {:?}", tier);
+        assert_eq!(
+            tier,
+            MemoryTier::Stack,
+            "NoEscape local should recommend Stack tier, got {:?}",
+            tier
+        );
     }
 
     // Test case 2: Local escapes to return
@@ -593,8 +662,12 @@ fn test_escape_analysis_affects_allocation_tier() {
     // Verify tier recommendation
     let tier2 = results2.recommended_tier(temp_local);
     if temp_state2 != EscapeState::NoEscape {
-        assert_eq!(tier2, MemoryTier::Region,
-            "Escaping local should recommend Region tier, got {:?}", tier2);
+        assert_eq!(
+            tier2,
+            MemoryTier::Region,
+            "Escaping local should recommend Region tier, got {:?}",
+            tier2
+        );
     }
 }
 
@@ -608,12 +681,11 @@ fn test_stack_promotable_excludes_effect_captured() {
     // are copied by value, so their storage location doesn't affect safety.
 
     use crate::mir::body::MirBody;
-    use crate::mir::LocalKind;
-    use crate::mir::types::{
-        Place, Rvalue, StatementKind, AggregateKind,
-        Terminator, TerminatorKind, Statement,
-    };
     use crate::mir::escape::EscapeAnalyzer;
+    use crate::mir::types::{
+        AggregateKind, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    };
+    use crate::mir::LocalKind;
 
     let def_id = DefId::new(0);
     let mut body = MirBody::new(def_id, Span::dummy());
@@ -623,7 +695,11 @@ fn test_stack_promotable_excludes_effect_captured() {
     let non_primitive_ty = Type::reference(Type::i32(), false);
 
     // Create return place
-    let _return_local = body.new_local(non_primitive_ty.clone(), LocalKind::ReturnPlace, Span::dummy());
+    let _return_local = body.new_local(
+        non_primitive_ty.clone(),
+        LocalKind::ReturnPlace,
+        Span::dummy(),
+    );
 
     // Create a temp that will be effect-captured
     let temp = body.new_local(non_primitive_ty.clone(), LocalKind::Temp, Span::dummy());
@@ -632,19 +708,25 @@ fn test_stack_promotable_excludes_effect_captured() {
 
     // Initialize temp with an rvalue (we use a simple unit tuple construction)
     // The key is CaptureSnapshot below, not the specific assignment
-    body.push_statement(bb, Statement::new(
-        StatementKind::Assign(
-            Place::local(temp),
-            Rvalue::Aggregate { kind: AggregateKind::Tuple, operands: vec![] },
+    body.push_statement(
+        bb,
+        Statement::new(
+            StatementKind::Assign(
+                Place::local(temp),
+                Rvalue::Aggregate {
+                    kind: AggregateKind::Tuple,
+                    operands: vec![],
+                },
+            ),
+            Span::dummy(),
         ),
-        Span::dummy(),
-    ));
+    );
 
     // Capture snapshot of temp (simulates effect operation capturing the value)
-    body.push_statement(bb, Statement::new(
-        StatementKind::CaptureSnapshot(temp),
-        Span::dummy(),
-    ));
+    body.push_statement(
+        bb,
+        Statement::new(StatementKind::CaptureSnapshot(temp), Span::dummy()),
+    );
 
     body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -653,48 +735,70 @@ fn test_stack_promotable_excludes_effect_captured() {
     let results = analyzer.analyze(&body);
 
     // Verify: effect-captured local should NOT be stack promotable (for non-Copy types)
-    assert!(results.is_effect_captured(temp),
-        "Temp should be effect-captured");
-    assert!(!results.can_stack_allocate(temp),
-        "Effect-captured non-primitive local should NOT be stack-promotable");
+    assert!(
+        results.is_effect_captured(temp),
+        "Temp should be effect-captured"
+    );
+    assert!(
+        !results.can_stack_allocate(temp),
+        "Effect-captured non-primitive local should NOT be stack-promotable"
+    );
 
     // Verify tier recommendation
     let tier = results.recommended_tier(temp);
-    assert_eq!(tier, crate::mir::ptr::MemoryTier::Region,
-        "Effect-captured local should recommend Region tier");
+    assert_eq!(
+        tier,
+        crate::mir::ptr::MemoryTier::Region,
+        "Effect-captured local should recommend Region tier"
+    );
 }
 
 #[test]
 fn test_get_local_tier_respects_escape_results() {
     // Test that get_local_tier correctly uses EscapeResults.
 
+    use crate::hir::LocalId;
     use crate::mir::escape::EscapeResults;
     use crate::mir::ptr::MemoryTier;
-    use crate::hir::LocalId;
 
     // Create mock escape results
     let mut results = EscapeResults::new();
 
     // Local 1: NoEscape, stack-promotable
     let local1 = LocalId::new(1);
-    results.states.insert(local1, crate::mir::escape::EscapeState::NoEscape);
+    results
+        .states
+        .insert(local1, crate::mir::escape::EscapeState::NoEscape);
     results.stack_promotable.insert(local1);
 
     // Local 2: ArgEscape, not stack-promotable
     let local2 = LocalId::new(2);
-    results.states.insert(local2, crate::mir::escape::EscapeState::ArgEscape);
+    results
+        .states
+        .insert(local2, crate::mir::escape::EscapeState::ArgEscape);
 
     // Local 3: EffectEscape, not stack-promotable
     let local3 = LocalId::new(3);
-    results.states.insert(local3, crate::mir::escape::EscapeState::EffectEscape);
+    results
+        .states
+        .insert(local3, crate::mir::escape::EscapeState::EffectEscape);
 
     // Verify tier recommendations
-    assert_eq!(results.recommended_tier(local1), MemoryTier::Stack,
-        "NoEscape + stack_promotable should recommend Stack");
-    assert_eq!(results.recommended_tier(local2), MemoryTier::Region,
-        "ArgEscape should recommend Region");
-    assert_eq!(results.recommended_tier(local3), MemoryTier::Region,
-        "EffectEscape should recommend Region");
+    assert_eq!(
+        results.recommended_tier(local1),
+        MemoryTier::Stack,
+        "NoEscape + stack_promotable should recommend Stack"
+    );
+    assert_eq!(
+        results.recommended_tier(local2),
+        MemoryTier::Region,
+        "ArgEscape should recommend Region"
+    );
+    assert_eq!(
+        results.recommended_tier(local3),
+        MemoryTier::Region,
+        "EffectEscape should recommend Region"
+    );
 }
 
 #[test]
@@ -722,8 +826,11 @@ fn test_codegen_uses_escape_results_for_allocation() {
     // but the constant 42 should be loaded directly.
 
     // Verify alloca is used (stack allocation exists)
-    assert!(ir_str.contains("alloca"),
-        "IR should contain stack allocation (alloca): {}", ir_str);
+    assert!(
+        ir_str.contains("alloca"),
+        "IR should contain stack allocation (alloca): {}",
+        ir_str
+    );
 
     // Verify that simple functions don't unnecessarily use region allocation
     // Note: Runtime declarations ARE present, but actual calls should be minimal
@@ -738,8 +845,8 @@ fn test_generation_check_skipped_for_noescape() {
     // This is tested by checking the codegen logic path, not the final IR,
     // because simple i32 values don't involve pointer dereferences.
 
-    use crate::mir::escape::{EscapeResults, EscapeState};
     use crate::hir::LocalId;
+    use crate::mir::escape::{EscapeResults, EscapeState};
 
     let mut results = EscapeResults::new();
     let local = LocalId::new(1);
@@ -748,14 +855,18 @@ fn test_generation_check_skipped_for_noescape() {
 
     // should_skip_gen_check logic from place.rs:
     let should_skip = results.get(local) == EscapeState::NoEscape;
-    assert!(should_skip,
-        "Generation checks should be skipped for NoEscape locals");
+    assert!(
+        should_skip,
+        "Generation checks should be skipped for NoEscape locals"
+    );
 
     // For comparison, escaping locals should NOT skip generation checks
     let local2 = LocalId::new(2);
     results.states.insert(local2, EscapeState::ArgEscape);
 
     let should_not_skip = results.get(local2) == EscapeState::NoEscape;
-    assert!(!should_not_skip,
-        "Generation checks should NOT be skipped for ArgEscape locals");
+    assert!(
+        !should_not_skip,
+        "Generation checks should NOT be skipped for ArgEscape locals"
+    );
 }

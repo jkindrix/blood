@@ -16,8 +16,8 @@ use std::collections::HashMap;
 
 use crate::ast::{
     Declaration, ElseBranch, Expr, ExprKind, FragmentKind, HygieneId, MacroCallKind, MacroDecl,
-    MacroDelimiter, MacroExpansion, MacroExpansionPart, MacroPattern, MacroPatternPart,
-    MacroToken, Program, RepetitionKind, Statement, TokenStream, TokenTree,
+    MacroDelimiter, MacroExpansion, MacroExpansionPart, MacroPattern, MacroPatternPart, MacroToken,
+    Program, RepetitionKind, Statement, TokenStream, TokenTree,
 };
 use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
@@ -142,9 +142,7 @@ impl MacroExpander {
             // Handler/Trait/Impl contain function bodies which are handled
             // when those functions are visited individually during type checking.
             // The macro expander runs on the top-level program before lowering.
-            Declaration::Handler(_)
-            | Declaration::Trait(_)
-            | Declaration::Impl(_) => {}
+            Declaration::Handler(_) | Declaration::Trait(_) | Declaration::Impl(_) => {}
         }
     }
 
@@ -193,12 +191,7 @@ impl MacroExpander {
                     let macro_name = path
                         .segments
                         .last()
-                        .map(|s| {
-                            self.interner
-                                .resolve(s.name.node)
-                                .unwrap_or("")
-                                .to_string()
-                        })
+                        .map(|s| self.interner.resolve(s.name.node).unwrap_or("").to_string())
                         .unwrap_or_default();
 
                     if let Some(macro_def) = self.macros.get(&macro_name).cloned() {
@@ -215,7 +208,7 @@ impl MacroExpander {
                                 // Use the same interner to ensure symbols are consistent
                                 let mut parser = crate::parser::Parser::with_interner(
                                     &expanded_source,
-                                    self.interner.clone()
+                                    self.interner.clone(),
                                 );
                                 match parser.parse_expr_for_macro() {
                                     Ok(parsed_expr) => {
@@ -405,13 +398,17 @@ impl MacroExpander {
                     self.expand_block(&mut handler.body);
                 }
             }
-            ExprKind::InlineHandle { body, operations, .. } => {
+            ExprKind::InlineHandle {
+                body, operations, ..
+            } => {
                 self.expand_expr(body);
                 for op in operations {
                     self.expand_block(&mut op.body);
                 }
             }
-            ExprKind::InlineWithDo { body, operations, .. } => {
+            ExprKind::InlineWithDo {
+                body, operations, ..
+            } => {
                 self.expand_expr(body);
                 for op in operations {
                     self.expand_block(&mut op.body);
@@ -475,7 +472,9 @@ impl MacroExpander {
         for part in &pattern.parts {
             match part {
                 MacroPatternPart::Group {
-                    delimiter: _, pattern, ..
+                    delimiter: _,
+                    pattern,
+                    ..
                 } => {
                     // For the outer group, match the delimiter and recurse
                     if input.tokens.is_empty() {
@@ -536,14 +535,8 @@ impl MacroExpander {
                 }
                 false
             }
-            MacroPatternPart::Capture {
-                name, fragment, ..
-            } => {
-                let name_str = self
-                    .interner
-                    .resolve(name.node)
-                    .unwrap_or("")
-                    .to_string();
+            MacroPatternPart::Capture { name, fragment, .. } => {
+                let name_str = self.interner.resolve(name.node).unwrap_or("").to_string();
 
                 // Capture tokens based on fragment type
                 if let Some(captured) = self.capture_fragment(*fragment, input, pos) {
@@ -627,9 +620,7 @@ impl MacroExpander {
                 true
             }
             MacroPatternPart::Group {
-                delimiter,
-                pattern,
-                ..
+                delimiter, pattern, ..
             } => {
                 // Match a delimited group
                 if *pos >= input.tokens.len() {
@@ -675,13 +666,17 @@ impl MacroExpander {
                     // For now, we reconstruct based on token kind
                     self.token_to_source(t)
                 }
-                TokenTree::Group { delimiter, stream, .. } => {
+                TokenTree::Group {
+                    delimiter, stream, ..
+                } => {
                     let (open, close) = match delimiter {
                         MacroDelimiter::Paren => ("(", ")"),
                         MacroDelimiter::Bracket => ("[", "]"),
                         MacroDelimiter::Brace => ("{", "}"),
                     };
-                    let inner: String = stream.tokens.iter()
+                    let inner: String = stream
+                        .tokens
+                        .iter()
                         .map(|t| self.tree_to_source(t))
                         .collect::<Vec<_>>()
                         .join(" ");
@@ -951,13 +946,17 @@ impl MacroExpander {
     fn tree_to_source(&self, tree: &TokenTree) -> String {
         match tree {
             TokenTree::Token(t) => self.token_to_source(t),
-            TokenTree::Group { delimiter, stream, .. } => {
+            TokenTree::Group {
+                delimiter, stream, ..
+            } => {
                 let (open, close) = match delimiter {
                     MacroDelimiter::Paren => ("(", ")"),
                     MacroDelimiter::Bracket => ("[", "]"),
                     MacroDelimiter::Brace => ("{", "}"),
                 };
-                let inner: String = stream.tokens.iter()
+                let inner: String = stream
+                    .tokens
+                    .iter()
                     .map(|t| self.tree_to_source(t))
                     .collect::<Vec<_>>()
                     .join(" ");
@@ -1033,23 +1032,36 @@ impl MacroExpander {
                             // identifier followed by ! (macro call)
                             (TokenKind::Ident | TokenKind::TypeIdent, TokenKind::Not) => false,
                             // ! followed by delimiter (macro arguments)
-                            (TokenKind::Not, TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace) => false,
+                            (
+                                TokenKind::Not,
+                                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace,
+                            ) => false,
                             // before semicolon or comma
                             (_, TokenKind::Semi | TokenKind::Comma) => false,
                             // before closing delimiters
-                            (_, TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace) => false,
+                            (_, TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace) => {
+                                false
+                            }
                             // after opening delimiters
-                            (TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace, _) => false,
+                            (TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace, _) => {
+                                false
+                            }
                             _ => true,
                         }
                     } else {
                         // Last token in this part - add space if it's not punctuation
                         // This ensures spacing between parts (e.g., "if" followed by "$x")
-                        !matches!(t.kind,
-                            TokenKind::Semi | TokenKind::Comma |
-                            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace |
-                            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace |
-                            TokenKind::Not
+                        !matches!(
+                            t.kind,
+                            TokenKind::Semi
+                                | TokenKind::Comma
+                                | TokenKind::LParen
+                                | TokenKind::LBracket
+                                | TokenKind::LBrace
+                                | TokenKind::RParen
+                                | TokenKind::RBracket
+                                | TokenKind::RBrace
+                                | TokenKind::Not
                         )
                     };
 
@@ -1059,10 +1071,7 @@ impl MacroExpander {
                 }
             }
             MacroExpansionPart::Substitution { name, .. } => {
-                let name_str = self.interner
-                    .resolve(name.node)
-                    .unwrap_or("")
-                    .to_string();
+                let name_str = self.interner.resolve(name.node).unwrap_or("").to_string();
 
                 if let Some(captured) = captures.get(&name_str) {
                     match captured {
@@ -1083,16 +1092,15 @@ impl MacroExpander {
                     return Err(format!("undefined capture: ${}", name_str));
                 }
             }
-            MacroExpansionPart::Repetition { parts, separator, .. } => {
+            MacroExpansionPart::Repetition {
+                parts, separator, ..
+            } => {
                 // Handle repetition substitution
                 // Find a repeated capture to iterate over
                 let mut repeat_count = 0;
                 for part in parts {
                     if let MacroExpansionPart::Substitution { name, .. } = part {
-                        let name_str = self.interner
-                            .resolve(name.node)
-                            .unwrap_or("")
-                            .to_string();
+                        let name_str = self.interner.resolve(name.node).unwrap_or("").to_string();
                         if let Some(CapturedValue::Repeated(items)) = captures.get(&name_str) {
                             repeat_count = items.len();
                             break;
@@ -1137,7 +1145,9 @@ impl MacroExpander {
                     }
                 }
             }
-            MacroExpansionPart::Group { delimiter, parts, .. } => {
+            MacroExpansionPart::Group {
+                delimiter, parts, ..
+            } => {
                 let (open, close) = match delimiter {
                     MacroDelimiter::Paren => ("(", ")"),
                     MacroDelimiter::Bracket => ("[", "]"),

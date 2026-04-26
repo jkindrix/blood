@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::diagnostics::Diagnostic;
-use crate::hir::{self, DefId, Expr, ExprKind, Type, BodyId, LiteralValue};
+use crate::hir::{self, BodyId, DefId, Expr, ExprKind, LiteralValue, Type};
 use crate::span::Span;
 
 /// A part of a parsed format string.
@@ -98,14 +98,14 @@ impl<'a> MacroExpander<'a> {
 
         let kind = match expr.kind {
             // === Macro nodes to expand ===
+            ExprKind::MacroExpansion {
+                macro_name,
+                format_str,
+                args,
+                named_args,
+            } => self.expand_format_macro(&macro_name, &format_str, args, named_args, &ty, span),
 
-            ExprKind::MacroExpansion { macro_name, format_str, args, named_args } => {
-                self.expand_format_macro(&macro_name, &format_str, args, named_args, &ty, span)
-            }
-
-            ExprKind::VecLiteral(exprs) => {
-                self.expand_vec_literal(exprs, &ty, span)
-            }
+            ExprKind::VecLiteral(exprs) => self.expand_vec_literal(exprs, &ty, span),
 
             ExprKind::VecRepeat { value, count } => {
                 self.expand_vec_repeat(*value, *count, &ty, span)
@@ -115,41 +115,34 @@ impl<'a> MacroExpander<'a> {
                 self.expand_assert(*condition, message.map(|m| *m), span)
             }
 
-            ExprKind::Dbg(inner) => {
-                self.expand_dbg(*inner, &ty, span)
-            }
+            ExprKind::Dbg(inner) => self.expand_dbg(*inner, &ty, span),
 
             // === Recursively expand all compound expressions ===
+            ExprKind::Binary { op, left, right } => ExprKind::Binary {
+                op,
+                left: Box::new(self.expand_expr(*left)),
+                right: Box::new(self.expand_expr(*right)),
+            },
 
-            ExprKind::Binary { op, left, right } => {
-                ExprKind::Binary {
-                    op,
-                    left: Box::new(self.expand_expr(*left)),
-                    right: Box::new(self.expand_expr(*right)),
-                }
-            }
+            ExprKind::Unary { op, operand } => ExprKind::Unary {
+                op,
+                operand: Box::new(self.expand_expr(*operand)),
+            },
 
-            ExprKind::Unary { op, operand } => {
-                ExprKind::Unary {
-                    op,
-                    operand: Box::new(self.expand_expr(*operand)),
-                }
-            }
+            ExprKind::Call { callee, args } => ExprKind::Call {
+                callee: Box::new(self.expand_expr(*callee)),
+                args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
+            },
 
-            ExprKind::Call { callee, args } => {
-                ExprKind::Call {
-                    callee: Box::new(self.expand_expr(*callee)),
-                    args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
-                }
-            }
-
-            ExprKind::MethodCall { receiver, method, args } => {
-                ExprKind::MethodCall {
-                    receiver: Box::new(self.expand_expr(*receiver)),
-                    method,
-                    args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
-                }
-            }
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+            } => ExprKind::MethodCall {
+                receiver: Box::new(self.expand_expr(*receiver)),
+                method,
+                args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
+            },
 
             ExprKind::Block { stmts, expr: tail } => {
                 let expanded_stmts = stmts.into_iter().map(|s| self.expand_stmt(s)).collect();
@@ -160,7 +153,11 @@ impl<'a> MacroExpander<'a> {
                 }
             }
 
-            ExprKind::Region { name, stmts, expr: tail } => {
+            ExprKind::Region {
+                name,
+                stmts,
+                expr: tail,
+            } => {
                 let expanded_stmts = stmts.into_iter().map(|s| self.expand_stmt(s)).collect();
                 let expanded_tail = tail.map(|e| Box::new(self.expand_expr(*e)));
                 ExprKind::Region {
@@ -170,71 +167,64 @@ impl<'a> MacroExpander<'a> {
                 }
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
-                ExprKind::If {
-                    condition: Box::new(self.expand_expr(*condition)),
-                    then_branch: Box::new(self.expand_expr(*then_branch)),
-                    else_branch: else_branch.map(|e| Box::new(self.expand_expr(*e))),
-                }
-            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => ExprKind::If {
+                condition: Box::new(self.expand_expr(*condition)),
+                then_branch: Box::new(self.expand_expr(*then_branch)),
+                else_branch: else_branch.map(|e| Box::new(self.expand_expr(*e))),
+            },
 
-            ExprKind::Match { scrutinee, arms } => {
-                ExprKind::Match {
-                    scrutinee: Box::new(self.expand_expr(*scrutinee)),
-                    arms: arms.into_iter().map(|arm| hir::MatchArm {
+            ExprKind::Match { scrutinee, arms } => ExprKind::Match {
+                scrutinee: Box::new(self.expand_expr(*scrutinee)),
+                arms: arms
+                    .into_iter()
+                    .map(|arm| hir::MatchArm {
                         pattern: arm.pattern,
                         guard: arm.guard.map(|g| self.expand_expr(g)),
                         body: self.expand_expr(arm.body),
-                    }).collect(),
-                }
-            }
+                    })
+                    .collect(),
+            },
 
-            ExprKind::Loop { body, label } => {
-                ExprKind::Loop {
-                    body: Box::new(self.expand_expr(*body)),
-                    label,
-                }
-            }
+            ExprKind::Loop { body, label } => ExprKind::Loop {
+                body: Box::new(self.expand_expr(*body)),
+                label,
+            },
 
-            ExprKind::While { condition, body, label } => {
-                ExprKind::While {
-                    condition: Box::new(self.expand_expr(*condition)),
-                    body: Box::new(self.expand_expr(*body)),
-                    label,
-                }
-            }
+            ExprKind::While {
+                condition,
+                body,
+                label,
+            } => ExprKind::While {
+                condition: Box::new(self.expand_expr(*condition)),
+                body: Box::new(self.expand_expr(*body)),
+                label,
+            },
 
-            ExprKind::Return(val) => {
-                ExprKind::Return(val.map(|v| Box::new(self.expand_expr(*v))))
-            }
+            ExprKind::Return(val) => ExprKind::Return(val.map(|v| Box::new(self.expand_expr(*v)))),
 
-            ExprKind::Break { label, value } => {
-                ExprKind::Break {
-                    label,
-                    value: value.map(|v| Box::new(self.expand_expr(*v))),
-                }
-            }
+            ExprKind::Break { label, value } => ExprKind::Break {
+                label,
+                value: value.map(|v| Box::new(self.expand_expr(*v))),
+            },
 
-            ExprKind::Assign { target, value } => {
-                ExprKind::Assign {
-                    target: Box::new(self.expand_expr(*target)),
-                    value: Box::new(self.expand_expr(*value)),
-                }
-            }
+            ExprKind::Assign { target, value } => ExprKind::Assign {
+                target: Box::new(self.expand_expr(*target)),
+                value: Box::new(self.expand_expr(*value)),
+            },
 
-            ExprKind::Field { base, field_idx } => {
-                ExprKind::Field {
-                    base: Box::new(self.expand_expr(*base)),
-                    field_idx,
-                }
-            }
+            ExprKind::Field { base, field_idx } => ExprKind::Field {
+                base: Box::new(self.expand_expr(*base)),
+                field_idx,
+            },
 
-            ExprKind::Index { base, index } => {
-                ExprKind::Index {
-                    base: Box::new(self.expand_expr(*base)),
-                    index: Box::new(self.expand_expr(*index)),
-                }
-            }
+            ExprKind::Index { base, index } => ExprKind::Index {
+                base: Box::new(self.expand_expr(*base)),
+                index: Box::new(self.expand_expr(*index)),
+            },
 
             ExprKind::Tuple(elems) => {
                 ExprKind::Tuple(elems.into_iter().map(|e| self.expand_expr(e)).collect())
@@ -244,164 +234,165 @@ impl<'a> MacroExpander<'a> {
                 ExprKind::Array(elems.into_iter().map(|e| self.expand_expr(e)).collect())
             }
 
-            ExprKind::Repeat { value, count } => {
-                ExprKind::Repeat {
-                    value: Box::new(self.expand_expr(*value)),
-                    count,
-                }
-            }
+            ExprKind::Repeat { value, count } => ExprKind::Repeat {
+                value: Box::new(self.expand_expr(*value)),
+                count,
+            },
 
-            ExprKind::Struct { def_id, fields, base } => {
-                ExprKind::Struct {
-                    def_id,
-                    fields: fields.into_iter().map(|f| hir::FieldExpr {
+            ExprKind::Struct {
+                def_id,
+                fields,
+                base,
+            } => ExprKind::Struct {
+                def_id,
+                fields: fields
+                    .into_iter()
+                    .map(|f| hir::FieldExpr {
                         field_idx: f.field_idx,
                         value: self.expand_expr(f.value),
-                    }).collect(),
-                    base: base.map(|b| Box::new(self.expand_expr(*b))),
-                }
-            }
+                    })
+                    .collect(),
+                base: base.map(|b| Box::new(self.expand_expr(*b))),
+            },
 
-            ExprKind::Record { fields } => {
-                ExprKind::Record {
-                    fields: fields.into_iter().map(|f| hir::RecordFieldExpr {
+            ExprKind::Record { fields } => ExprKind::Record {
+                fields: fields
+                    .into_iter()
+                    .map(|f| hir::RecordFieldExpr {
                         name: f.name,
                         value: self.expand_expr(f.value),
-                    }).collect(),
-                }
-            }
+                    })
+                    .collect(),
+            },
 
-            ExprKind::Variant { def_id, variant_idx, fields } => {
-                ExprKind::Variant {
-                    def_id,
-                    variant_idx,
-                    fields: fields.into_iter().map(|f| self.expand_expr(f)).collect(),
-                }
-            }
+            ExprKind::Variant {
+                def_id,
+                variant_idx,
+                fields,
+            } => ExprKind::Variant {
+                def_id,
+                variant_idx,
+                fields: fields.into_iter().map(|f| self.expand_expr(f)).collect(),
+            },
 
-            ExprKind::Cast { expr: inner, target_ty } => {
-                ExprKind::Cast {
-                    expr: Box::new(self.expand_expr(*inner)),
-                    target_ty,
-                }
-            }
+            ExprKind::Cast {
+                expr: inner,
+                target_ty,
+            } => ExprKind::Cast {
+                expr: Box::new(self.expand_expr(*inner)),
+                target_ty,
+            },
 
-            ExprKind::Borrow { expr: inner, mutable } => {
-                ExprKind::Borrow {
-                    expr: Box::new(self.expand_expr(*inner)),
-                    mutable,
-                }
-            }
+            ExprKind::Borrow {
+                expr: inner,
+                mutable,
+            } => ExprKind::Borrow {
+                expr: Box::new(self.expand_expr(*inner)),
+                mutable,
+            },
 
-            ExprKind::Deref(inner) => {
-                ExprKind::Deref(Box::new(self.expand_expr(*inner)))
-            }
+            ExprKind::Deref(inner) => ExprKind::Deref(Box::new(self.expand_expr(*inner))),
 
-            ExprKind::AddrOf { expr: inner, mutable } => {
-                ExprKind::AddrOf {
-                    expr: Box::new(self.expand_expr(*inner)),
-                    mutable,
-                }
-            }
+            ExprKind::AddrOf {
+                expr: inner,
+                mutable,
+            } => ExprKind::AddrOf {
+                expr: Box::new(self.expand_expr(*inner)),
+                mutable,
+            },
 
-            ExprKind::Unsafe(inner) => {
-                ExprKind::Unsafe(Box::new(self.expand_expr(*inner)))
-            }
-            ExprKind::Unchecked { checks, when_condition, body } => {
-                ExprKind::Unchecked {
-                    checks,
-                    when_condition,
-                    body: Box::new(self.expand_expr(*body)),
-                }
-            }
-            ExprKind::Heap(inner) => {
-                ExprKind::Heap(Box::new(self.expand_expr(*inner)))
-            }
-            ExprKind::Stack(inner) => {
-                ExprKind::Stack(Box::new(self.expand_expr(*inner)))
-            }
+            ExprKind::Unsafe(inner) => ExprKind::Unsafe(Box::new(self.expand_expr(*inner))),
+            ExprKind::Unchecked {
+                checks,
+                when_condition,
+                body,
+            } => ExprKind::Unchecked {
+                checks,
+                when_condition,
+                body: Box::new(self.expand_expr(*body)),
+            },
+            ExprKind::Heap(inner) => ExprKind::Heap(Box::new(self.expand_expr(*inner))),
+            ExprKind::Stack(inner) => ExprKind::Stack(Box::new(self.expand_expr(*inner))),
 
-            ExprKind::Let { pattern, init } => {
-                ExprKind::Let {
-                    pattern,
-                    init: Box::new(self.expand_expr(*init)),
-                }
-            }
+            ExprKind::Let { pattern, init } => ExprKind::Let {
+                pattern,
+                init: Box::new(self.expand_expr(*init)),
+            },
 
-            ExprKind::Perform { effect_id, op_index, args, type_args } => {
-                ExprKind::Perform {
-                    effect_id,
-                    op_index,
-                    args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
-                    type_args,
-                }
-            }
+            ExprKind::Perform {
+                effect_id,
+                op_index,
+                args,
+                type_args,
+            } => ExprKind::Perform {
+                effect_id,
+                op_index,
+                args: args.into_iter().map(|a| self.expand_expr(a)).collect(),
+                type_args,
+            },
 
-            ExprKind::Resume { value } => {
-                ExprKind::Resume {
-                    value: value.map(|v| Box::new(self.expand_expr(*v))),
-                }
-            }
+            ExprKind::Resume { value } => ExprKind::Resume {
+                value: value.map(|v| Box::new(self.expand_expr(*v))),
+            },
 
-            ExprKind::Handle { body, handler_id, handler_instance } => {
-                ExprKind::Handle {
-                    body: Box::new(self.expand_expr(*body)),
-                    handler_id,
-                    handler_instance: Box::new(self.expand_expr(*handler_instance)),
-                }
-            }
+            ExprKind::Handle {
+                body,
+                handler_id,
+                handler_instance,
+            } => ExprKind::Handle {
+                body: Box::new(self.expand_expr(*body)),
+                handler_id,
+                handler_instance: Box::new(self.expand_expr(*handler_instance)),
+            },
 
-            ExprKind::InlineHandle { body, handlers } => {
-                ExprKind::InlineHandle {
-                    body: Box::new(self.expand_expr(*body)),
-                    handlers: handlers.into_iter().map(|h| hir::InlineOpHandler {
+            ExprKind::InlineHandle { body, handlers } => ExprKind::InlineHandle {
+                body: Box::new(self.expand_expr(*body)),
+                handlers: handlers
+                    .into_iter()
+                    .map(|h| hir::InlineOpHandler {
                         effect_id: h.effect_id,
                         op_name: h.op_name,
                         params: h.params,
                         param_types: h.param_types,
                         return_type: h.return_type,
                         body: self.expand_expr(h.body),
-                    }).collect(),
-                }
-            }
+                    })
+                    .collect(),
+            },
 
-            ExprKind::Range { start, end, inclusive } => {
-                ExprKind::Range {
-                    start: start.map(|s| Box::new(self.expand_expr(*s))),
-                    end: end.map(|e| Box::new(self.expand_expr(*e))),
-                    inclusive,
-                }
-            }
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => ExprKind::Range {
+                start: start.map(|s| Box::new(self.expand_expr(*s))),
+                end: end.map(|e| Box::new(self.expand_expr(*e))),
+                inclusive,
+            },
 
             ExprKind::Closure { body_id, captures } => {
                 // Closure bodies are expanded separately via body_ids loop
                 ExprKind::Closure { body_id, captures }
             }
 
-            ExprKind::SliceLen(inner) => {
-                ExprKind::SliceLen(Box::new(self.expand_expr(*inner)))
-            }
+            ExprKind::SliceLen(inner) => ExprKind::SliceLen(Box::new(self.expand_expr(*inner))),
 
-            ExprKind::VecLen(inner) => {
-                ExprKind::VecLen(Box::new(self.expand_expr(*inner)))
-            }
+            ExprKind::VecLen(inner) => ExprKind::VecLen(Box::new(self.expand_expr(*inner))),
 
-            ExprKind::ArrayToSlice { expr, array_len } => {
-                ExprKind::ArrayToSlice {
-                    expr: Box::new(self.expand_expr(*expr)),
-                    array_len,
-                }
-            }
+            ExprKind::ArrayToSlice { expr, array_len } => ExprKind::ArrayToSlice {
+                expr: Box::new(self.expand_expr(*expr)),
+                array_len,
+            },
 
             // === Leaf nodes - no expansion needed ===
             kind @ (ExprKind::Literal(_)
-                | ExprKind::Local(_)
-                | ExprKind::Def(_)
-                | ExprKind::Continue { .. }
-                | ExprKind::MethodFamily { .. }
-                | ExprKind::ConstParam(_)
-                | ExprKind::Default
-                | ExprKind::Error) => kind,
+            | ExprKind::Local(_)
+            | ExprKind::Def(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::MethodFamily { .. }
+            | ExprKind::ConstParam(_)
+            | ExprKind::Default
+            | ExprKind::Error) => kind,
         };
 
         Expr::new(kind, ty, span)
@@ -410,18 +401,12 @@ impl<'a> MacroExpander<'a> {
     /// Expand a statement.
     fn expand_stmt(&mut self, stmt: hir::Stmt) -> hir::Stmt {
         match stmt {
-            hir::Stmt::Let { local_id, init } => {
-                hir::Stmt::Let {
-                    local_id,
-                    init: init.map(|e| self.expand_expr(e)),
-                }
-            }
-            hir::Stmt::Expr(expr) => {
-                hir::Stmt::Expr(self.expand_expr(expr))
-            }
-            hir::Stmt::Item(def_id) => {
-                hir::Stmt::Item(def_id)
-            }
+            hir::Stmt::Let { local_id, init } => hir::Stmt::Let {
+                local_id,
+                init: init.map(|e| self.expand_expr(e)),
+            },
+            hir::Stmt::Expr(expr) => hir::Stmt::Expr(self.expand_expr(expr)),
+            hir::Stmt::Item(def_id) => hir::Stmt::Item(def_id),
         }
     }
 
@@ -436,12 +421,11 @@ impl<'a> MacroExpander<'a> {
         span: Span,
     ) -> ExprKind {
         // Expand arguments recursively first
-        let expanded_args: Vec<Expr> = args.into_iter()
-            .map(|a| self.expand_expr(a))
-            .collect();
+        let expanded_args: Vec<Expr> = args.into_iter().map(|a| self.expand_expr(a)).collect();
 
         // Expand named arguments
-        let expanded_named_args: Vec<(String, Expr)> = named_args.into_iter()
+        let expanded_named_args: Vec<(String, Expr)> = named_args
+            .into_iter()
             .map(|(name, a)| (name, self.expand_expr(a)))
             .collect();
 
@@ -515,7 +499,9 @@ impl<'a> MacroExpander<'a> {
                         "todo" => {
                             // Prepend "not yet implemented: " to the message
                             let prefix_expr = Expr::new(
-                                ExprKind::Literal(LiteralValue::String("not yet implemented: ".to_string())),
+                                ExprKind::Literal(LiteralValue::String(
+                                    "not yet implemented: ".to_string(),
+                                )),
                                 Type::str(),
                                 span,
                             );
@@ -530,7 +516,9 @@ impl<'a> MacroExpander<'a> {
                         "unimplemented" => {
                             // Prepend "not implemented: " to the message
                             let prefix_expr = Expr::new(
-                                ExprKind::Literal(LiteralValue::String("not implemented: ".to_string())),
+                                ExprKind::Literal(LiteralValue::String(
+                                    "not implemented: ".to_string(),
+                                )),
                                 Type::str(),
                                 span,
                             );
@@ -596,7 +584,8 @@ impl<'a> MacroExpander<'a> {
         // Check that all referenced argument indices are valid
         // For positional arguments like {0}, {1}, {2}, we need max_index < args.len()
         // For sequential {} arguments, placeholder_count should match args.len()
-        let max_index = parts.iter()
+        let max_index = parts
+            .iter()
             .filter_map(|p| match p {
                 FormatPart::Placeholder(idx) => Some(*idx),
                 FormatPart::Literal(_) | FormatPart::Named(_) => None,
@@ -655,19 +644,14 @@ impl<'a> MacroExpander<'a> {
                 }
                 FormatPart::Named(name) => {
                     // Look up the named argument
-                    let arg = named_args.iter()
-                        .find(|(n, _)| n == &name)
-                        .map(|(_, e)| e);
+                    let arg = named_args.iter().find(|(n, _)| n == &name).map(|(_, e)| e);
                     match arg {
                         Some(expr) => {
                             let stringified = self.convert_to_string(expr.clone(), span)?;
                             result_parts.push(stringified);
                         }
                         None => {
-                            return Err(format!(
-                                "named argument `{}` not found",
-                                name
-                            ));
+                            return Err(format!("named argument `{}` not found", name));
                         }
                     }
                 }
@@ -777,7 +761,7 @@ impl<'a> MacroExpander<'a> {
 
     /// Convert an expression to a string using the appropriate conversion function.
     fn convert_to_string(&mut self, expr: Expr, span: Span) -> Result<Expr, String> {
-        use hir::{TypeKind, PrimitiveTy, IntTy, UintTy, FloatTy};
+        use hir::{FloatTy, IntTy, PrimitiveTy, TypeKind, UintTy};
 
         let ty = &expr.ty;
 
@@ -1019,29 +1003,16 @@ impl<'a> MacroExpander<'a> {
     }
 
     /// Expand vec![...] literal to array literal.
-    fn expand_vec_literal(
-        &mut self,
-        exprs: Vec<Expr>,
-        _ty: &Type,
-        _span: Span,
-    ) -> ExprKind {
+    fn expand_vec_literal(&mut self, exprs: Vec<Expr>, _ty: &Type, _span: Span) -> ExprKind {
         // Expand all element expressions
-        let expanded_exprs: Vec<Expr> = exprs.into_iter()
-            .map(|e| self.expand_expr(e))
-            .collect();
+        let expanded_exprs: Vec<Expr> = exprs.into_iter().map(|e| self.expand_expr(e)).collect();
 
         // vec![1, 2, 3] expands to [1, 2, 3]
         ExprKind::Array(expanded_exprs)
     }
 
     /// Expand vec![value; count] repeat to array repeat expression.
-    fn expand_vec_repeat(
-        &mut self,
-        value: Expr,
-        count: Expr,
-        _ty: &Type,
-        _span: Span,
-    ) -> ExprKind {
+    fn expand_vec_repeat(&mut self, value: Expr, count: Expr, _ty: &Type, _span: Span) -> ExprKind {
         let expanded_value = self.expand_expr(value);
 
         // Extract the count as a constant (typeck already validated it's a constant)
@@ -1061,12 +1032,7 @@ impl<'a> MacroExpander<'a> {
     }
 
     /// Expand assert!(condition) or assert!(condition, message).
-    fn expand_assert(
-        &mut self,
-        condition: Expr,
-        message: Option<Expr>,
-        span: Span,
-    ) -> ExprKind {
+    fn expand_assert(&mut self, condition: Expr, message: Option<Expr>, span: Span) -> ExprKind {
         let expanded_condition = self.expand_expr(condition);
         let expanded_message = message.map(|m| self.expand_expr(m));
 
@@ -1151,12 +1117,7 @@ impl<'a> MacroExpander<'a> {
     /// }
     ///
     /// This prints the value to stderr and returns it.
-    fn expand_dbg(
-        &mut self,
-        inner: Expr,
-        ty: &Type,
-        span: Span,
-    ) -> ExprKind {
+    fn expand_dbg(&mut self, inner: Expr, ty: &Type, span: Span) -> ExprKind {
         let expanded = self.expand_expr(inner);
 
         // Try to convert to string for printing
@@ -1167,19 +1128,11 @@ impl<'a> MacroExpander<'a> {
 
                 // Build a block that prints and returns the value:
                 // { eprintln_str(str_val); expr }
-                let print_stmt = hir::Stmt::Expr(Expr::new(
-                    print_call,
-                    Type::unit(),
-                    span,
-                ));
+                let print_stmt = hir::Stmt::Expr(Expr::new(print_call, Type::unit(), span));
 
                 ExprKind::Block {
                     stmts: vec![print_stmt],
-                    expr: Some(Box::new(Expr::new(
-                        expanded.kind,
-                        ty.clone(),
-                        span,
-                    ))),
+                    expr: Some(Box::new(Expr::new(expanded.kind, ty.clone(), span))),
                 }
             }
             Err(_) => {

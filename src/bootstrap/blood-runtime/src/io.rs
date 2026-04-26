@@ -31,9 +31,9 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use crate::cancellation::{CancellationError, CancellationToken};
-use crate::fiber::{FiberId, WakeCondition, IoInterest};
+use crate::fiber::{FiberId, IoInterest, WakeCondition};
+use parking_lot::Mutex;
 
 /// Unique I/O operation identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -285,26 +285,27 @@ impl BlockingDriver {
     /// Execute an operation synchronously.
     fn execute(&self, op: &IoOp) -> IoResult {
         match op {
-            IoOp::Read { fd: _, buf_len: _, offset: _ } => {
+            IoOp::Read {
+                fd: _,
+                buf_len: _,
+                offset: _,
+            } => {
                 // This is a simplified implementation
                 // Real implementation would use raw file descriptors
                 IoResult::Read(vec![0u8; 0])
             }
-            IoOp::Write { fd: _, data, offset: _ } => {
-                IoResult::Write(data.len())
-            }
-            IoOp::Accept { fd: _ } => {
-                IoResult::Error(IoError::new(-1, "accept not implemented in blocking driver"))
-            }
-            IoOp::Connect { fd: _, addr: _ } => {
-                IoResult::Connected
-            }
-            IoOp::Close { fd: _ } => {
-                IoResult::Closed
-            }
-            IoOp::Poll { fd: _, interest } => {
-                IoResult::Ready(*interest)
-            }
+            IoOp::Write {
+                fd: _,
+                data,
+                offset: _,
+            } => IoResult::Write(data.len()),
+            IoOp::Accept { fd: _ } => IoResult::Error(IoError::new(
+                -1,
+                "accept not implemented in blocking driver",
+            )),
+            IoOp::Connect { fd: _, addr: _ } => IoResult::Connected,
+            IoOp::Close { fd: _ } => IoResult::Closed,
+            IoOp::Poll { fd: _, interest } => IoResult::Ready(*interest),
             IoOp::Timeout { duration } => {
                 std::thread::sleep(*duration);
                 IoResult::TimedOut
@@ -480,7 +481,7 @@ impl IoReactor {
                 fd: *fd,
                 interest: IoInterest::from_bits(
                     if interest.is_readable() { 0b01 } else { 0 }
-                    | if interest.is_writable() { 0b10 } else { 0 }
+                        | if interest.is_writable() { 0b10 } else { 0 },
                 ),
             },
             IoOp::Close { fd } => WakeCondition::IoReady {
@@ -501,7 +502,11 @@ impl IoReactor {
     ///
     /// Returns the operation ID that can be used to track completion.
     pub fn async_read(&self, fd: i32, buf_len: usize, offset: i64) -> io::Result<IoOpId> {
-        self.submit(IoOp::Read { fd, buf_len, offset })
+        self.submit(IoOp::Read {
+            fd,
+            buf_len,
+            offset,
+        })
     }
 
     /// Submit an async read operation for a fiber.
@@ -512,7 +517,14 @@ impl IoReactor {
         offset: i64,
         fiber_id: FiberId,
     ) -> io::Result<IoOpId> {
-        self.submit_for_fiber(IoOp::Read { fd, buf_len, offset }, fiber_id)
+        self.submit_for_fiber(
+            IoOp::Read {
+                fd,
+                buf_len,
+                offset,
+            },
+            fiber_id,
+        )
     }
 
     /// Submit an async write operation.
@@ -779,7 +791,14 @@ impl IoReactor {
         offset: i64,
         token: &CancellationToken,
     ) -> io::Result<(IoOpId, bool)> {
-        self.submit_cancellable(IoOp::Read { fd, buf_len, offset }, token)
+        self.submit_cancellable(
+            IoOp::Read {
+                fd,
+                buf_len,
+                offset,
+            },
+            token,
+        )
     }
 
     /// Async write with cancellation support.
@@ -882,11 +901,11 @@ impl IoReactor {
         fd: i32,
         token: &CancellationToken,
     ) -> Result<IoResult, CancellationError> {
-        let (op_id, already_cancelled) = self
-            .async_accept_cancellable(fd, token)
-            .map_err(|e| CancellationError {
-                reason: Some(e.to_string()),
-            })?;
+        let (op_id, already_cancelled) =
+            self.async_accept_cancellable(fd, token)
+                .map_err(|e| CancellationError {
+                    reason: Some(e.to_string()),
+                })?;
 
         if already_cancelled {
             return Ok(IoResult::Cancelled);
@@ -904,11 +923,11 @@ impl IoReactor {
         addr: Vec<u8>,
         token: &CancellationToken,
     ) -> Result<IoResult, CancellationError> {
-        let (op_id, already_cancelled) = self
-            .async_connect_cancellable(fd, addr, token)
-            .map_err(|e| CancellationError {
-                reason: Some(e.to_string()),
-            })?;
+        let (op_id, already_cancelled) =
+            self.async_connect_cancellable(fd, addr, token)
+                .map_err(|e| CancellationError {
+                    reason: Some(e.to_string()),
+                })?;
 
         if already_cancelled {
             return Ok(IoResult::Cancelled);
@@ -952,10 +971,9 @@ pub mod linux {
                 if let Ok(version) = String::from_utf8(output.stdout) {
                     let parts: Vec<&str> = version.trim().split('.').collect();
                     if parts.len() >= 2 {
-                        if let (Ok(major), Ok(minor)) = (
-                            parts[0].parse::<u32>(),
-                            parts[1].parse::<u32>(),
-                        ) {
+                        if let (Ok(major), Ok(minor)) =
+                            (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                        {
                             return major > 5 || (major == 5 && minor >= 6);
                         }
                     }
@@ -1030,7 +1048,11 @@ pub mod linux {
 
             // Prepare the submission entry based on operation type
             let sqe = match &op {
-                IoOp::Read { fd, buf_len, offset } => {
+                IoOp::Read {
+                    fd,
+                    buf_len,
+                    offset,
+                } => {
                     // Allocate buffer as Box to get stable address
                     let buf: Box<[u8]> = vec![0u8; *buf_len].into_boxed_slice();
                     let buf_ptr = buf.as_ptr() as *mut u8;
@@ -1066,22 +1088,17 @@ pub mod linux {
                             .user_data(user_data)
                     }
                 }
-                IoOp::Accept { fd } => {
-                    opcode::Accept::new(Fd(*fd))
-                        .build()
-                        .user_data(user_data)
-                }
-                IoOp::Close { fd } => {
-                    opcode::Close::new(Fd(*fd))
-                        .build()
-                        .user_data(user_data)
-                }
+                IoOp::Accept { fd } => opcode::Accept::new(Fd(*fd)).build().user_data(user_data),
+                IoOp::Close { fd } => opcode::Close::new(Fd(*fd)).build().user_data(user_data),
                 IoOp::Connect { fd, addr } => {
                     // Parse the serialized address into sockaddr_storage
                     if addr.len() < std::mem::size_of::<libc::sockaddr_storage>() {
                         // If addr is too short, copy what we have
-                        let mut sockaddr: Box<libc::sockaddr_storage> = Box::new(unsafe { std::mem::zeroed() });
-                        let copy_len = addr.len().min(std::mem::size_of::<libc::sockaddr_storage>());
+                        let mut sockaddr: Box<libc::sockaddr_storage> =
+                            Box::new(unsafe { std::mem::zeroed() });
+                        let copy_len = addr
+                            .len()
+                            .min(std::mem::size_of::<libc::sockaddr_storage>());
                         unsafe {
                             std::ptr::copy_nonoverlapping(
                                 addr.as_ptr(),
@@ -1092,9 +1109,15 @@ pub mod linux {
                         let sockaddr_ptr = sockaddr.as_ref() as *const _ as *const libc::sockaddr;
                         // Use the sa_family to determine the address length
                         let addr_len = match unsafe { (*sockaddr_ptr).sa_family } as i32 {
-                            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-                            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-                            libc::AF_UNIX => std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+                            libc::AF_INET => {
+                                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+                            }
+                            libc::AF_INET6 => {
+                                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+                            }
+                            libc::AF_UNIX => {
+                                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t
+                            }
                             _ => copy_len as libc::socklen_t,
                         };
                         pending_op.sockaddr = Some(sockaddr);
@@ -1104,7 +1127,8 @@ pub mod linux {
                             .user_data(user_data)
                     } else {
                         // Address is at least sockaddr_storage size
-                        let mut sockaddr: Box<libc::sockaddr_storage> = Box::new(unsafe { std::mem::zeroed() });
+                        let mut sockaddr: Box<libc::sockaddr_storage> =
+                            Box::new(unsafe { std::mem::zeroed() });
                         unsafe {
                             std::ptr::copy_nonoverlapping(
                                 addr.as_ptr(),
@@ -1113,7 +1137,8 @@ pub mod linux {
                             );
                         }
                         let sockaddr_ptr = sockaddr.as_ref() as *const _ as *const libc::sockaddr;
-                        let addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+                        let addr_len =
+                            std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
                         pending_op.sockaddr = Some(sockaddr);
 
                         opcode::Connect::new(Fd(*fd), sockaddr_ptr, addr_len)
@@ -1141,15 +1166,15 @@ pub mod linux {
                 }
                 IoOp::Timeout { duration } => {
                     // Store timespec in Box to ensure stable address
-                    let ts = Box::new(io_uring::types::Timespec::new()
-                        .sec(duration.as_secs())
-                        .nsec(duration.subsec_nanos()));
+                    let ts = Box::new(
+                        io_uring::types::Timespec::new()
+                            .sec(duration.as_secs())
+                            .nsec(duration.subsec_nanos()),
+                    );
                     let ts_ptr = ts.as_ref() as *const io_uring::types::Timespec;
                     pending_op.timespec = Some(ts);
 
-                    opcode::Timeout::new(ts_ptr)
-                        .build()
-                        .user_data(user_data)
+                    opcode::Timeout::new(ts_ptr).build().user_data(user_data)
                 }
             };
 
@@ -1158,9 +1183,9 @@ pub mod linux {
             pending.insert(op_id, pending_op);
 
             unsafe {
-                ring.submission().push(&sqe).map_err(|_| {
-                    io::Error::new(io::ErrorKind::Other, "submission queue full")
-                })?;
+                ring.submission()
+                    .push(&sqe)
+                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "submission queue full"))?;
             }
             ring.submit()?;
             Ok(())
@@ -1183,10 +1208,13 @@ pub mod linux {
 
                 let result = if let Some(pop) = pending.remove(&op_id) {
                     if result_code < 0 {
-                        IoResult::Error(IoError::new(-result_code, format!(
-                            "io_uring operation failed: {}",
-                            io::Error::from_raw_os_error(-result_code)
-                        )))
+                        IoResult::Error(IoError::new(
+                            -result_code,
+                            format!(
+                                "io_uring operation failed: {}",
+                                io::Error::from_raw_os_error(-result_code)
+                            ),
+                        ))
                     } else {
                         match pop.op {
                             IoOp::Read { .. } => {
@@ -1237,9 +1265,9 @@ pub mod linux {
                 .user_data(0);
 
             unsafe {
-                ring.submission().push(&sqe).map_err(|_| {
-                    io::Error::new(io::ErrorKind::Other, "submission queue full")
-                })?;
+                ring.submission()
+                    .push(&sqe)
+                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "submission queue full"))?;
             }
             ring.submit()?;
             Ok(())
@@ -1284,9 +1312,8 @@ pub mod linux {
                 u64: op_id.as_u64(),
             };
 
-            let result = unsafe {
-                libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event)
-            };
+            let result =
+                unsafe { libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event) };
 
             if result == -1 {
                 let err = io::Error::last_os_error();
@@ -1318,23 +1345,27 @@ pub mod linux {
         /// Create a timerfd for timeout operations.
         fn create_timerfd(duration: Duration) -> io::Result<RawFd> {
             let tfd = unsafe {
-                libc::timerfd_create(libc::CLOCK_MONOTONIC, libc::TFD_NONBLOCK | libc::TFD_CLOEXEC)
+                libc::timerfd_create(
+                    libc::CLOCK_MONOTONIC,
+                    libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
+                )
             };
             if tfd == -1 {
                 return Err(io::Error::last_os_error());
             }
 
             let its = libc::itimerspec {
-                it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
+                it_interval: libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 0,
+                },
                 it_value: libc::timespec {
                     tv_sec: duration.as_secs() as i64,
                     tv_nsec: duration.subsec_nanos() as i64,
                 },
             };
 
-            let result = unsafe {
-                libc::timerfd_settime(tfd, 0, &its, std::ptr::null_mut())
-            };
+            let result = unsafe { libc::timerfd_settime(tfd, 0, &its, std::ptr::null_mut()) };
             if result == -1 {
                 let err = io::Error::last_os_error();
                 let _ = unsafe { libc::close(tfd) };
@@ -1348,18 +1379,16 @@ pub mod linux {
         fn do_read(fd: RawFd, buf_len: usize, offset: i64) -> IoResult {
             let mut buf = vec![0u8; buf_len];
             let result = if offset >= 0 {
-                unsafe {
-                    libc::pread(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len, offset)
-                }
+                unsafe { libc::pread(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len, offset) }
             } else {
-                unsafe {
-                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len)
-                }
+                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len) }
             };
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     // Would block, not ready yet
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
@@ -1378,14 +1407,14 @@ pub mod linux {
                     libc::pwrite(fd, data.as_ptr() as *const libc::c_void, data.len(), offset)
                 }
             } else {
-                unsafe {
-                    libc::write(fd, data.as_ptr() as *const libc::c_void, data.len())
-                }
+                unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) }
             };
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
                     IoResult::Error(IoError::from_std(err))
@@ -1398,7 +1427,8 @@ pub mod linux {
         /// Perform an accept operation.
         fn do_accept(fd: RawFd) -> IoResult {
             let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-            let mut addr_len: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            let mut addr_len: libc::socklen_t =
+                std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
 
             let result = unsafe {
                 libc::accept4(
@@ -1411,7 +1441,9 @@ pub mod linux {
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
                     IoResult::Error(IoError::from_std(err))
@@ -1459,7 +1491,11 @@ pub mod linux {
                 }
                 IoOp::Write { fd, .. } => {
                     // Register for EPOLLOUT
-                    self.register_fd(*fd, libc::EPOLLOUT as u32 | libc::EPOLLONESHOT as u32, op_id)?;
+                    self.register_fd(
+                        *fd,
+                        libc::EPOLLOUT as u32 | libc::EPOLLONESHOT as u32,
+                        op_id,
+                    )?;
                 }
                 IoOp::Accept { fd } => {
                     // Register listening socket for EPOLLIN
@@ -1467,7 +1503,11 @@ pub mod linux {
                 }
                 IoOp::Connect { fd, .. } => {
                     // Register for EPOLLOUT (connect completion)
-                    self.register_fd(*fd, libc::EPOLLOUT as u32 | libc::EPOLLONESHOT as u32, op_id)?;
+                    self.register_fd(
+                        *fd,
+                        libc::EPOLLOUT as u32 | libc::EPOLLONESHOT as u32,
+                        op_id,
+                    )?;
                 }
                 IoOp::Poll { fd, interest } => {
                     let mut events = 0u32;
@@ -1528,11 +1568,16 @@ pub mod linux {
 
                 if let Some(pop) = pending.remove(&op_id) {
                     let result = match &pop.op {
-                        IoOp::Read { fd, buf_len, offset } => {
+                        IoOp::Read {
+                            fd,
+                            buf_len,
+                            offset,
+                        } => {
                             if revents & libc::EPOLLIN as u32 != 0 {
                                 self.unregister_fd(*fd);
                                 Self::do_read(*fd, *buf_len, *offset)
-                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0 {
+                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0
+                            {
                                 self.unregister_fd(*fd);
                                 IoResult::Error(IoError::new(-1, "fd error or hangup"))
                             } else {
@@ -1545,7 +1590,8 @@ pub mod linux {
                             if revents & libc::EPOLLOUT as u32 != 0 {
                                 self.unregister_fd(*fd);
                                 Self::do_write(*fd, data, *offset)
-                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0 {
+                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0
+                            {
                                 self.unregister_fd(*fd);
                                 IoResult::Error(IoError::new(-1, "fd error or hangup"))
                             } else {
@@ -1567,7 +1613,8 @@ pub mod linux {
                                 self.unregister_fd(*fd);
                                 // Check socket error to confirm connection
                                 let mut err: libc::c_int = 0;
-                                let mut len: libc::socklen_t = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+                                let mut len: libc::socklen_t =
+                                    std::mem::size_of::<libc::c_int>() as libc::socklen_t;
                                 let result = unsafe {
                                     libc::getsockopt(
                                         *fd,
@@ -1582,7 +1629,8 @@ pub mod linux {
                                 } else {
                                     IoResult::Error(IoError::new(err, "connect failed"))
                                 }
-                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0 {
+                            } else if revents & (libc::EPOLLERR as u32 | libc::EPOLLHUP as u32) != 0
+                            {
                                 self.unregister_fd(*fd);
                                 IoResult::Error(IoError::new(-1, "connect error"))
                             } else {
@@ -1613,7 +1661,9 @@ pub mod linux {
                             if let Some(tfd) = pop.timer_fd {
                                 // Read the timerfd to clear it
                                 let mut buf = [0u8; 8];
-                                let _ = unsafe { libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, 8) };
+                                let _ = unsafe {
+                                    libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, 8)
+                                };
                                 self.unregister_fd(tfd);
                                 let _ = unsafe { libc::close(tfd) };
                             }
@@ -1633,9 +1683,12 @@ pub mod linux {
             if let Some(pop) = pending.remove(&op_id) {
                 // Unregister the fd from epoll
                 match &pop.op {
-                    IoOp::Read { fd, .. } | IoOp::Write { fd, .. } |
-                    IoOp::Accept { fd } | IoOp::Connect { fd, .. } |
-                    IoOp::Poll { fd, .. } | IoOp::Close { fd } => {
+                    IoOp::Read { fd, .. }
+                    | IoOp::Write { fd, .. }
+                    | IoOp::Accept { fd }
+                    | IoOp::Connect { fd, .. }
+                    | IoOp::Poll { fd, .. }
+                    | IoOp::Close { fd } => {
                         self.unregister_fd(*fd);
                     }
                     IoOp::Timeout { .. } => {
@@ -1716,18 +1769,16 @@ pub mod macos {
         fn do_read(fd: RawFd, buf_len: usize, offset: i64) -> IoResult {
             let mut buf = vec![0u8; buf_len];
             let result = if offset >= 0 {
-                unsafe {
-                    libc::pread(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len, offset)
-                }
+                unsafe { libc::pread(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len, offset) }
             } else {
-                unsafe {
-                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len)
-                }
+                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf_len) }
             };
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
                     IoResult::Error(IoError::from_std(err))
@@ -1745,14 +1796,14 @@ pub mod macos {
                     libc::pwrite(fd, data.as_ptr() as *const libc::c_void, data.len(), offset)
                 }
             } else {
-                unsafe {
-                    libc::write(fd, data.as_ptr() as *const libc::c_void, data.len())
-                }
+                unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) }
             };
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
                     IoResult::Error(IoError::from_std(err))
@@ -1765,7 +1816,8 @@ pub mod macos {
         /// Perform an accept operation.
         fn do_accept(fd: RawFd) -> IoResult {
             let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-            let mut addr_len: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            let mut addr_len: libc::socklen_t =
+                std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
 
             let result = unsafe {
                 libc::accept(
@@ -1777,14 +1829,22 @@ pub mod macos {
 
             if result < 0 {
                 let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EAGAIN) || err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+                {
                     IoResult::Error(IoError::new(libc::EAGAIN, "would block"))
                 } else {
                     IoResult::Error(IoError::from_std(err))
                 }
             } else {
                 // Set non-blocking on macOS (no accept4)
-                let _ = unsafe { libc::fcntl(result as i32, libc::F_SETFL, libc::O_NONBLOCK | libc::O_CLOEXEC) };
+                let _ = unsafe {
+                    libc::fcntl(
+                        result as i32,
+                        libc::F_SETFL,
+                        libc::O_NONBLOCK | libc::O_CLOEXEC,
+                    )
+                };
                 IoResult::Accept(result as i32)
             }
         }
@@ -1910,11 +1970,9 @@ pub mod macos {
                 }
             };
 
-            self.pending.lock().insert(op_id, KqueuePendingOp {
-                op,
-                ident,
-                filter,
-            });
+            self.pending
+                .lock()
+                .insert(op_id, KqueuePendingOp { op, ident, filter });
             Ok(())
         }
 
@@ -1923,7 +1981,17 @@ pub mod macos {
             use nix::sys::time::TimeSpec;
 
             let timeout_spec = TimeSpec::from_duration(timeout);
-            let mut events = vec![KEvent::new(0, EventFilter::EVFILT_READ, Default::default(), Default::default(), 0, 0); 64];
+            let mut events = vec![
+                KEvent::new(
+                    0,
+                    EventFilter::EVFILT_READ,
+                    Default::default(),
+                    Default::default(),
+                    0,
+                    0
+                );
+                64
+            ];
 
             let nfds = match kevent(self.kqueue_fd, &[], &mut events, timeout_spec) {
                 Ok(n) => n,
@@ -1940,19 +2008,23 @@ pub mod macos {
 
                 if let Some(pop) = pending.remove(&op_id) {
                     let result = match (&pop.op, event.filter()) {
-                        (IoOp::Read { fd, buf_len, offset }, EventFilter::EVFILT_READ) => {
-                            Self::do_read(*fd, *buf_len, *offset)
-                        }
+                        (
+                            IoOp::Read {
+                                fd,
+                                buf_len,
+                                offset,
+                            },
+                            EventFilter::EVFILT_READ,
+                        ) => Self::do_read(*fd, *buf_len, *offset),
                         (IoOp::Write { fd, data, offset }, EventFilter::EVFILT_WRITE) => {
                             Self::do_write(*fd, data, *offset)
                         }
-                        (IoOp::Accept { fd }, EventFilter::EVFILT_READ) => {
-                            Self::do_accept(*fd)
-                        }
+                        (IoOp::Accept { fd }, EventFilter::EVFILT_READ) => Self::do_accept(*fd),
                         (IoOp::Connect { fd, .. }, EventFilter::EVFILT_WRITE) => {
                             // Check socket error to confirm connection
                             let mut err: libc::c_int = 0;
-                            let mut len: libc::socklen_t = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+                            let mut len: libc::socklen_t =
+                                std::mem::size_of::<libc::c_int>() as libc::socklen_t;
                             let result = unsafe {
                                 libc::getsockopt(
                                     *fd,
@@ -1978,17 +2050,15 @@ pub mod macos {
                             }
                             IoResult::Ready(interest)
                         }
-                        (IoOp::Timeout { .. }, EventFilter::EVFILT_TIMER) => {
-                            IoResult::TimedOut
-                        }
+                        (IoOp::Timeout { .. }, EventFilter::EVFILT_TIMER) => IoResult::TimedOut,
                         (IoOp::Close { .. }, _) => {
                             // Close was already handled synchronously in submit
                             IoResult::Closed
                         }
-                        _ => IoResult::Error(IoError::new(-1, format!(
-                            "unexpected event filter {:?} for operation",
-                            event.filter()
-                        ))),
+                        _ => IoResult::Error(IoError::new(
+                            -1,
+                            format!("unexpected event filter {:?} for operation", event.filter()),
+                        )),
                     };
 
                     completions.push(IoCompletion { op_id, result });
@@ -2019,11 +2089,12 @@ pub mod macos {
                 if let IoOp::Poll { fd, interest } = &pop.op {
                     if interest.is_readable() && interest.is_writable() {
                         // Cancel the other filter too
-                        let other_filter = if pop.filter == nix::sys::event::EventFilter::EVFILT_READ {
-                            nix::sys::event::EventFilter::EVFILT_WRITE
-                        } else {
-                            nix::sys::event::EventFilter::EVFILT_READ
-                        };
+                        let other_filter =
+                            if pop.filter == nix::sys::event::EventFilter::EVFILT_READ {
+                                nix::sys::event::EventFilter::EVFILT_WRITE
+                            } else {
+                                nix::sys::event::EventFilter::EVFILT_READ
+                            };
                         let event = KEvent::new(
                             *fd as usize,
                             other_filter,
@@ -2062,18 +2133,16 @@ pub mod windows {
     use std::collections::HashMap;
     use std::os::windows::io::AsRawHandle;
     use std::time::Duration;
-    use windows::Win32::Foundation::{HANDLE, ERROR_IO_PENDING, GetLastError, BOOL};
+    use windows::Win32::Foundation::{GetLastError, BOOL, ERROR_IO_PENDING, HANDLE};
+    use windows::Win32::Networking::WinSock::{
+        closesocket, setsockopt, AcceptEx, GetAcceptExSockaddrs, WSAGetLastError, WSAPoll,
+        WSASocketW, AF_INET, INVALID_SOCKET, IPPROTO_TCP, POLLRDNORM, POLLWRNORM, SOCKADDR,
+        SOCKADDR_IN, SOCKET, SOCKET_ERROR, SOCK_STREAM, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+        WSAPOLLFD, WSA_FLAG_OVERLAPPED,
+    };
     use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
     use windows::Win32::System::IO::{
-        CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus,
-        OVERLAPPED,
-    };
-    use windows::Win32::Networking::WinSock::{
-        SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP, WSASocketW, WSAGetLastError,
-        WSA_FLAG_OVERLAPPED, SOCKET_ERROR, INVALID_SOCKET, closesocket,
-        WSAPOLLFD, POLLRDNORM, POLLWRNORM, WSAPoll,
-        AcceptEx, GetAcceptExSockaddrs, setsockopt, SOL_SOCKET,
-        SO_UPDATE_ACCEPT_CONTEXT, SOCKADDR, SOCKADDR_IN,
+        CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus, OVERLAPPED,
     };
 
     /// Size of address buffer for AcceptEx (IPv4 address + 16 bytes padding)
@@ -2141,7 +2210,9 @@ pub mod windows {
             // Close accept socket if it was created but not transferred
             if let Some(sock) = self.accept_socket.take() {
                 if sock != INVALID_SOCKET {
-                    unsafe { closesocket(sock); }
+                    unsafe {
+                        closesocket(sock);
+                    }
                 }
             }
         }
@@ -2192,12 +2263,7 @@ pub mod windows {
             }
 
             unsafe {
-                CreateIoCompletionPort(
-                    handle,
-                    self.iocp_handle,
-                    completion_key,
-                    0,
-                )?;
+                CreateIoCompletionPort(handle, self.iocp_handle, completion_key, 0)?;
             }
 
             associated.insert(raw);
@@ -2205,7 +2271,13 @@ pub mod windows {
         }
 
         /// Start an overlapped read operation.
-        fn start_read(&self, op_id: IoOpId, fd: RawFd, buf_ptr: *mut u8, len: usize) -> io::Result<Box<OverlappedContext>> {
+        fn start_read(
+            &self,
+            op_id: IoOpId,
+            fd: RawFd,
+            buf_ptr: *mut u8,
+            len: usize,
+        ) -> io::Result<Box<OverlappedContext>> {
             let handle = HANDLE(fd as isize as *mut std::ffi::c_void);
 
             // Associate handle with IOCP
@@ -2242,7 +2314,12 @@ pub mod windows {
         }
 
         /// Start an overlapped write operation.
-        fn start_write(&self, op_id: IoOpId, fd: RawFd, data: &[u8]) -> io::Result<Box<OverlappedContext>> {
+        fn start_write(
+            &self,
+            op_id: IoOpId,
+            fd: RawFd,
+            data: &[u8],
+        ) -> io::Result<Box<OverlappedContext>> {
             let handle = HANDLE(fd as isize as *mut std::ffi::c_void);
 
             // Associate handle with IOCP
@@ -2281,7 +2358,11 @@ pub mod windows {
         /// 1. A pre-created socket for the accepted connection
         /// 2. A buffer for local and remote addresses (min 16 bytes padding each)
         /// 3. The listening socket to be associated with IOCP
-        fn start_accept(&self, op_id: IoOpId, listen_fd: RawFd) -> io::Result<Box<OverlappedContext>> {
+        fn start_accept(
+            &self,
+            op_id: IoOpId,
+            listen_fd: RawFd,
+        ) -> io::Result<Box<OverlappedContext>> {
             let listen_socket = SOCKET(listen_fd as usize);
 
             // Associate listen socket with IOCP
@@ -2336,7 +2417,9 @@ pub mod windows {
                 // WSA_IO_PENDING (997) is expected for overlapped I/O
                 if error.0 != 997 {
                     // Close the accept socket on error
-                    unsafe { closesocket(accept_socket); }
+                    unsafe {
+                        closesocket(accept_socket);
+                    }
                     return Err(io::Error::from_raw_os_error(error.0 as i32));
                 }
             }
@@ -2358,10 +2441,12 @@ pub mod windows {
             std::thread::spawn(move || {
                 // Map generic events to Windows poll events
                 let mut poll_events: i16 = 0;
-                if events & 1 != 0 { // Read
+                if events & 1 != 0 {
+                    // Read
                     poll_events |= POLLRDNORM.0 as i16;
                 }
-                if events & 2 != 0 { // Write
+                if events & 2 != 0 {
+                    // Write
                     poll_events |= POLLWRNORM.0 as i16;
                 }
 
@@ -2385,12 +2470,8 @@ pub mod windows {
                 };
 
                 unsafe {
-                    let _ = PostQueuedCompletionStatus(
-                        handle,
-                        bytes,
-                        op_id.as_u64() as usize,
-                        None,
-                    );
+                    let _ =
+                        PostQueuedCompletionStatus(handle, bytes, op_id.as_u64() as usize, None);
                 }
             });
 
@@ -2418,7 +2499,13 @@ pub mod windows {
             match &op {
                 IoOp::Timeout { duration } => {
                     // Store pending op without context
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: None });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: None,
+                        },
+                    );
 
                     // Spawn a thread to handle the timeout
                     let handle = self.iocp_handle;
@@ -2427,18 +2514,19 @@ pub mod windows {
                     std::thread::spawn(move || {
                         std::thread::sleep(duration);
                         unsafe {
-                            let _ = PostQueuedCompletionStatus(
-                                handle,
-                                0,
-                                id as usize,
-                                None,
-                            );
+                            let _ = PostQueuedCompletionStatus(handle, 0, id as usize, None);
                         }
                     });
                 }
                 IoOp::Close { .. } | IoOp::Connect { .. } => {
                     // Store pending op without context
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: None });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: None,
+                        },
+                    );
 
                     // Post immediate completion for these simple ops
                     unsafe {
@@ -2453,22 +2541,46 @@ pub mod windows {
                 IoOp::Read { fd, buf, len } => {
                     // Start overlapped read operation
                     let context = self.start_read(op_id, *fd, *buf, *len)?;
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: Some(context) });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: Some(context),
+                        },
+                    );
                 }
                 IoOp::Write { fd, buf, len } => {
                     // For write, we need to read from the buffer pointer
                     let data = unsafe { std::slice::from_raw_parts(*buf, *len) };
                     let context = self.start_write(op_id, *fd, data)?;
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: Some(context) });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: Some(context),
+                        },
+                    );
                 }
                 IoOp::Accept { fd } => {
                     // Start AcceptEx operation with pre-created accept socket
                     let context = self.start_accept(op_id, *fd)?;
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: Some(context) });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: Some(context),
+                        },
+                    );
                 }
                 IoOp::Poll { fd, events } => {
                     // Store pending op without context (WSAPoll runs in thread)
-                    self.pending.lock().insert(op_id, PendingOp { op: op.clone(), context: None });
+                    self.pending.lock().insert(
+                        op_id,
+                        PendingOp {
+                            op: op.clone(),
+                            context: None,
+                        },
+                    );
                     // Start WSAPoll in background thread
                     self.start_poll(op_id, *fd, *events)?;
                 }
@@ -2522,9 +2634,7 @@ pub mod windows {
                             }
                             IoResult::Read(data)
                         }
-                        IoOp::Write { .. } => {
-                            IoResult::Write(bytes_transferred as usize)
-                        }
+                        IoOp::Write { .. } => IoResult::Write(bytes_transferred as usize),
                         IoOp::Accept { fd: _listen_fd } => {
                             // AcceptEx completed - extract the accepted socket
                             if let Some(mut context) = pending_op.context {
@@ -2533,7 +2643,8 @@ pub mod windows {
                                     // This is required by AcceptEx for proper functionality
                                     if let Some(listen_socket) = context.listen_socket {
                                         unsafe {
-                                            let listen_ptr = &listen_socket as *const SOCKET as *const i8;
+                                            let listen_ptr =
+                                                &listen_socket as *const SOCKET as *const i8;
                                             let _ = setsockopt(
                                                 accept_socket,
                                                 SOL_SOCKET as i32,
@@ -2549,10 +2660,16 @@ pub mod windows {
                                     // Return the accepted socket as a file descriptor
                                     IoResult::Accept(accept_socket.0 as i32)
                                 } else {
-                                    IoResult::Error(IoError::new(-1, "AcceptEx completed but no socket available"))
+                                    IoResult::Error(IoError::new(
+                                        -1,
+                                        "AcceptEx completed but no socket available",
+                                    ))
                                 }
                             } else {
-                                IoResult::Error(IoError::new(-1, "AcceptEx completed but no context"))
+                                IoResult::Error(IoError::new(
+                                    -1,
+                                    "AcceptEx completed but no context",
+                                ))
                             }
                         }
                         IoOp::Poll { .. } => {
@@ -2579,7 +2696,10 @@ pub mod windows {
                     // The context is dropped here, freeing the overlapped structure
                     drop(pending_op.context);
 
-                    completions.push(IoCompletion { op_id, result: io_result });
+                    completions.push(IoCompletion {
+                        op_id,
+                        result: io_result,
+                    });
                 }
             }
 
@@ -2725,11 +2845,16 @@ mod tests {
         let driver = BlockingDriver::new();
 
         let op_id = next_io_op_id();
-        driver.submit(op_id, IoOp::Write {
-            fd: 1,
-            data: vec![1, 2, 3],
-            offset: -1,
-        }).unwrap();
+        driver
+            .submit(
+                op_id,
+                IoOp::Write {
+                    fd: 1,
+                    data: vec![1, 2, 3],
+                    offset: -1,
+                },
+            )
+            .unwrap();
 
         let completions = driver.poll(Duration::from_millis(100)).unwrap();
         assert_eq!(completions.len(), 1);
@@ -2782,7 +2907,9 @@ mod tests {
         let reactor = IoReactor::new(ReactorConfig::default());
         let fiber_id = FiberId::new(42);
 
-        let op_id = reactor.async_timeout_for_fiber(Duration::from_millis(1), fiber_id).unwrap();
+        let op_id = reactor
+            .async_timeout_for_fiber(Duration::from_millis(1), fiber_id)
+            .unwrap();
         assert!(reactor.has_pending());
 
         let completions = reactor.poll_with_wakeups().unwrap();
@@ -2867,8 +2994,11 @@ mod tests {
                 }
                 IoResult::Error(e) => {
                     // Some drivers may return EAGAIN for non-blocking reads
-                    assert!(e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
-                        "Unexpected error: {:?}", e);
+                    assert!(
+                        e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
+                        "Unexpected error: {:?}",
+                        e
+                    );
                 }
                 other => panic!("Unexpected result: {:?}", other),
             }
@@ -2885,7 +3015,9 @@ mod tests {
             let data_len = test_data.len();
 
             let reactor = create_native_reactor(ReactorConfig::default());
-            let op_id = reactor.async_write(write_raw, test_data.clone(), -1).unwrap();
+            let op_id = reactor
+                .async_write(write_raw, test_data.clone(), -1)
+                .unwrap();
 
             // Poll for completion
             let mut completions = Vec::new();
@@ -2907,8 +3039,11 @@ mod tests {
                     assert_eq!(&buf[..n], &test_data[..]);
                 }
                 IoResult::Error(e) => {
-                    assert!(e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
-                        "Unexpected error: {:?}", e);
+                    assert!(
+                        e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
+                        "Unexpected error: {:?}",
+                        e
+                    );
                 }
                 other => panic!("Unexpected result: {:?}", other),
             }
@@ -2923,8 +3058,8 @@ mod tests {
     #[cfg(unix)]
     mod socket_tests {
         use super::*;
-        use std::os::unix::io::AsRawFd;
         use std::net::{TcpListener, TcpStream};
+        use std::os::unix::io::AsRawFd;
 
         #[test]
         fn test_async_accept() {
@@ -2968,8 +3103,11 @@ mod tests {
                     }
                     IoResult::Error(e) => {
                         // EAGAIN is acceptable if the connection wasn't ready yet
-                        assert!(e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
-                            "Unexpected error: {:?}", e);
+                        assert!(
+                            e.code == nix::libc::EAGAIN || e.code == nix::libc::EWOULDBLOCK,
+                            "Unexpected error: {:?}",
+                            e
+                        );
                     }
                     other => panic!("Unexpected result: {:?}", other),
                 }
@@ -3067,8 +3205,12 @@ mod tests {
         let fiber2 = FiberId::new(2);
 
         // Submit operations for different fibers
-        let op1 = reactor.async_timeout_for_fiber(Duration::from_millis(1), fiber1).unwrap();
-        let op2 = reactor.async_timeout_for_fiber(Duration::from_millis(2), fiber2).unwrap();
+        let op1 = reactor
+            .async_timeout_for_fiber(Duration::from_millis(1), fiber1)
+            .unwrap();
+        let op2 = reactor
+            .async_timeout_for_fiber(Duration::from_millis(2), fiber2)
+            .unwrap();
 
         assert_eq!(reactor.pending_count(), 2);
 
@@ -3094,7 +3236,11 @@ mod tests {
         let reactor = IoReactor::new(ReactorConfig::default());
 
         // Test read operation wake condition
-        let read_op = IoOp::Read { fd: 5, buf_len: 1024, offset: 0 };
+        let read_op = IoOp::Read {
+            fd: 5,
+            buf_len: 1024,
+            offset: 0,
+        };
         let wake = reactor.wake_condition_for_op(&read_op);
         match wake {
             WakeCondition::IoReady { fd, interest } => {
@@ -3105,7 +3251,11 @@ mod tests {
         }
 
         // Test write operation wake condition
-        let write_op = IoOp::Write { fd: 6, data: vec![1, 2, 3], offset: -1 };
+        let write_op = IoOp::Write {
+            fd: 6,
+            data: vec![1, 2, 3],
+            offset: -1,
+        };
         let wake = reactor.wake_condition_for_op(&write_op);
         match wake {
             WakeCondition::IoReady { fd, interest } => {
@@ -3116,7 +3266,9 @@ mod tests {
         }
 
         // Test timeout operation wake condition
-        let timeout_op = IoOp::Timeout { duration: Duration::from_secs(1) };
+        let timeout_op = IoOp::Timeout {
+            duration: Duration::from_secs(1),
+        };
         let wake = reactor.wake_condition_for_op(&timeout_op);
         match wake {
             WakeCondition::Timeout(instant) => {
@@ -3154,7 +3306,9 @@ mod tests {
         let fiber_id = FiberId::new(99);
 
         // Submit with fiber mapping
-        let op_id = reactor.async_timeout_for_fiber(Duration::from_secs(100), fiber_id).unwrap();
+        let op_id = reactor
+            .async_timeout_for_fiber(Duration::from_secs(100), fiber_id)
+            .unwrap();
         assert_eq!(reactor.pending_count(), 1);
 
         // Cancel
@@ -3164,7 +3318,11 @@ mod tests {
         // Fiber mapping should be cleared (no fiber woken on poll)
         let completions = reactor.poll_with_wakeups().unwrap();
         for (_, fiber) in completions {
-            assert_ne!(fiber, Some(fiber_id), "Cancelled operation should not wake fiber");
+            assert_ne!(
+                fiber,
+                Some(fiber_id),
+                "Cancelled operation should not wake fiber"
+            );
         }
     }
 
@@ -3179,9 +3337,12 @@ mod tests {
 
         // Basic functionality test
         let op_id = next_io_op_id();
-        let result = driver.submit(op_id, IoOp::Timeout {
-            duration: Duration::from_millis(1),
-        });
+        let result = driver.submit(
+            op_id,
+            IoOp::Timeout {
+                duration: Duration::from_millis(1),
+            },
+        );
         assert!(result.is_ok());
     }
 
@@ -3192,9 +3353,12 @@ mod tests {
         let driver = linux::create_driver();
 
         let op_id = next_io_op_id();
-        let result = driver.submit(op_id, IoOp::Timeout {
-            duration: Duration::from_millis(1),
-        });
+        let result = driver.submit(
+            op_id,
+            IoOp::Timeout {
+                duration: Duration::from_millis(1),
+            },
+        );
         assert!(result.is_ok());
     }
 

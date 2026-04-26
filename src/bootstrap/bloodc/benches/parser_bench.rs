@@ -186,5 +186,10 @@ fn bench_expression_parsing(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parser, bench_parser_scaling, bench_expression_parsing);
+criterion_group!(
+    benches,
+    bench_parser,
+    bench_parser_scaling,
+    bench_expression_parsing
+);
 criterion_main!(benches);

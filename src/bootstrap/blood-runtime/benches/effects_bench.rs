@@ -7,10 +7,9 @@
 //! Run with: cargo bench --bench effects_bench
 
 use blood_runtime::continuation::{
-    Continuation, EffectContext,
-    register_continuation, take_continuation, has_continuation,
+    has_continuation, register_continuation, take_continuation, Continuation, EffectContext,
 };
-use blood_runtime::memory::{BloodPtr, GenerationSnapshot, PointerMetadata, generation};
+use blood_runtime::memory::{generation, BloodPtr, GenerationSnapshot, PointerMetadata};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 /// Benchmark continuation creation
@@ -19,9 +18,7 @@ fn bench_continuation_creation(c: &mut Criterion) {
 
     // Simple closure continuation
     group.bench_function("simple_closure", |b| {
-        b.iter(|| {
-            black_box(Continuation::new(|x: i32| x + 1))
-        });
+        b.iter(|| black_box(Continuation::new(|x: i32| x + 1)));
     });
 
     // Continuation with captured state
@@ -35,9 +32,7 @@ fn bench_continuation_creation(c: &mut Criterion) {
 
     // String processing continuation
     group.bench_function("string_closure", |b| {
-        b.iter(|| {
-            black_box(Continuation::new(|s: String| format!("Hello, {}!", s)))
-        });
+        b.iter(|| black_box(Continuation::new(|s: String| format!("Hello, {}!", s))));
     });
 
     group.finish();
@@ -125,9 +120,7 @@ fn bench_continuation_registry(c: &mut Criterion) {
     group.bench_function("has_continuation_check", |b| {
         let k = Continuation::new(|x: i32| x);
         let r = register_continuation(k);
-        b.iter(|| {
-            black_box(has_continuation(r))
-        });
+        b.iter(|| black_box(has_continuation(r)));
         // Cleanup
         take_continuation(r);
     });
@@ -141,9 +134,7 @@ fn bench_effect_context(c: &mut Criterion) {
 
     // Create tail-resumptive context
     group.bench_function("create_tail_resumptive", |b| {
-        b.iter(|| {
-            black_box(EffectContext::tail_resumptive())
-        });
+        b.iter(|| black_box(EffectContext::tail_resumptive()));
     });
 
     // Create context with continuation
@@ -181,26 +172,18 @@ fn bench_generation_snapshot(c: &mut Criterion) {
 
     // Create empty snapshot
     group.bench_function("create_empty", |b| {
-        b.iter(|| {
-            black_box(GenerationSnapshot::new())
-        });
+        b.iter(|| black_box(GenerationSnapshot::new()));
     });
 
     // Capture snapshot from pointers
     for count in [1, 5, 10, 20] {
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::new("capture", count),
-            &count,
-            |b, &count| {
-                let ptrs: Vec<BloodPtr> = (0..count)
-                    .map(|i| BloodPtr::new(0x1000 * (i + 1), i as u32 + 1, PointerMetadata::HEAP))
-                    .collect();
-                b.iter(|| {
-                    black_box(GenerationSnapshot::capture(&ptrs))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("capture", count), &count, |b, &count| {
+            let ptrs: Vec<BloodPtr> = (0..count)
+                .map(|i| BloodPtr::new(0x1000 * (i + 1), i as u32 + 1, PointerMetadata::HEAP))
+                .collect();
+            b.iter(|| black_box(GenerationSnapshot::capture(&ptrs)));
+        });
     }
 
     // Add entries incrementally
@@ -291,9 +274,7 @@ fn bench_blood_ptr(c: &mut Criterion) {
 
     // Create null pointer
     group.bench_function("create_null", |b| {
-        b.iter(|| {
-            black_box(BloodPtr::null())
-        });
+        b.iter(|| black_box(BloodPtr::null()));
     });
 
     // Create pointer with metadata
@@ -347,9 +328,7 @@ fn bench_effect_heavy_snapshot_overhead(c: &mut Criterion) {
             let state_value = black_box(42i64);
 
             // Validate on resume (generation still valid)
-            let valid = snapshot.validate(|addr| {
-                if addr == 0x1000 { Some(42) } else { None }
-            });
+            let valid = snapshot.validate(|addr| if addr == 0x1000 { Some(42) } else { None });
 
             black_box((state_value, valid))
         });
@@ -411,10 +390,13 @@ fn bench_effect_heavy_snapshot_overhead(c: &mut Criterion) {
                     // Validate phase (handlers resumed outer-to-inner)
                     let mut valid = true;
                     for snapshot in snapshots.iter().rev() {
-                        valid = valid && snapshot.validate(|addr| {
-                            let index = (addr / 0x1000) - 1;
-                            Some(index as u32 + 1)
-                        }).is_ok();
+                        valid = valid
+                            && snapshot
+                                .validate(|addr| {
+                                    let index = (addr / 0x1000) - 1;
+                                    Some(index as u32 + 1)
+                                })
+                                .is_ok();
                     }
 
                     black_box((work, valid))
@@ -439,9 +421,8 @@ fn bench_effect_heavy_snapshot_overhead(c: &mut Criterion) {
                         // Each operation: capture, execute, validate
                         let snapshot = GenerationSnapshot::capture(&[ptr]);
                         total = total.wrapping_add(i as i64);
-                        let _ = snapshot.validate(|addr| {
-                            if addr == 0x1000 { Some(42) } else { None }
-                        });
+                        let _ =
+                            snapshot.validate(|addr| if addr == 0x1000 { Some(42) } else { None });
                     }
                     black_box(total)
                 });

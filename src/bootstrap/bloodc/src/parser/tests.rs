@@ -773,7 +773,8 @@ fn test_const_generic_array() {
 
 #[test]
 fn test_const_generic_function() {
-    let source = "fn create_array<T, const N: usize>() -> Array<T, N> { Array { data: default() } }";
+    let source =
+        "fn create_array<T, const N: usize>() -> Array<T, N> { Array { data: default() } }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
 
@@ -791,7 +792,8 @@ fn test_lifetime_bounds() {
 
 #[test]
 fn test_mixed_generic_params() {
-    let source = "fn process<'a, T: Clone, const N: usize>(data: &'a [T; N]) -> T { data[0].clone() }";
+    let source =
+        "fn process<'a, T: Clone, const N: usize>(data: &'a [T; N]) -> T { data[0].clone() }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
 
@@ -1140,7 +1142,8 @@ fn test_or_pattern_with_guard() {
 
 #[test]
 fn test_nested_struct_pattern() {
-    let source = "fn f() { match c { Container::Nested { inner: Point { x, y } } => x + y, _ => 0 } }";
+    let source =
+        "fn f() { match c { Container::Nested { inner: Point { x, y } } => x + y, _ => 0 } }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
 
@@ -2268,12 +2271,46 @@ mod proptest_tests {
         "[a-z][a-z0-9_]{0,10}".prop_filter("not keyword", |s| {
             !matches!(
                 s.as_str(),
-                "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop"
-                    | "return" | "break" | "continue" | "struct" | "enum" | "trait"
-                    | "impl" | "pub" | "mod" | "use" | "const" | "static" | "mut"
-                    | "ref" | "self" | "Self" | "true" | "false" | "as" | "in"
-                    | "where" | "type" | "effect" | "handler" | "perform" | "resume"
-                    | "try" | "with" | "pure" | "fiber" | "move" | "dyn" | "unsafe"
+                "fn" | "let"
+                    | "if"
+                    | "else"
+                    | "match"
+                    | "for"
+                    | "while"
+                    | "loop"
+                    | "return"
+                    | "break"
+                    | "continue"
+                    | "struct"
+                    | "enum"
+                    | "trait"
+                    | "impl"
+                    | "pub"
+                    | "mod"
+                    | "use"
+                    | "const"
+                    | "static"
+                    | "mut"
+                    | "ref"
+                    | "self"
+                    | "Self"
+                    | "true"
+                    | "false"
+                    | "as"
+                    | "in"
+                    | "where"
+                    | "type"
+                    | "effect"
+                    | "handler"
+                    | "perform"
+                    | "resume"
+                    | "try"
+                    | "with"
+                    | "pure"
+                    | "fiber"
+                    | "move"
+                    | "dyn"
+                    | "unsafe"
             )
         })
     }
@@ -2343,9 +2380,12 @@ mod proptest_tests {
 
     // Strategy for generating let statements
     fn let_stmt_strategy() -> impl Strategy<Value = String> {
-        (ident_strategy(), simple_type_strategy(), simple_expr_strategy()).prop_map(
-            |(name, ty, expr)| format!("let {}: {} = {};", name, ty, expr),
+        (
+            ident_strategy(),
+            simple_type_strategy(),
+            simple_expr_strategy(),
         )
+            .prop_map(|(name, ty, expr)| format!("let {}: {} = {};", name, ty, expr))
     }
 
     // Strategy for generating function signatures
@@ -2565,24 +2605,30 @@ fn test_op_keyword_in_struct_pattern() {
         }
     "#;
     let result = parse_program(source);
-    assert!(result.is_ok(), "`op` is a contextual keyword and should be accepted as a field name");
+    assert!(
+        result.is_ok(),
+        "`op` is a contextual keyword and should be accepted as a field name"
+    );
 }
 
 #[test]
 fn test_contextual_keywords_in_struct_patterns() {
     // All contextual keywords should work as struct field patterns
-    assert!(parse_ok(r#"
+    assert!(parse_ok(
+        r#"
         struct Config { default: i32 }
         fn test(c: Config) -> i32 {
             match c { Config { default } => default }
         }
-    "#));
+    "#
+    ));
 }
 
 #[test]
 fn test_op_keyword_in_struct_field_binding_syntax() {
     // Issue #6: field: binding syntax should work
-    assert!(parse_ok(r#"
+    assert!(parse_ok(
+        r#"
         struct Test { x: i32 }
         fn main() -> i32 {
             let t = Test { x: 42 };
@@ -2590,5 +2636,6 @@ fn test_op_keyword_in_struct_field_binding_syntax() {
                 Test { x: value } => value,
             }
         }
-    "#));
+    "#
+    ));
 }

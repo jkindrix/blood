@@ -4,13 +4,10 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{
-    self, Type, LocalId, Body, Local, FnSig,
-    Expr, ExprKind,
-};
 use crate::ast::BinOp;
+use crate::hir::{self, Body, Expr, ExprKind, FnSig, Local, LocalId, Type};
 
-use super::{DeriveExpander, DeriveRequest, local_expr, bool_literal};
+use super::{bool_literal, local_expr, DeriveExpander, DeriveRequest};
 
 /// Expand Eq derive for a struct.
 pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
@@ -30,7 +27,9 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn eq(&self, other: &Self) -> bool
     let sig = FnSig::new(vec![self_ref_ty.clone(), self_ref_ty.clone()], Type::bool());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let self_local_id = LocalId::new(1);
@@ -65,46 +64,58 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
         // Empty struct is always equal
         bool_literal(true, span)
     } else {
-        let mut comparisons: Vec<Expr> = struct_info.fields.iter().map(|field| {
-            // self.field
-            let self_field = Expr::new(
-                ExprKind::Field {
-                    base: Box::new(Expr::new(
-                        ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
-                        self_ty.clone(),
-                        span,
-                    )),
-                    field_idx: field.index,
-                },
-                field.ty.clone(),
-                span,
-            );
+        let mut comparisons: Vec<Expr> = struct_info
+            .fields
+            .iter()
+            .map(|field| {
+                // self.field
+                let self_field = Expr::new(
+                    ExprKind::Field {
+                        base: Box::new(Expr::new(
+                            ExprKind::Deref(Box::new(local_expr(
+                                self_local_id,
+                                self_ref_ty.clone(),
+                                span,
+                            ))),
+                            self_ty.clone(),
+                            span,
+                        )),
+                        field_idx: field.index,
+                    },
+                    field.ty.clone(),
+                    span,
+                );
 
-            // other.field
-            let other_field = Expr::new(
-                ExprKind::Field {
-                    base: Box::new(Expr::new(
-                        ExprKind::Deref(Box::new(local_expr(other_local_id, self_ref_ty.clone(), span))),
-                        self_ty.clone(),
-                        span,
-                    )),
-                    field_idx: field.index,
-                },
-                field.ty.clone(),
-                span,
-            );
+                // other.field
+                let other_field = Expr::new(
+                    ExprKind::Field {
+                        base: Box::new(Expr::new(
+                            ExprKind::Deref(Box::new(local_expr(
+                                other_local_id,
+                                self_ref_ty.clone(),
+                                span,
+                            ))),
+                            self_ty.clone(),
+                            span,
+                        )),
+                        field_idx: field.index,
+                    },
+                    field.ty.clone(),
+                    span,
+                );
 
-            // self.field == other.field
-            Expr::new(
-                ExprKind::Binary {
-                    op: BinOp::Eq,
-                    left: Box::new(self_field),
-                    right: Box::new(other_field),
-                },
-                Type::bool(),
-                span,
-            )
-        }).collect();
+                // self.field == other.field
+                Expr::new(
+                    ExprKind::Binary {
+                        op: BinOp::Eq,
+                        left: Box::new(self_field),
+                        right: Box::new(other_field),
+                    },
+                    Type::bool(),
+                    span,
+                )
+            })
+            .collect();
 
         // Chain all comparisons with &&
         let first = comparisons.remove(0);
@@ -154,7 +165,9 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn eq(&self, other: &Self) -> bool
     let sig = FnSig::new(vec![self_ref_ty.clone(), self_ref_ty.clone()], Type::bool());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let self_local_id = LocalId::new(1);
@@ -354,12 +367,20 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     let scrutinee = Expr::new(
         ExprKind::Tuple(vec![
             Expr::new(
-                ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
+                ExprKind::Deref(Box::new(local_expr(
+                    self_local_id,
+                    self_ref_ty.clone(),
+                    span,
+                ))),
                 self_ty.clone(),
                 span,
             ),
             Expr::new(
-                ExprKind::Deref(Box::new(local_expr(other_local_id, self_ref_ty.clone(), span))),
+                ExprKind::Deref(Box::new(local_expr(
+                    other_local_id,
+                    self_ref_ty.clone(),
+                    span,
+                ))),
                 self_ty.clone(),
                 span,
             ),

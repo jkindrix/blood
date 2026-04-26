@@ -153,7 +153,9 @@ impl CancellationToken {
         });
 
         match result {
-            Ok((guard, timeout_result)) => *guard || self.is_cancelled() && !timeout_result.timed_out(),
+            Ok((guard, timeout_result)) => {
+                *guard || self.is_cancelled() && !timeout_result.timed_out()
+            }
             Err(_) => self.is_cancelled(),
         }
     }
@@ -368,8 +370,9 @@ impl Drop for CancellableScope {
 /// Registry for active cancellation tokens.
 ///
 /// This allows the runtime to track and cancel all active operations.
-static TOKEN_REGISTRY: std::sync::OnceLock<Mutex<std::collections::HashMap<u64, Weak<CancellationState>>>> =
-    std::sync::OnceLock::new();
+static TOKEN_REGISTRY: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<u64, Weak<CancellationState>>>,
+> = std::sync::OnceLock::new();
 
 fn get_token_registry() -> &'static Mutex<std::collections::HashMap<u64, Weak<CancellationState>>> {
     TOKEN_REGISTRY.get_or_init(|| Mutex::new(std::collections::HashMap::new()))

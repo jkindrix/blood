@@ -38,7 +38,8 @@ static PANIC_COUNT: AtomicU64 = AtomicU64::new(0);
 static HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Registry of panic hooks.
-static PANIC_HOOKS: OnceLock<Mutex<Vec<Arc<dyn Fn(&BloodPanicInfo) + Send + Sync>>>> = OnceLock::new();
+static PANIC_HOOKS: OnceLock<Mutex<Vec<Arc<dyn Fn(&BloodPanicInfo) + Send + Sync>>>> =
+    OnceLock::new();
 
 /// Last panic info for retrieval.
 static LAST_PANIC: OnceLock<Mutex<Option<BloodPanicInfo>>> = OnceLock::new();
@@ -121,7 +122,10 @@ impl BloodPanicInfo {
         }
 
         if let Some(thread) = &self.thread_name {
-            output.push_str(&format!("  in thread '{}' (id: {})\n", thread, self.thread_id));
+            output.push_str(&format!(
+                "  in thread '{}' (id: {})\n",
+                thread, self.thread_id
+            ));
         } else {
             output.push_str(&format!("  in thread id: {}\n", self.thread_id));
         }
@@ -336,7 +340,10 @@ impl<T> CatchResult<T> {
         match self {
             CatchResult::Ok(v) => v,
             CatchResult::Panicked(info) => {
-                panic!("called `CatchResult::unwrap()` on a `Panicked` value: {}", info.message);
+                panic!(
+                    "called `CatchResult::unwrap()` on a `Panicked` value: {}",
+                    info.message
+                );
             }
         }
     }
@@ -564,9 +571,7 @@ mod tests {
 
     #[test]
     fn test_catch_panic_success() {
-        let result = catch_panic(|| {
-            42
-        });
+        let result = catch_panic(|| 42);
         assert!(result.is_ok());
         assert!(!result.is_panicked());
         assert_eq!(result.unwrap(), 42);
@@ -626,9 +631,8 @@ mod tests {
         let panic_result: CatchResult<String> = catch_panic(|| {
             panic!("original error");
         });
-        let recovered = panic_result.unwrap_or_else(|info| {
-            format!("recovered from: {}", info.message())
-        });
+        let recovered =
+            panic_result.unwrap_or_else(|info| format!("recovered from: {}", info.message()));
         assert!(recovered.contains("recovered from:"));
         assert!(recovered.contains("original error"));
     }

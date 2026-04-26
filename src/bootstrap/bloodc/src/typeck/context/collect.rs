@@ -7,17 +7,16 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast;
-use crate::hir::{self, DefId, Type, TypeKind, TyVarId};
 use crate::diagnostics::Diagnostic;
+use crate::hir::{self, DefId, TyVarId, Type, TypeKind};
 
-use super::{
-    TypeContext, StructInfo, FieldInfo, EnumInfo, VariantInfo, TypeAliasInfo,
-    EffectInfo, OperationInfo, EffectRef, ImplBlockInfo, ImplMethodInfo,
-    ImplAssocTypeInfo, ImplAssocConstInfo, TraitInfo, TraitMethodInfo,
-    TraitAssocTypeInfo, TraitAssocConstInfo,
-};
 use super::super::error::{TypeError, TypeErrorKind};
 use super::super::resolve::{Binding, ScopeKind};
+use super::{
+    EffectInfo, EffectRef, EnumInfo, FieldInfo, ImplAssocConstInfo, ImplAssocTypeInfo,
+    ImplBlockInfo, ImplMethodInfo, OperationInfo, StructInfo, TraitAssocConstInfo,
+    TraitAssocTypeInfo, TraitInfo, TraitMethodInfo, TypeAliasInfo, TypeContext, VariantInfo,
+};
 use crate::ast::Visibility;
 use crate::typeck::const_eval;
 
@@ -33,10 +32,14 @@ impl<'a> TypeContext<'a> {
         }
 
         // Calculate next DefId by finding max existing DefId + 1
-        let next_def_id = self.resolver.def_info.keys()
+        let next_def_id = self
+            .resolver
+            .def_info
+            .keys()
             .map(|d| d.index)
             .max()
-            .unwrap_or(0) + 1;
+            .unwrap_or(0)
+            + 1;
 
         let mut expander = crate::derive::DeriveExpander::new(
             &self.struct_defs,
@@ -58,18 +61,21 @@ impl<'a> TypeContext<'a> {
 
         // Register generated methods with the resolver so they appear in HIR
         use super::super::resolve::DefInfo;
-        use crate::hir::DefKind;
         use crate::ast::Visibility;
+        use crate::hir::DefKind;
 
         for method in generated_methods {
-            self.resolver.def_info.insert(method.def_id, DefInfo {
-                kind: DefKind::Fn,
-                name: method.name,
-                span: method.span,
-                ty: None, // Type is in fn_sigs
-                parent: None,
-                visibility: Visibility::Public,
-            });
+            self.resolver.def_info.insert(
+                method.def_id,
+                DefInfo {
+                    kind: DefKind::Fn,
+                    name: method.name,
+                    span: method.span,
+                    ty: None, // Type is in fn_sigs
+                    parent: None,
+                    visibility: Visibility::Public,
+                },
+            );
         }
     }
 
@@ -104,7 +110,11 @@ impl<'a> TypeContext<'a> {
 
         if !self.errors.is_empty() {
             let names = self.build_type_name_map();
-            return Err(self.errors.iter().map(|e| e.to_diagnostic_with_names(&names)).collect());
+            return Err(self
+                .errors
+                .iter()
+                .map(|e| e.to_diagnostic_with_names(&names))
+                .collect());
         }
 
         Ok(())
@@ -122,13 +132,21 @@ impl<'a> TypeContext<'a> {
             let mut visiting = HashSet::new();
             visiting.insert(def_id);
             if self.type_contains_cycle(def_id, &visiting) {
-                let span = self.resolver.def_info.get(&def_id)
+                let span = self
+                    .resolver
+                    .def_info
+                    .get(&def_id)
                     .map(|info| info.span)
                     .unwrap_or_else(crate::span::Span::dummy);
-                errors.push(TypeError::new(
-                    TypeErrorKind::RecursiveType { name: struct_info.name.clone() },
-                    span,
-                ).to_diagnostic_with_names(&names));
+                errors.push(
+                    TypeError::new(
+                        TypeErrorKind::RecursiveType {
+                            name: struct_info.name.clone(),
+                        },
+                        span,
+                    )
+                    .to_diagnostic_with_names(&names),
+                );
             }
         }
 
@@ -202,13 +220,9 @@ impl<'a> TypeContext<'a> {
             // References and pointers provide indirection — no infinite size
             TypeKind::Ref { .. } | TypeKind::Ptr { .. } => false,
             // Tuples — check each element
-            TypeKind::Tuple(elems) => {
-                elems.iter().any(|e| self.field_type_has_cycle(e, visiting))
-            }
+            TypeKind::Tuple(elems) => elems.iter().any(|e| self.field_type_has_cycle(e, visiting)),
             // Arrays — check element type
-            TypeKind::Array { element, .. } => {
-                self.field_type_has_cycle(element, visiting)
-            }
+            TypeKind::Array { element, .. } => self.field_type_has_cycle(element, visiting),
             // Everything else (primitives, fn types, inference vars, etc.) — no cycle
             _ => false,
         }
@@ -334,7 +348,10 @@ impl<'a> TypeContext<'a> {
                 if let Some(def_info) = self.resolver.def_info.get(&def_id) {
                     if def_info.visibility == crate::ast::Visibility::Public {
                         // Import into global scope and track as prelude-imported
-                        if let Err(e) = self.resolver.import_binding(name.clone(), def_id, prelude_span) {
+                        if let Err(e) =
+                            self.resolver
+                                .import_binding(name.clone(), def_id, prelude_span)
+                        {
                             // Ignore conflicts with user-defined items (user takes precedence)
                             // DuplicateDefinition errors are expected when user code shadows prelude
                             if !matches!(e.kind, TypeErrorKind::DuplicateDefinition { .. }) {
@@ -356,7 +373,10 @@ impl<'a> TypeContext<'a> {
             if let Some(def_info) = self.resolver.def_info.get(&def_id) {
                 if def_info.visibility == crate::ast::Visibility::Public {
                     // Import type into global scope and track as prelude-imported
-                    if let Err(e) = self.resolver.import_type_binding(name.clone(), def_id, prelude_span) {
+                    if let Err(e) =
+                        self.resolver
+                            .import_type_binding(name.clone(), def_id, prelude_span)
+                    {
                         // Ignore conflicts with user-defined types (user takes precedence)
                         if !matches!(e.kind, TypeErrorKind::DuplicateDefinition { .. }) {
                             self.errors.push(*e);
@@ -375,47 +395,37 @@ impl<'a> TypeContext<'a> {
         match decl {
             ast::Declaration::Struct(s) => {
                 let name = self.symbol_to_string(s.name.node);
-                let def_id = self.resolver.define_item(
-                    name.clone(),
-                    hir::DefKind::Struct,
-                    s.span,
-                )?;
+                let def_id =
+                    self.resolver
+                        .define_item(name.clone(), hir::DefKind::Struct, s.span)?;
                 self.resolver.define_type(name, def_id, s.span)?;
             }
             ast::Declaration::Enum(e) => {
                 let name = self.symbol_to_string(e.name.node);
-                let def_id = self.resolver.define_item(
-                    name.clone(),
-                    hir::DefKind::Enum,
-                    e.span,
-                )?;
+                let def_id = self
+                    .resolver
+                    .define_item(name.clone(), hir::DefKind::Enum, e.span)?;
                 self.resolver.define_type(name, def_id, e.span)?;
             }
             ast::Declaration::Type(t) => {
                 let name = self.symbol_to_string(t.name.node);
-                let def_id = self.resolver.define_item(
-                    name.clone(),
-                    hir::DefKind::TypeAlias,
-                    t.span,
-                )?;
+                let def_id =
+                    self.resolver
+                        .define_item(name.clone(), hir::DefKind::TypeAlias, t.span)?;
                 self.resolver.define_type(name, def_id, t.span)?;
             }
             ast::Declaration::Effect(e) => {
                 let name = self.symbol_to_string(e.name.node);
-                let def_id = self.resolver.define_item(
-                    name.clone(),
-                    hir::DefKind::Effect,
-                    e.span,
-                )?;
+                let def_id =
+                    self.resolver
+                        .define_item(name.clone(), hir::DefKind::Effect, e.span)?;
                 self.resolver.define_type(name, def_id, e.span)?;
             }
             ast::Declaration::Trait(t) => {
                 let name = self.symbol_to_string(t.name.node);
-                let def_id = self.resolver.define_item(
-                    name.clone(),
-                    hir::DefKind::Trait,
-                    t.span,
-                )?;
+                let def_id =
+                    self.resolver
+                        .define_item(name.clone(), hir::DefKind::Trait, t.span)?;
                 self.resolver.define_type(name, def_id, t.span)?;
             }
             // Other declarations don't introduce type names that can be forward-referenced
@@ -427,15 +437,23 @@ impl<'a> TypeContext<'a> {
     /// Resolve an import statement.
     fn resolve_import(&mut self, import: &ast::Import) -> Result<(), Box<TypeError>> {
         match import {
-            ast::Import::Simple { path, alias, visibility, span } => {
-                self.resolve_simple_import(path, alias.as_ref(), *visibility, *span)
-            }
-            ast::Import::Group { path, items, visibility, span } => {
-                self.resolve_group_import(path, items, *visibility, *span)
-            }
-            ast::Import::Glob { path, visibility, span } => {
-                self.resolve_glob_import(path, *visibility, *span)
-            }
+            ast::Import::Simple {
+                path,
+                alias,
+                visibility,
+                span,
+            } => self.resolve_simple_import(path, alias.as_ref(), *visibility, *span),
+            ast::Import::Group {
+                path,
+                items,
+                visibility,
+                span,
+            } => self.resolve_group_import(path, items, *visibility, *span),
+            ast::Import::Glob {
+                path,
+                visibility,
+                span,
+            } => self.resolve_glob_import(path, *visibility, *span),
         }
     }
 
@@ -475,18 +493,23 @@ impl<'a> TypeContext<'a> {
             match info.kind {
                 hir::DefKind::Struct | hir::DefKind::Enum => {
                     // Import as type (for type annotations)
-                    self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
+                    self.resolver
+                        .import_type_binding(local_name.clone(), def_id, span)?;
                     // Also import as value (for constructors)
                     // Ignore duplicate error since it might already exist in value namespace
-                    let _ = self.resolver.import_binding(local_name.clone(), def_id, span);
+                    let _ = self
+                        .resolver
+                        .import_binding(local_name.clone(), def_id, span);
                 }
                 hir::DefKind::TypeAlias | hir::DefKind::Effect | hir::DefKind::Trait => {
                     // Pure types - only type namespace
-                    self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
+                    self.resolver
+                        .import_type_binding(local_name.clone(), def_id, span)?;
                 }
                 _ => {
                     // Values (functions, constants, etc.) - only value namespace
-                    self.resolver.import_binding(local_name.clone(), def_id, span)?;
+                    self.resolver
+                        .import_binding(local_name.clone(), def_id, span)?;
                 }
             }
         } else {
@@ -500,7 +523,10 @@ impl<'a> TypeContext<'a> {
 
         // For `pub use` re-exports, add this item to the current module's exports.
         // For private `use` imports, track them so they're visible inside the module.
-        if matches!(visibility, ast::Visibility::Public | ast::Visibility::PublicCrate) {
+        if matches!(
+            visibility,
+            ast::Visibility::Public | ast::Visibility::PublicCrate
+        ) {
             self.register_reexport(local_name, def_id, visibility, span);
         } else {
             self.register_private_import(local_name, def_id);
@@ -537,21 +563,29 @@ impl<'a> TypeContext<'a> {
                     match info.kind {
                         hir::DefKind::Struct | hir::DefKind::Enum => {
                             // Import as type and value (for annotations and constructors)
-                            self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
-                            let _ = self.resolver.import_binding(local_name.clone(), def_id, span);
+                            self.resolver
+                                .import_type_binding(local_name.clone(), def_id, span)?;
+                            let _ = self
+                                .resolver
+                                .import_binding(local_name.clone(), def_id, span);
                         }
                         hir::DefKind::TypeAlias | hir::DefKind::Effect | hir::DefKind::Trait => {
-                            self.resolver.import_type_binding(local_name.clone(), def_id, span)?;
+                            self.resolver
+                                .import_type_binding(local_name.clone(), def_id, span)?;
                         }
                         _ => {
-                            self.resolver.import_binding(local_name.clone(), def_id, span)?;
+                            self.resolver
+                                .import_binding(local_name.clone(), def_id, span)?;
                         }
                     }
                 }
 
                 // For `pub use` re-exports, add this item to the current module's exports.
                 // For private `use` imports, track them so they're visible inside the module.
-                if matches!(visibility, ast::Visibility::Public | ast::Visibility::PublicCrate) {
+                if matches!(
+                    visibility,
+                    ast::Visibility::Public | ast::Visibility::PublicCrate
+                ) {
                     self.register_reexport(local_name, def_id, visibility, span);
                 } else {
                     self.register_private_import(local_name, def_id);
@@ -589,17 +623,17 @@ impl<'a> TypeContext<'a> {
                 let result = match info.kind {
                     hir::DefKind::Struct | hir::DefKind::Enum => {
                         // Import as type first
-                        let type_result = self.resolver.import_type_binding(name.clone(), def_id, span);
+                        let type_result =
+                            self.resolver
+                                .import_type_binding(name.clone(), def_id, span);
                         // Also import as value (ignore duplicate)
                         let _ = self.resolver.import_binding(name.clone(), def_id, span);
                         type_result
                     }
-                    hir::DefKind::TypeAlias | hir::DefKind::Effect | hir::DefKind::Trait => {
-                        self.resolver.import_type_binding(name.clone(), def_id, span)
-                    }
-                    _ => {
-                        self.resolver.import_binding(name.clone(), def_id, span)
-                    }
+                    hir::DefKind::TypeAlias | hir::DefKind::Effect | hir::DefKind::Trait => self
+                        .resolver
+                        .import_type_binding(name.clone(), def_id, span),
+                    _ => self.resolver.import_binding(name.clone(), def_id, span),
                 };
 
                 // For glob imports, we silently skip duplicates
@@ -611,7 +645,10 @@ impl<'a> TypeContext<'a> {
 
                 // For `pub use *` re-exports, add all items to the current module's exports.
                 // For private `use *` imports, track them so they're visible inside the module.
-                if matches!(visibility, ast::Visibility::Public | ast::Visibility::PublicCrate) {
+                if matches!(
+                    visibility,
+                    ast::Visibility::Public | ast::Visibility::PublicCrate
+                ) {
                     self.register_reexport(name, def_id, visibility, span);
                 } else {
                     self.register_private_import(name, def_id);
@@ -643,7 +680,8 @@ impl<'a> TypeContext<'a> {
         // the current module's namespace.
         if self.current_module.is_some() {
             // Add to current module's reexports list
-            self.current_module_reexports.push((name, def_id, visibility));
+            self.current_module_reexports
+                .push((name, def_id, visibility));
         }
         // For top-level re-exports (not inside a module), the item is already
         // in global scope from the import, so no additional action needed.
@@ -675,7 +713,9 @@ impl<'a> TypeContext<'a> {
         }
 
         // Walk the path segments
-        let mut current_scope_names: Vec<String> = path.segments.iter()
+        let mut current_scope_names: Vec<String> = path
+            .segments
+            .iter()
             .map(|s| self.symbol_to_string(s.node))
             .collect();
 
@@ -691,7 +731,9 @@ impl<'a> TypeContext<'a> {
 
         // The last segment is the item we're importing
         // SAFETY: checked non-empty above
-        let item_name = current_scope_names.pop().expect("BUG: checked non-empty above");
+        let item_name = current_scope_names
+            .pop()
+            .expect("BUG: checked non-empty above");
 
         if current_scope_names.is_empty() {
             // Simple case: just a name (e.g., `use foo;`)
@@ -840,7 +882,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Collect a declaration.
-    pub(crate) fn collect_declaration(&mut self, decl: &ast::Declaration) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_declaration(
+        &mut self,
+        decl: &ast::Declaration,
+    ) -> Result<(), Box<TypeError>> {
         match decl {
             ast::Declaration::Function(f) => self.collect_function(f),
             ast::Declaration::Struct(s) => self.collect_struct(s),
@@ -865,16 +910,22 @@ impl<'a> TypeContext<'a> {
     /// The type checker does not need to register macros — this function exists
     /// because the declaration visitor visits all declaration types. By the time
     /// type checking runs, all macro calls have already been expanded in place.
-    pub(crate) fn collect_macro(&mut self, _macro_decl: &ast::MacroDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_macro(
+        &mut self,
+        _macro_decl: &ast::MacroDecl,
+    ) -> Result<(), Box<TypeError>> {
         Ok(())
     }
 
     /// Collect a bridge declaration (FFI).
-    pub(crate) fn collect_bridge(&mut self, bridge: &ast::BridgeDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_bridge(
+        &mut self,
+        bridge: &ast::BridgeDecl,
+    ) -> Result<(), Box<TypeError>> {
         use super::{
-            BridgeInfo, BridgeLinkSpec, BridgeLinkKind, BridgeFnInfo, BridgeOpaqueInfo,
-            BridgeTypeAliasInfo, BridgeStructInfo, BridgeFieldInfo, BridgeEnumInfo,
-            BridgeEnumVariantInfo, BridgeUnionInfo, BridgeConstInfo, BridgeCallbackInfo,
+            BridgeCallbackInfo, BridgeConstInfo, BridgeEnumInfo, BridgeEnumVariantInfo,
+            BridgeFieldInfo, BridgeFnInfo, BridgeInfo, BridgeLinkKind, BridgeLinkSpec,
+            BridgeOpaqueInfo, BridgeStructInfo, BridgeTypeAliasInfo, BridgeUnionInfo,
         };
 
         let bridge_name = self.symbol_to_string(bridge.name.node);
@@ -916,7 +967,9 @@ impl<'a> TypeContext<'a> {
                     );
 
                     // Convert parameter types
-                    let params: Vec<_> = func.params.iter()
+                    let params: Vec<_> = func
+                        .params
+                        .iter()
                         .map(|p| self.ast_type_to_hir_type(&p.ty))
                         .collect::<Result<_, _>>()?;
 
@@ -926,7 +979,8 @@ impl<'a> TypeContext<'a> {
                     };
 
                     // Store function signature for type checking
-                    self.fn_sigs.insert(def_id, hir::FnSig::new(params.clone(), return_ty.clone()));
+                    self.fn_sigs
+                        .insert(def_id, hir::FnSig::new(params.clone(), return_ty.clone()));
 
                     // Extract link_name from attributes if present
                     let link_name = self.extract_link_name_from_attrs(&func.attrs);
@@ -971,12 +1025,12 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::BridgeItem::Struct(s) => {
                     let name = self.symbol_to_string(s.name.node);
-                    let def_id = self.resolver.define_item(
-                        name.clone(),
-                        hir::DefKind::Struct,
-                        s.span,
-                    )?;
-                    let bridge_fields: Vec<_> = s.fields.iter()
+                    let def_id =
+                        self.resolver
+                            .define_item(name.clone(), hir::DefKind::Struct, s.span)?;
+                    let bridge_fields: Vec<_> = s
+                        .fields
+                        .iter()
                         .map(|f| {
                             let field_name = self.symbol_to_string(f.name.node);
                             let ty = self.ast_type_to_hir_type(&f.ty)?;
@@ -989,7 +1043,8 @@ impl<'a> TypeContext<'a> {
                         .collect::<Result<_, Box<TypeError>>>()?;
 
                     // Also register in struct_defs for field access and struct literals
-                    let struct_fields: Vec<super::FieldInfo> = bridge_fields.iter()
+                    let struct_fields: Vec<super::FieldInfo> = bridge_fields
+                        .iter()
                         .enumerate()
                         .map(|(i, f)| super::FieldInfo {
                             name: f.name.clone(),
@@ -1000,13 +1055,16 @@ impl<'a> TypeContext<'a> {
 
                     // Extract packed and align from attributes
                     let (is_packed, align) = self.extract_struct_attrs(&s.attrs);
-                    self.struct_defs.insert(def_id, super::StructInfo {
-                        name: name.clone(),
-                        fields: struct_fields,
-                        generics: Vec::new(), // Bridge structs don't have generics
-                        is_packed,
-                        align,
-                    });
+                    self.struct_defs.insert(
+                        def_id,
+                        super::StructInfo {
+                            name: name.clone(),
+                            fields: struct_fields,
+                            generics: Vec::new(), // Bridge structs don't have generics
+                            is_packed,
+                            align,
+                        },
+                    );
 
                     structs.push(BridgeStructInfo {
                         def_id,
@@ -1019,22 +1077,25 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::BridgeItem::Enum(e) => {
                     let name = self.symbol_to_string(e.name.node);
-                    let def_id = self.resolver.define_item(
-                        name.clone(),
-                        hir::DefKind::Enum,
-                        e.span,
-                    )?;
+                    let def_id =
+                        self.resolver
+                            .define_item(name.clone(), hir::DefKind::Enum, e.span)?;
 
                     // Extract repr type from attributes, default to i32
-                    let repr = self.extract_repr_from_attrs(&e.attrs)
+                    let repr = self
+                        .extract_repr_from_attrs(&e.attrs)
                         .unwrap_or_else(hir::Type::i32);
 
-                    let variants: Vec<_> = e.variants.iter()
+                    let variants: Vec<_> = e
+                        .variants
+                        .iter()
                         .enumerate()
                         .map(|(i, v)| {
                             let var_name = self.symbol_to_string(v.name.node);
                             // If discriminant is specified, try to parse it, otherwise use index
-                            let value = v.discriminant.as_ref()
+                            let value = v
+                                .discriminant
+                                .as_ref()
                                 .and_then(Self::literal_to_i64)
                                 .unwrap_or(i as i64);
                             BridgeEnumVariantInfo {
@@ -1059,7 +1120,9 @@ impl<'a> TypeContext<'a> {
                         hir::DefKind::Struct, // Unions are similar to structs in DefKind
                         u.span,
                     )?;
-                    let fields: Vec<_> = u.fields.iter()
+                    let fields: Vec<_> = u
+                        .fields
+                        .iter()
                         .map(|f| {
                             let field_name = self.symbol_to_string(f.name.node);
                             let ty = self.ast_type_to_hir_type(&f.ty)?;
@@ -1084,7 +1147,9 @@ impl<'a> TypeContext<'a> {
                         hir::DefKind::TypeAlias,
                         cb.span,
                     )?;
-                    let params: Vec<_> = cb.params.iter()
+                    let params: Vec<_> = cb
+                        .params
+                        .iter()
                         .map(|ty| self.ast_type_to_hir_type(ty))
                         .collect::<Result<_, _>>()?;
                     let return_ty = match &cb.return_type {
@@ -1186,7 +1251,8 @@ impl<'a> TypeContext<'a> {
                                 ast::AttributeArg::KeyValue(key, value) => {
                                     let key_name = self.symbol_to_string(key.node);
                                     if key_name == "align" {
-                                        if let ast::LiteralKind::Int { value: n, .. } = &value.kind {
+                                        if let ast::LiteralKind::Int { value: n, .. } = &value.kind
+                                        {
                                             align = Some(*n as u32);
                                         }
                                     }
@@ -1209,8 +1275,8 @@ impl<'a> TypeContext<'a> {
     /// - `#[repr(u8)]`, `#[repr(u16)]`, `#[repr(u32)]`, `#[repr(u64)]`
     /// - `#[repr(isize)]`, `#[repr(usize)]`
     fn extract_repr_from_attrs(&self, attrs: &[ast::Attribute]) -> Option<hir::Type> {
-        use crate::hir::ty::{TypeKind, PrimitiveTy};
         use crate::hir::def::{IntTy, UintTy};
+        use crate::hir::ty::{PrimitiveTy, TypeKind};
 
         for attr in attrs {
             if attr.path.len() == 1 {
@@ -1221,17 +1287,31 @@ impl<'a> TypeContext<'a> {
                             if let ast::AttributeArg::Ident(ident) = arg {
                                 let ident_name = self.symbol_to_string(ident.node);
                                 return match ident_name.as_str() {
-                                    "i8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I8)))),
-                                    "i16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I16)))),
+                                    "i8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(
+                                        IntTy::I8,
+                                    )))),
+                                    "i16" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Int(IntTy::I16),
+                                    ))),
                                     "i32" => Some(Type::i32()),
                                     "i64" => Some(Type::i64()),
-                                    "i128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::I128)))),
-                                    "isize" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Int(IntTy::Isize)))),
-                                    "u8" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U8)))),
-                                    "u16" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U16)))),
+                                    "i128" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Int(IntTy::I128),
+                                    ))),
+                                    "isize" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Int(IntTy::Isize),
+                                    ))),
+                                    "u8" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Uint(UintTy::U8),
+                                    ))),
+                                    "u16" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Uint(UintTy::U16),
+                                    ))),
                                     "u32" => Some(Type::u32()),
                                     "u64" => Some(Type::u64()),
-                                    "u128" => Some(Type::new(TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U128)))),
+                                    "u128" => Some(Type::new(TypeKind::Primitive(
+                                        PrimitiveTy::Uint(UintTy::U128),
+                                    ))),
                                     "usize" => Some(Type::usize()),
                                     // Skip C and other non-type specifiers
                                     "C" | "packed" | "transparent" => continue,
@@ -1291,11 +1371,9 @@ impl<'a> TypeContext<'a> {
     pub(crate) fn collect_function(&mut self, func: &ast::FnDecl) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(func.name.node);
         // Use define_function for multiple dispatch support
-        let def_id = self.resolver.define_function(
-            name.clone(),
-            func.span,
-            func.vis,
-        )?;
+        let def_id = self
+            .resolver
+            .define_function(name.clone(), func.span, func.vis)?;
 
         // Track this item as belonging to the current module
         self.current_module_items.push(def_id);
@@ -1367,7 +1445,11 @@ impl<'a> TypeContext<'a> {
             let mut predicates = Vec::new();
             for predicate in &where_clause.predicates {
                 match predicate {
-                    ast::WherePredicate::TypeBound { ty, bounds, span: bound_span } => {
+                    ast::WherePredicate::TypeBound {
+                        ty,
+                        bounds,
+                        span: bound_span,
+                    } => {
                         // Convert the subject type (e.g., T in `T: Trait`)
                         let subject_ty = self.ast_type_to_hir_type(ty)?;
 
@@ -1412,7 +1494,8 @@ impl<'a> TypeContext<'a> {
         }
 
         // Collect const generics before restoring scope
-        let const_generics_vec: Vec<hir::ConstParamId> = self.const_params.values().copied().collect();
+        let const_generics_vec: Vec<hir::ConstParamId> =
+            self.const_params.values().copied().collect();
 
         // Restore previous generic params scope (after processing signature including effects)
         self.generic_params = saved_generic_params;
@@ -1427,7 +1510,9 @@ impl<'a> TypeContext<'a> {
         // Check for duplicate function signatures (same name AND same parameter types).
         // Multiple dispatch allows same-name functions with different signatures,
         // but identical signatures are an error.
-        if let Some(Binding::Methods(ref methods)) = self.resolver.current_scope().bindings.get(&name) {
+        if let Some(Binding::Methods(ref methods)) =
+            self.resolver.current_scope().bindings.get(&name)
+        {
             for &other_id in methods {
                 if other_id == def_id {
                     continue;
@@ -1435,17 +1520,17 @@ impl<'a> TypeContext<'a> {
                 if let Some(other_sig) = self.fn_sigs.get(&other_id) {
                     let current_sig = &self.fn_sigs[&def_id];
                     if other_sig.inputs.len() == current_sig.inputs.len()
-                        && other_sig.inputs.iter().zip(current_sig.inputs.iter()).all(|(a, b)| a == b)
+                        && other_sig
+                            .inputs
+                            .iter()
+                            .zip(current_sig.inputs.iter())
+                            .all(|(a, b)| a == b)
                     {
-                        let mut err = TypeError::new(
-                            TypeErrorKind::DuplicateDefinition { name },
-                            func.span,
-                        );
+                        let mut err =
+                            TypeError::new(TypeErrorKind::DuplicateDefinition { name }, func.span);
                         if let Some(prev_info) = self.resolver.def_info.get(&other_id) {
-                            err = err.with_secondary_label(
-                                prev_info.span,
-                                "previous definition here",
-                            );
+                            err = err
+                                .with_secondary_label(prev_info.span, "previous definition here");
                         }
                         return Err(Box::new(err));
                     }
@@ -1470,13 +1555,17 @@ impl<'a> TypeContext<'a> {
         }
 
         // Queue function for later body type-checking
-        self.pending_bodies.push((def_id, func.clone(), self.current_module));
+        self.pending_bodies
+            .push((def_id, func.clone(), self.current_module));
 
         Ok(())
     }
 
     /// Collect a struct declaration.
-    pub(crate) fn collect_struct(&mut self, struct_decl: &ast::StructDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_struct(
+        &mut self,
+        struct_decl: &ast::StructDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(struct_decl.name.node);
 
         // Use pre-registered DefId if it exists (from forward reference support phase),
@@ -1484,12 +1573,11 @@ impl<'a> TypeContext<'a> {
         let def_id = if let Some(existing_def_id) = self.resolver.lookup_type(&name) {
             existing_def_id
         } else {
-            let def_id = self.resolver.define_item(
-                name.clone(),
-                hir::DefKind::Struct,
-                struct_decl.span,
-            )?;
-            self.resolver.define_type(name.clone(), def_id, struct_decl.span)?;
+            let def_id =
+                self.resolver
+                    .define_item(name.clone(), hir::DefKind::Struct, struct_decl.span)?;
+            self.resolver
+                .define_type(name.clone(), def_id, struct_decl.span)?;
             def_id
         };
 
@@ -1532,35 +1620,31 @@ impl<'a> TypeContext<'a> {
 
         // Collect fields (now with generics in scope)
         let fields = match &struct_decl.body {
-            ast::StructBody::Record(fields) => {
-                fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| {
-                        let field_name = self.symbol_to_string(f.name.node);
-                        let ty = self.ast_type_to_hir_type(&f.ty)?;
-                        Ok(FieldInfo {
-                            name: field_name,
-                            ty,
-                            index: i as u32,
-                        })
+            ast::StructBody::Record(fields) => fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let field_name = self.symbol_to_string(f.name.node);
+                    let ty = self.ast_type_to_hir_type(&f.ty)?;
+                    Ok(FieldInfo {
+                        name: field_name,
+                        ty,
+                        index: i as u32,
                     })
-                    .collect::<Result<Vec<_>, Box<TypeError>>>()?
-            }
-            ast::StructBody::Tuple(types) => {
-                types
-                    .iter()
-                    .enumerate()
-                    .map(|(i, ty)| {
-                        let ty = self.ast_type_to_hir_type(ty)?;
-                        Ok(FieldInfo {
-                            name: format!("{i}"),
-                            ty,
-                            index: i as u32,
-                        })
+                })
+                .collect::<Result<Vec<_>, Box<TypeError>>>()?,
+            ast::StructBody::Tuple(types) => types
+                .iter()
+                .enumerate()
+                .map(|(i, ty)| {
+                    let ty = self.ast_type_to_hir_type(ty)?;
+                    Ok(FieldInfo {
+                        name: format!("{i}"),
+                        ty,
+                        index: i as u32,
                     })
-                    .collect::<Result<Vec<_>, Box<TypeError>>>()?
-            }
+                })
+                .collect::<Result<Vec<_>, Box<TypeError>>>()?,
             ast::StructBody::Unit => Vec::new(),
         };
 
@@ -1570,7 +1654,9 @@ impl<'a> TypeContext<'a> {
             for field in &fields {
                 if !seen.insert(&field.name) {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::DuplicateDefinition { name: field.name.clone() },
+                        TypeErrorKind::DuplicateDefinition {
+                            name: field.name.clone(),
+                        },
                         struct_decl.span,
                     )));
                 }
@@ -1583,13 +1669,16 @@ impl<'a> TypeContext<'a> {
         self.lifetime_params = saved_lifetime_params;
 
         let (is_packed, align) = self.extract_struct_attrs(&struct_decl.attrs);
-        self.struct_defs.insert(def_id, StructInfo {
-            name: name.clone(),
-            fields,
-            generics: generics_vec,
-            is_packed,
-            align,
-        });
+        self.struct_defs.insert(
+            def_id,
+            StructInfo {
+                name: name.clone(),
+                fields,
+                generics: generics_vec,
+                is_packed,
+                align,
+            },
+        );
 
         // Extract derive macros from attributes
         let derives = self.extract_derives(&struct_decl.attrs);
@@ -1606,7 +1695,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Collect a type alias declaration.
-    pub(crate) fn collect_type_alias(&mut self, type_decl: &ast::TypeDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_type_alias(
+        &mut self,
+        type_decl: &ast::TypeDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(type_decl.name.node);
 
         // Use pre-registered DefId if it exists (from forward reference support phase),
@@ -1614,12 +1706,11 @@ impl<'a> TypeContext<'a> {
         let def_id = if let Some(existing_def_id) = self.resolver.lookup_type(&name) {
             existing_def_id
         } else {
-            let def_id = self.resolver.define_item(
-                name.clone(),
-                hir::DefKind::TypeAlias,
-                type_decl.span,
-            )?;
-            self.resolver.define_type(name.clone(), def_id, type_decl.span)?;
+            let def_id =
+                self.resolver
+                    .define_item(name.clone(), hir::DefKind::TypeAlias, type_decl.span)?;
+            self.resolver
+                .define_type(name.clone(), def_id, type_decl.span)?;
             def_id
         };
 
@@ -1681,11 +1772,14 @@ impl<'a> TypeContext<'a> {
         self.const_params = saved_const_params;
         self.lifetime_params = saved_lifetime_params;
 
-        self.type_aliases.insert(def_id, TypeAliasInfo {
-            name,
-            ty: aliased_ty,
-            generics: generics_vec,
-        });
+        self.type_aliases.insert(
+            def_id,
+            TypeAliasInfo {
+                name,
+                ty: aliased_ty,
+                generics: generics_vec,
+            },
+        );
 
         Ok(())
     }
@@ -1699,12 +1793,11 @@ impl<'a> TypeContext<'a> {
         let def_id = if let Some(existing_def_id) = self.resolver.lookup_type(&name) {
             existing_def_id
         } else {
-            let def_id = self.resolver.define_item(
-                name.clone(),
-                hir::DefKind::Enum,
-                enum_decl.span,
-            )?;
-            self.resolver.define_type(name.clone(), def_id, enum_decl.span)?;
+            let def_id =
+                self.resolver
+                    .define_item(name.clone(), hir::DefKind::Enum, enum_decl.span)?;
+            self.resolver
+                .define_type(name.clone(), def_id, enum_decl.span)?;
             def_id
         };
 
@@ -1765,35 +1858,31 @@ impl<'a> TypeContext<'a> {
             }
 
             let fields = match &variant.body {
-                ast::StructBody::Record(fields) => {
-                    fields
-                        .iter()
-                        .enumerate()
-                        .map(|(j, f)| {
-                            let field_name = self.symbol_to_string(f.name.node);
-                            let ty = self.ast_type_to_hir_type(&f.ty)?;
-                            Ok(FieldInfo {
-                                name: field_name,
-                                ty,
-                                index: j as u32,
-                            })
+                ast::StructBody::Record(fields) => fields
+                    .iter()
+                    .enumerate()
+                    .map(|(j, f)| {
+                        let field_name = self.symbol_to_string(f.name.node);
+                        let ty = self.ast_type_to_hir_type(&f.ty)?;
+                        Ok(FieldInfo {
+                            name: field_name,
+                            ty,
+                            index: j as u32,
                         })
-                        .collect::<Result<Vec<_>, Box<TypeError>>>()?
-                }
-                ast::StructBody::Tuple(types) => {
-                    types
-                        .iter()
-                        .enumerate()
-                        .map(|(j, ty)| {
-                            let ty = self.ast_type_to_hir_type(ty)?;
-                            Ok(FieldInfo {
-                                name: format!("{j}"),
-                                ty,
-                                index: j as u32,
-                            })
+                    })
+                    .collect::<Result<Vec<_>, Box<TypeError>>>()?,
+                ast::StructBody::Tuple(types) => types
+                    .iter()
+                    .enumerate()
+                    .map(|(j, ty)| {
+                        let ty = self.ast_type_to_hir_type(ty)?;
+                        Ok(FieldInfo {
+                            name: format!("{j}"),
+                            ty,
+                            index: j as u32,
                         })
-                        .collect::<Result<Vec<_>, Box<TypeError>>>()?
-                }
+                    })
+                    .collect::<Result<Vec<_>, Box<TypeError>>>()?,
                 ast::StructBody::Unit => Vec::new(),
             };
 
@@ -1811,7 +1900,9 @@ impl<'a> TypeContext<'a> {
             for variant in &variants {
                 if !seen.insert(&variant.name) {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::DuplicateDefinition { name: variant.name.clone() },
+                        TypeErrorKind::DuplicateDefinition {
+                            name: variant.name.clone(),
+                        },
                         enum_decl.span,
                     )));
                 }
@@ -1823,11 +1914,14 @@ impl<'a> TypeContext<'a> {
         self.const_params = saved_const_params;
         self.lifetime_params = saved_lifetime_params;
 
-        self.enum_defs.insert(def_id, EnumInfo {
-            name: name.clone(),
-            variants,
-            generics: generics_vec,
-        });
+        self.enum_defs.insert(
+            def_id,
+            EnumInfo {
+                name: name.clone(),
+                variants,
+                generics: generics_vec,
+            },
+        );
 
         // Extract derive macros from attributes
         let derives = self.extract_derives(&enum_decl.attrs);
@@ -1846,13 +1940,14 @@ impl<'a> TypeContext<'a> {
     /// Collect a const declaration.
     ///
     /// This registers the const item and queues its value expression for type checking.
-    pub(crate) fn collect_const(&mut self, const_decl: &ast::ConstDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_const(
+        &mut self,
+        const_decl: &ast::ConstDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(const_decl.name.node);
-        let def_id = self.resolver.define_item(
-            name.clone(),
-            hir::DefKind::Const,
-            const_decl.span,
-        )?;
+        let def_id =
+            self.resolver
+                .define_item(name.clone(), hir::DefKind::Const, const_decl.span)?;
 
         // Track this item as belonging to the current module
         self.current_module_items.push(def_id);
@@ -1887,12 +1982,15 @@ impl<'a> TypeContext<'a> {
         // Store a placeholder - body_id will be assigned during check_const_body
         // We use a dummy body_id here that will be replaced
         let placeholder_body_id = hir::BodyId::new(u32::MAX);
-        self.const_defs.insert(def_id, super::ConstInfo {
-            name: name.clone(),
-            ty,
-            body_id: placeholder_body_id,
-            span: const_decl.span,
-        });
+        self.const_defs.insert(
+            def_id,
+            super::ConstInfo {
+                name: name.clone(),
+                ty,
+                body_id: placeholder_body_id,
+                span: const_decl.span,
+            },
+        );
 
         Ok(())
     }
@@ -1900,13 +1998,14 @@ impl<'a> TypeContext<'a> {
     /// Collect a static declaration.
     ///
     /// This registers the static item and queues its value expression for type checking.
-    pub(crate) fn collect_static(&mut self, static_decl: &ast::StaticDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_static(
+        &mut self,
+        static_decl: &ast::StaticDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(static_decl.name.node);
-        let def_id = self.resolver.define_item(
-            name.clone(),
-            hir::DefKind::Static,
-            static_decl.span,
-        )?;
+        let def_id =
+            self.resolver
+                .define_item(name.clone(), hir::DefKind::Static, static_decl.span)?;
 
         // Track this item as belonging to the current module
         self.current_module_items.push(def_id);
@@ -1925,19 +2024,25 @@ impl<'a> TypeContext<'a> {
         // Store a placeholder - body_id will be assigned during check_static_body
         // We use a dummy body_id here that will be replaced
         let placeholder_body_id = hir::BodyId::new(u32::MAX);
-        self.static_defs.insert(def_id, super::StaticInfo {
-            name,
-            ty,
-            is_mut: static_decl.is_mut,
-            body_id: placeholder_body_id,
-            span: static_decl.span,
-        });
+        self.static_defs.insert(
+            def_id,
+            super::StaticInfo {
+                name,
+                ty,
+                is_mut: static_decl.is_mut,
+                body_id: placeholder_body_id,
+                span: static_decl.span,
+            },
+        );
 
         Ok(())
     }
 
     /// Collect an effect declaration.
-    pub(crate) fn collect_effect(&mut self, effect: &ast::EffectDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_effect(
+        &mut self,
+        effect: &ast::EffectDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(effect.name.node);
 
         // Use pre-registered DefId if it exists (from forward reference support phase),
@@ -1945,12 +2050,11 @@ impl<'a> TypeContext<'a> {
         let def_id = if let Some(existing_def_id) = self.resolver.lookup_type(&name) {
             existing_def_id
         } else {
-            let def_id = self.resolver.define_item(
-                name.clone(),
-                hir::DefKind::Effect,
-                effect.span,
-            )?;
-            self.resolver.define_type(name.clone(), def_id, effect.span)?;
+            let def_id =
+                self.resolver
+                    .define_item(name.clone(), hir::DefKind::Effect, effect.span)?;
+            self.resolver
+                .define_type(name.clone(), def_id, effect.span)?;
             def_id
         };
 
@@ -1987,14 +2091,17 @@ impl<'a> TypeContext<'a> {
             let op_def_id = self.resolver.next_def_id();
 
             // Register def_info for the operation (but NOT in any scope)
-            self.resolver.def_info.insert(op_def_id, super::super::resolve::DefInfo {
-                kind: hir::DefKind::Fn,
-                name: op_name.clone(),
-                span: op.span,
-                ty: None,
-                parent: Some(def_id),  // Parent is the effect
-                visibility: crate::ast::Visibility::Public,
-            });
+            self.resolver.def_info.insert(
+                op_def_id,
+                super::super::resolve::DefInfo {
+                    kind: hir::DefKind::Fn,
+                    name: op_name.clone(),
+                    span: op.span,
+                    ty: None,
+                    parent: Some(def_id), // Parent is the effect
+                    visibility: crate::ast::Visibility::Public,
+                },
+            );
 
             // Collect operation-level generic type parameters (e.g., `op spawn<T>(...)`)
             // These are separate from the effect's own generics and must be in scope
@@ -2017,7 +2124,9 @@ impl<'a> TypeContext<'a> {
             }
 
             // Collect parameter types (with both effect and op generics in scope)
-            let params: Vec<Type> = op.params.iter()
+            let params: Vec<Type> = op
+                .params
+                .iter()
                 .map(|p| self.ast_type_to_hir_type(&p.ty))
                 .collect::<Result<_, _>>()?;
 
@@ -2046,37 +2155,44 @@ impl<'a> TypeContext<'a> {
             // Include BOTH the effect's type parameters AND the operation's own generics.
             let mut all_generics = generics_vec.clone();
             all_generics.extend(op_generics.iter());
-            self.fn_sigs.insert(op_def_id, hir::FnSig {
-                inputs: operations[index].params.clone(),
-                output: operations[index].return_ty.clone(),
-                is_const: false,
-                is_fiber: false,
-                is_unsafe: false,
-                generics: all_generics,
-                const_generics: Vec::new(),
-            });
+            self.fn_sigs.insert(
+                op_def_id,
+                hir::FnSig {
+                    inputs: operations[index].params.clone(),
+                    output: operations[index].return_ty.clone(),
+                    is_const: false,
+                    is_fiber: false,
+                    is_unsafe: false,
+                    generics: all_generics,
+                    const_generics: Vec::new(),
+                },
+            );
         }
 
         // Restore generic params
         self.generic_params = saved_generic_params;
 
-        self.effect_defs.insert(def_id, EffectInfo {
-            name,
-            operations,
-            generics: generics_vec,
-        });
+        self.effect_defs.insert(
+            def_id,
+            EffectInfo {
+                name,
+                operations,
+                generics: generics_vec,
+            },
+        );
 
         Ok(())
     }
 
     /// Collect a handler declaration.
-    pub(crate) fn collect_handler(&mut self, handler: &ast::HandlerDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_handler(
+        &mut self,
+        handler: &ast::HandlerDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(handler.name.node);
-        let def_id = self.resolver.define_item(
-            name.clone(),
-            hir::DefKind::Handler,
-            handler.span,
-        )?;
+        let def_id =
+            self.resolver
+                .define_item(name.clone(), hir::DefKind::Handler, handler.span)?;
 
         // Track this item as belonging to the current module
         self.current_module_items.push(def_id);
@@ -2104,21 +2220,28 @@ impl<'a> TypeContext<'a> {
 
         // Find the effect this handler handles
         // The effect is a Type, we need to resolve it to a DefId
-        let effect_ref = self.resolve_effect_type(&handler.effect)?
-            .ok_or_else(|| Box::new(TypeError::new(
-                TypeErrorKind::NotAnEffect { name: "unknown".to_string() },
+        let effect_ref = self.resolve_effect_type(&handler.effect)?.ok_or_else(|| {
+            Box::new(TypeError::new(
+                TypeErrorKind::NotAnEffect {
+                    name: "unknown".to_string(),
+                },
                 handler.effect.span,
-            )))?;
+            ))
+        })?;
         let effect_id = effect_ref.def_id;
 
         // Collect operation names implemented by this handler
-        let operations: Vec<String> = handler.operations.iter()
+        let operations: Vec<String> = handler
+            .operations
+            .iter()
             .map(|op| self.symbol_to_string(op.name.node))
             .collect();
 
         // Validate that the handler implements all required operations from the effect
         if let Some(effect_info) = self.effect_defs.get(&effect_id) {
-            let effect_op_names: Vec<&str> = effect_info.operations.iter()
+            let effect_op_names: Vec<&str> = effect_info
+                .operations
+                .iter()
                 .map(|op| op.name.as_str())
                 .collect();
 
@@ -2186,20 +2309,23 @@ impl<'a> TypeContext<'a> {
         };
 
         // Store handler with empty operations initially - bodies will be type-checked later
-        self.handler_defs.insert(def_id, super::HandlerInfo {
-            name,
-            kind: handler.kind,
-            effect_id,
-            effect_type_args: effect_ref.type_args.clone(),
-            operations: Vec::new(), // Will be populated during body type-checking
-            generics: generics_vec,
-            fields,
-            return_clause_body_id: None, // Will be populated during body type-checking
-            finally_clause_body_id: None, // Will be populated during body type-checking
-            continuation_result_ty,
-            return_clause_input_ty,
-            return_clause_output_ty,
-        });
+        self.handler_defs.insert(
+            def_id,
+            super::HandlerInfo {
+                name,
+                kind: handler.kind,
+                effect_id,
+                effect_type_args: effect_ref.type_args.clone(),
+                operations: Vec::new(), // Will be populated during body type-checking
+                generics: generics_vec,
+                fields,
+                return_clause_body_id: None, // Will be populated during body type-checking
+                finally_clause_body_id: None, // Will be populated during body type-checking
+                continuation_result_ty,
+                return_clause_input_ty,
+                return_clause_output_ty,
+            },
+        );
 
         // Queue handler for body type-checking
         self.pending_handlers.push((def_id, handler.clone()));
@@ -2208,7 +2334,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Collect an impl block declaration.
-    pub(crate) fn collect_impl_block(&mut self, impl_block: &ast::ImplBlock) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_impl_block(
+        &mut self,
+        impl_block: &ast::ImplBlock,
+    ) -> Result<(), Box<TypeError>> {
         // Save current generic params
         let saved_generic_params = std::mem::take(&mut self.generic_params);
         let mut generics_vec = Vec::new();
@@ -2245,7 +2374,9 @@ impl<'a> TypeContext<'a> {
                 ast::TypeKind::Path(path) => {
                     if path.segments.is_empty() {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::TypeNotFound { name: "empty trait path".to_string() },
+                            TypeErrorKind::TypeNotFound {
+                                name: "empty trait path".to_string(),
+                            },
                             impl_block.span,
                         )));
                     }
@@ -2339,7 +2470,8 @@ impl<'a> TypeContext<'a> {
                     let method_name = self.symbol_to_string(func.name.node);
 
                     // Create a qualified name for the method: Type::method_name
-                    let qualified_name = format!("{}::{}", self.type_to_string(&self_ty), method_name);
+                    let qualified_name =
+                        format!("{}::{}", self.type_to_string(&self_ty), method_name);
 
                     // Register the method as an associated function, supporting method overloading
                     let method_def_id = self.resolver.define_assoc_function(
@@ -2349,18 +2481,17 @@ impl<'a> TypeContext<'a> {
                     )?;
 
                     // Check if this is a static method (no self parameter)
-                    let is_static = func.params.first().map_or(true, |p| {
-                        match &p.pattern.kind {
-                            ast::PatternKind::Ident { name, .. } => {
-                                let name_str = self.symbol_to_string(name.node);
-                                name_str != "self"
-                            }
-                            _ => true,
+                    let is_static = func.params.first().map_or(true, |p| match &p.pattern.kind {
+                        ast::PatternKind::Ident { name, .. } => {
+                            let name_str = self.symbol_to_string(name.node);
+                            name_str != "self"
                         }
+                        _ => true,
                     });
 
                     // Store the Self type for this method
-                    self.method_self_types.insert(method_def_id, self_ty.clone());
+                    self.method_self_types
+                        .insert(method_def_id, self_ty.clone());
 
                     // Include impl-level generics in method signature so that
                     // monomorphization can substitute them. Without this, methods
@@ -2419,7 +2550,9 @@ impl<'a> TypeContext<'a> {
                     // Check for duplicate method signatures (same name AND same parameter types
                     // AND same type parameter bounds). Multiple dispatch allows same-name methods
                     // with different signatures or different constraints.
-                    if let Some(Binding::Methods(ref method_ids)) = self.resolver.current_scope().bindings.get(&qualified_name) {
+                    if let Some(Binding::Methods(ref method_ids)) =
+                        self.resolver.current_scope().bindings.get(&qualified_name)
+                    {
                         for &other_id in method_ids {
                             if other_id == method_def_id {
                                 continue;
@@ -2427,11 +2560,17 @@ impl<'a> TypeContext<'a> {
                             if let Some(other_sig) = self.fn_sigs.get(&other_id) {
                                 let current_sig = &self.fn_sigs[&method_def_id];
                                 if other_sig.inputs.len() == current_sig.inputs.len()
-                                    && other_sig.inputs.iter().zip(current_sig.inputs.iter()).all(|(a, b)| a == b)
+                                    && other_sig
+                                        .inputs
+                                        .iter()
+                                        .zip(current_sig.inputs.iter())
+                                        .all(|(a, b)| a == b)
                                 {
                                     // Same param types — check if constraints differ
                                     let mut constraints_differ = false;
-                                    for (cur_tv, oth_tv) in current_sig.generics.iter().zip(other_sig.generics.iter()) {
+                                    for (cur_tv, oth_tv) in
+                                        current_sig.generics.iter().zip(other_sig.generics.iter())
+                                    {
                                         let cur_bounds = self.type_param_bounds.get(cur_tv);
                                         let oth_bounds = self.type_param_bounds.get(oth_tv);
                                         if cur_bounds != oth_bounds {
@@ -2445,7 +2584,9 @@ impl<'a> TypeContext<'a> {
                                     }
                                     if !constraints_differ {
                                         return Err(Box::new(TypeError::new(
-                                            TypeErrorKind::DuplicateDefinition { name: qualified_name },
+                                            TypeErrorKind::DuplicateDefinition {
+                                                name: qualified_name,
+                                            },
                                             func.span,
                                         )));
                                     }
@@ -2456,7 +2597,8 @@ impl<'a> TypeContext<'a> {
 
                     // Queue method body for type-checking
                     // Include module context if this impl is inside a module
-                    self.pending_bodies.push((method_def_id, func.clone(), self.current_module));
+                    self.pending_bodies
+                        .push((method_def_id, func.clone(), self.current_module));
 
                     methods.push(ImplMethodInfo {
                         def_id: method_def_id,
@@ -2466,7 +2608,8 @@ impl<'a> TypeContext<'a> {
                 }
                 ast::ImplItem::Const(const_decl) => {
                     let const_name = self.symbol_to_string(const_decl.name.node);
-                    let qualified_name = format!("{}::{}", self.type_to_string(&self_ty), const_name);
+                    let qualified_name =
+                        format!("{}::{}", self.type_to_string(&self_ty), const_name);
 
                     let const_def_id = self.resolver.define_item(
                         qualified_name,
@@ -2490,12 +2633,7 @@ impl<'a> TypeContext<'a> {
 
         // Validate trait impl: check that all required methods are provided
         if let Some(trait_id) = trait_ref {
-            self.validate_trait_impl(
-                trait_id,
-                &methods,
-                &assoc_types,
-                impl_block.span,
-            )?;
+            self.validate_trait_impl(trait_id, &methods, &assoc_types, impl_block.span)?;
         }
 
         // Store the impl block with its source span for error reporting
@@ -2516,7 +2654,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Collect a trait declaration.
-    pub(crate) fn collect_trait(&mut self, trait_decl: &ast::TraitDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_trait(
+        &mut self,
+        trait_decl: &ast::TraitDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(trait_decl.name.node);
 
         // Use pre-registered DefId if it exists (from forward reference support phase),
@@ -2524,12 +2665,11 @@ impl<'a> TypeContext<'a> {
         let def_id = if let Some(existing_def_id) = self.resolver.lookup_type(&name) {
             existing_def_id
         } else {
-            let def_id = self.resolver.define_item(
-                name.clone(),
-                hir::DefKind::Trait,
-                trait_decl.span,
-            )?;
-            self.resolver.define_type(name.clone(), def_id, trait_decl.span)?;
+            let def_id =
+                self.resolver
+                    .define_item(name.clone(), hir::DefKind::Trait, trait_decl.span)?;
+            self.resolver
+                .define_type(name.clone(), def_id, trait_decl.span)?;
             def_id
         };
 
@@ -2580,7 +2720,9 @@ impl<'a> TypeContext<'a> {
                                         supertraits.push(supertrait_def_id);
                                     } else {
                                         return Err(Box::new(TypeError::new(
-                                            TypeErrorKind::TraitNotFound { name: supertrait_name },
+                                            TypeErrorKind::TraitNotFound {
+                                                name: supertrait_name,
+                                            },
                                             supertrait.span,
                                         )));
                                     }
@@ -2588,7 +2730,9 @@ impl<'a> TypeContext<'a> {
                             }
                             _ => {
                                 return Err(Box::new(TypeError::new(
-                                    TypeErrorKind::TraitNotFound { name: supertrait_name },
+                                    TypeErrorKind::TraitNotFound {
+                                        name: supertrait_name,
+                                    },
                                     supertrait.span,
                                 )));
                             }
@@ -2618,12 +2762,10 @@ impl<'a> TypeContext<'a> {
             if let ast::TraitItem::Type(type_decl) = item {
                 let type_name = self.symbol_to_string(type_decl.name.node);
                 let default = match &type_decl.ty {
-                    Some(ty_ast) => {
-                        match self.ast_type_to_hir_type(ty_ast) {
-                            Ok(ty) if !ty.is_error() => Some(ty),
-                            _ => None,
-                        }
-                    }
+                    Some(ty_ast) => match self.ast_type_to_hir_type(ty_ast) {
+                        Ok(ty) if !ty.is_error() => Some(ty),
+                        _ => None,
+                    },
                     None => None, // Bare `type Item;` — no default
                 };
 
@@ -2696,7 +2838,8 @@ impl<'a> TypeContext<'a> {
                     if has_default {
                         // Queue the default body for type-checking
                         // Trait methods don't need module context
-                        self.pending_bodies.push((method_def_id, func.clone(), None));
+                        self.pending_bodies
+                            .push((method_def_id, func.clone(), None));
                     }
 
                     methods.push(TraitMethodInfo {
@@ -2742,14 +2885,17 @@ impl<'a> TypeContext<'a> {
         self.current_impl_self_ty = saved_impl_self_ty;
 
         // Store the trait info
-        self.trait_defs.insert(def_id, TraitInfo {
-            name,
-            generics: generics_vec,
-            supertraits,
-            methods,
-            assoc_types,
-            assoc_consts,
-        });
+        self.trait_defs.insert(
+            def_id,
+            TraitInfo {
+                name,
+                generics: generics_vec,
+                supertraits,
+                methods,
+                assoc_types,
+                assoc_consts,
+            },
+        );
 
         Ok(())
     }
@@ -2759,7 +2905,10 @@ impl<'a> TypeContext<'a> {
     /// Returns (effects, row_variable_name) where:
     /// - `effects` is the list of concrete effects in the row
     /// - `row_variable_name` is Some(name) if the row has a polymorphic tail (e.g., `{IO | e}` or just `e`)
-    pub(crate) fn parse_effect_row(&mut self, effect_row: &ast::EffectRow) -> Result<(Vec<EffectRef>, Option<String>), Box<TypeError>> {
+    pub(crate) fn parse_effect_row(
+        &mut self,
+        effect_row: &ast::EffectRow,
+    ) -> Result<(Vec<EffectRef>, Option<String>), Box<TypeError>> {
         match &effect_row.kind {
             ast::EffectRowKind::Pure => Ok((Vec::new(), None)),
             ast::EffectRowKind::Var(var) => {
@@ -2782,7 +2931,10 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Resolve an effect type (like `State<i32>`) to an EffectRef.
-    pub(crate) fn resolve_effect_type(&mut self, ty: &ast::Type) -> Result<Option<EffectRef>, Box<TypeError>> {
+    pub(crate) fn resolve_effect_type(
+        &mut self,
+        ty: &ast::Type,
+    ) -> Result<Option<EffectRef>, Box<TypeError>> {
         match &ty.kind {
             ast::TypeKind::Path(path) => {
                 if path.segments.is_empty() {
@@ -2844,10 +2996,14 @@ impl<'a> TypeContext<'a> {
                     }
                     ast::TypeKind::Forall { .. } => "forall type",
                     ast::TypeKind::DynTrait { .. } => "dyn trait type",
-                    ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
+                    ast::TypeKind::Path(_) => {
+                        unreachable!("Path type should be handled by the match above")
+                    }
                 };
                 Err(Box::new(TypeError::new(
-                    TypeErrorKind::InvalidEffectType { found: found.to_string() },
+                    TypeErrorKind::InvalidEffectType {
+                        found: found.to_string(),
+                    },
                     ty.span,
                 )))
             }
@@ -2858,7 +3014,10 @@ impl<'a> TypeContext<'a> {
     ///
     /// This makes effect operations like `get()` and `put()` available within functions
     /// that declare they use those effects (e.g., `fn counter() / {State<i32>}`).
-    pub(crate) fn register_effect_operations_in_scope(&mut self, fn_def_id: DefId) -> Result<(), Box<TypeError>> {
+    pub(crate) fn register_effect_operations_in_scope(
+        &mut self,
+        fn_def_id: DefId,
+    ) -> Result<(), Box<TypeError>> {
         use crate::ice;
 
         // Get the function's declared effects
@@ -2893,7 +3052,8 @@ impl<'a> TypeContext<'a> {
             // and substitution happens at the Perform expression site.
             for op_info in &effect_info.operations {
                 // Add the operation to the current scope so it can be called by name
-                self.resolver.current_scope_mut()
+                self.resolver
+                    .current_scope_mut()
                     .bindings
                     .insert(op_info.name.clone(), Binding::Def(op_info.def_id));
             }
@@ -2907,13 +3067,14 @@ impl<'a> TypeContext<'a> {
     /// For inline modules (`mod foo { ... }`), recursively collect all declarations.
     /// For external modules (`mod foo;`), loads the module from `name.blood` or `name/mod.blood`
     /// relative to the current source file. For `mod std;`, also checks the stdlib_path.
-    pub(crate) fn collect_module(&mut self, module: &ast::ModItemDecl) -> Result<(), Box<TypeError>> {
+    pub(crate) fn collect_module(
+        &mut self,
+        module: &ast::ModItemDecl,
+    ) -> Result<(), Box<TypeError>> {
         let name = self.symbol_to_string(module.name.node);
-        let def_id = self.resolver.define_item(
-            name.clone(),
-            hir::DefKind::Mod,
-            module.span,
-        )?;
+        let def_id = self
+            .resolver
+            .define_item(name.clone(), hir::DefKind::Mod, module.span)?;
 
         // Track this module as belonging to the PARENT module's items.
         // This must happen BEFORE we save/clear current_module_items for the nested module.
@@ -2934,7 +3095,8 @@ impl<'a> TypeContext<'a> {
                 // same-named items to shadow each other during inject_module_bindings.
                 let saved_module_items = std::mem::take(&mut self.current_module_items);
                 let saved_module_reexports = std::mem::take(&mut self.current_module_reexports);
-                let saved_module_private_imports = std::mem::take(&mut self.current_module_private_imports);
+                let saved_module_private_imports =
+                    std::mem::take(&mut self.current_module_private_imports);
 
                 // Phase 1: Pre-register all type names so forward references work within the module
                 for decl in declarations {
@@ -2963,16 +3125,19 @@ impl<'a> TypeContext<'a> {
                 self.resolver.pop_scope();
 
                 // Store module info
-                self.module_defs.insert(def_id, super::ModuleInfo {
-                    name,
-                    items: item_def_ids,
-                    is_external: false,
-                    span: module.span,
-                    source_path: None,
-                    source_content: None,
-                    reexports,
-                    private_imports,
-                });
+                self.module_defs.insert(
+                    def_id,
+                    super::ModuleInfo {
+                        name,
+                        items: item_def_ids,
+                        is_external: false,
+                        span: module.span,
+                        source_path: None,
+                        source_content: None,
+                        reexports,
+                        private_imports,
+                    },
+                );
             }
             None => {
                 // External module - load from file
@@ -2981,16 +3146,18 @@ impl<'a> TypeContext<'a> {
                     None => None,
                 };
 
-                let source_dir = source_dir.ok_or_else(|| Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: format!(
-                            "external modules (`mod {};`) - no source path available. \
+                let source_dir = source_dir.ok_or_else(|| {
+                    Box::new(TypeError::new(
+                        TypeErrorKind::UnsupportedFeature {
+                            feature: format!(
+                                "external modules (`mod {};`) - no source path available. \
                             Use `with_source_path()` when creating the type context.",
-                            name
-                        ),
-                    },
-                    module.span,
-                )))?;
+                                name
+                            ),
+                        },
+                        module.span,
+                    ))
+                })?;
 
                 // Try to find the module file.
                 // For nested modules (when inside foo.blood), we check:
@@ -2998,12 +3165,17 @@ impl<'a> TypeContext<'a> {
                 // 2. sibling dir mod: foo/name/mod.blood
                 // 3. parent dir: name.blood (for root-level modules)
                 // 4. parent dir mod: name/mod.blood
-                let sibling_dir = self.source_path.as_ref().and_then(|p| {
-                    p.file_stem().map(|stem| source_dir.join(stem))
-                });
+                let sibling_dir = self
+                    .source_path
+                    .as_ref()
+                    .and_then(|p| p.file_stem().map(|stem| source_dir.join(stem)));
 
-                let sibling_path = sibling_dir.as_ref().map(|d| d.join(format!("{}.blood", name)));
-                let sibling_alt = sibling_dir.as_ref().map(|d| d.join(&name).join("mod.blood"));
+                let sibling_path = sibling_dir
+                    .as_ref()
+                    .map(|d| d.join(format!("{}.blood", name)));
+                let sibling_alt = sibling_dir
+                    .as_ref()
+                    .map(|d| d.join(&name).join("mod.blood"));
                 let file_path = source_dir.join(format!("{}.blood", name));
                 let alt_path = source_dir.join(&name).join("mod.blood");
 
@@ -3067,7 +3239,9 @@ impl<'a> TypeContext<'a> {
                 };
 
                 // Canonicalize the module path to handle diamond dependencies
-                let canonical_path = module_path.canonicalize().unwrap_or_else(|_| module_path.clone());
+                let canonical_path = module_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| module_path.clone());
 
                 // Check if this module has already been loaded (diamond dependency case)
                 if let Some(&existing_def_id) = self.loaded_modules.get(&canonical_path) {
@@ -3075,16 +3249,19 @@ impl<'a> TypeContext<'a> {
                     // Just create an alias in the current scope pointing to the existing module
                     if let Some(existing_info) = self.module_defs.get(&existing_def_id).cloned() {
                         // Store module info with the new def_id pointing to existing items
-                        self.module_defs.insert(def_id, super::ModuleInfo {
-                            name,
-                            items: existing_info.items,
-                            is_external: true,
-                            span: module.span,
-                            source_path: existing_info.source_path,
-                            source_content: existing_info.source_content,
-                            reexports: existing_info.reexports,
-                            private_imports: existing_info.private_imports,
-                        });
+                        self.module_defs.insert(
+                            def_id,
+                            super::ModuleInfo {
+                                name,
+                                items: existing_info.items,
+                                is_external: true,
+                                span: module.span,
+                                source_path: existing_info.source_path,
+                                source_content: existing_info.source_content,
+                                reexports: existing_info.reexports,
+                                private_imports: existing_info.private_imports,
+                            },
+                        );
                         return Ok(());
                     }
                 }
@@ -3093,7 +3270,11 @@ impl<'a> TypeContext<'a> {
                 let module_source = std::fs::read_to_string(&module_path).map_err(|e| {
                     TypeError::new(
                         TypeErrorKind::IoError {
-                            message: format!("failed to read module file '{}': {}", module_path.display(), e),
+                            message: format!(
+                                "failed to read module file '{}': {}",
+                                module_path.display(),
+                                e
+                            ),
                         },
                         module.span,
                     )
@@ -3143,12 +3324,14 @@ impl<'a> TypeContext<'a> {
                 // same-named items to shadow each other during inject_module_bindings.
                 let saved_module_items = std::mem::take(&mut self.current_module_items);
                 let saved_module_reexports = std::mem::take(&mut self.current_module_reexports);
-                let saved_module_private_imports = std::mem::take(&mut self.current_module_private_imports);
+                let saved_module_private_imports =
+                    std::mem::take(&mut self.current_module_private_imports);
 
                 // Phase 1: Pre-register all type names so forward references work within the module
                 for decl in &module_ast.declarations {
                     if let Err(e) = self.register_type_name(decl) {
-                        let e_with_source = e.with_source_file(module_path.clone(), module_source.clone());
+                        let e_with_source =
+                            e.with_source_file(module_path.clone(), module_source.clone());
                         self.errors.push(e_with_source);
                     }
                 }
@@ -3157,7 +3340,8 @@ impl<'a> TypeContext<'a> {
                 for decl in &module_ast.declarations {
                     if let Err(e) = self.collect_declaration(decl) {
                         // Attach source file info to errors from external modules
-                        let e_with_source = e.with_source_file(module_path.clone(), module_source.clone());
+                        let e_with_source =
+                            e.with_source_file(module_path.clone(), module_source.clone());
                         self.errors.push(e_with_source);
                     }
                 }
@@ -3176,16 +3360,19 @@ impl<'a> TypeContext<'a> {
                 self.resolver.pop_scope();
 
                 // Store module info with source for error reporting
-                self.module_defs.insert(def_id, super::ModuleInfo {
-                    name,
-                    items: item_def_ids,
-                    is_external: true,
-                    span: module.span,
-                    source_path: Some(module_path),
-                    source_content: Some(module_source),
-                    reexports,
-                    private_imports,
-                });
+                self.module_defs.insert(
+                    def_id,
+                    super::ModuleInfo {
+                        name,
+                        items: item_def_ids,
+                        is_external: true,
+                        span: module.span,
+                        source_path: Some(module_path),
+                        source_content: Some(module_source),
+                        reexports,
+                        private_imports,
+                    },
+                );
 
                 // Cache this module by canonical path for future diamond dependency detection
                 self.loaded_modules.insert(canonical_path, def_id);

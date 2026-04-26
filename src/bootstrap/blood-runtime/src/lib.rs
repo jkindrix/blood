@@ -48,10 +48,10 @@ pub mod cancellation;
 pub mod channel;
 pub mod config;
 pub mod continuation;
-pub mod fiber;
-pub mod fiber_local;
 pub mod ffi;
 pub mod ffi_exports;
+pub mod fiber;
+pub mod fiber_local;
 pub mod io;
 pub mod log;
 pub mod memory;
@@ -68,16 +68,24 @@ pub mod sync;
 pub mod timeout;
 
 // Re-exports
-pub use cancellation::{CancellationToken, CancellationSource, CancellationError, CancellableScope};
+pub use cancellation::{
+    CancellableScope, CancellationError, CancellationSource, CancellationToken,
+};
 pub use channel::{bounded, unbounded, Receiver, Sender};
-pub use config::{RuntimeConfig, RuntimeConfigBuilder, LogLevel, ConfigError};
-pub use fiber::{Fiber, FiberId, FiberHandle, FiberState};
-pub use fiber_local::{FiberLocal, FiberLocalKey, FiberLocalStorage, FiberContext, TraceContext, RequestContext, PropagationMode};
+pub use config::{ConfigError, LogLevel, RuntimeConfig, RuntimeConfigBuilder};
+pub use fiber::{Fiber, FiberHandle, FiberId, FiberState};
+pub use fiber_local::{
+    FiberContext, FiberLocal, FiberLocalKey, FiberLocalStorage, PropagationMode, RequestContext,
+    TraceContext,
+};
 pub use panic::{BloodPanicInfo, Location as PanicLocation};
 pub use scheduler::{Scheduler, Worker};
 pub use signal::{Signal, SignalHandler};
-pub use sync::{Mutex, RwLock, Once, Barrier, Semaphore, OnceLock};
-pub use timeout::{Timeout, TimeoutGuard, TimeoutError, TimeoutBuilder, Deadline, with_timeout, with_timeout_and_parent};
+pub use sync::{Barrier, Mutex, Once, OnceLock, RwLock, Semaphore};
+pub use timeout::{
+    with_timeout, with_timeout_and_parent, Deadline, Timeout, TimeoutBuilder, TimeoutError,
+    TimeoutGuard,
+};
 
 /// Runtime version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -160,8 +168,8 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             num_workers: num_cpus(),
-            initial_stack_size: 8 * 1024,      // 8 KB
-            max_stack_size: 1024 * 1024,       // 1 MB
+            initial_stack_size: 8 * 1024, // 8 KB
+            max_stack_size: 1024 * 1024,  // 1 MB
             work_stealing: true,
         }
     }

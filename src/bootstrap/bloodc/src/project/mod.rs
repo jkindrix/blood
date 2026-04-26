@@ -6,17 +6,21 @@
 //! - Dependency graph construction
 //! - Incremental compilation with file-level caching
 
+mod compiler;
+mod file_cache;
+mod graph;
 mod manifest;
 mod resolve;
-mod graph;
-mod file_cache;
-mod compiler;
 
-pub use manifest::{Manifest, Package, BinTarget, LibTarget, Edition, ManifestError, Dependency, DetailedDependency};
-pub use resolve::{ModuleResolver, ModuleTree, ModuleId, Module};
+pub use compiler::{
+    IncrementalAnalysis, IncrementalStats, ProjectCompiler, ProjectCompilerBuilder,
+};
+pub use file_cache::{FileCache, FileCacheEntry, FileCacheError, FileCacheStats, FileStatus};
 pub use graph::{DependencyGraph, GraphError};
-pub use file_cache::{FileCache, FileCacheEntry, FileCacheStats, FileCacheError, FileStatus};
-pub use compiler::{ProjectCompiler, ProjectCompilerBuilder, IncrementalAnalysis, IncrementalStats};
+pub use manifest::{
+    BinTarget, Dependency, DetailedDependency, Edition, LibTarget, Manifest, ManifestError, Package,
+};
+pub use resolve::{Module, ModuleId, ModuleResolver, ModuleTree};
 
 use std::path::{Path, PathBuf};
 

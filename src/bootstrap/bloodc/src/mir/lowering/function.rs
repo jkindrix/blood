@@ -2,31 +2,30 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{
-    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, RecordFieldExpr,
-    LocalId, MatchArm, Pattern, Stmt, Type, TypeKind,
-};
 use crate::ast::UnaryOp;
-use crate::span::Span;
 use crate::diagnostics::Diagnostic;
 use crate::effects::std_effects::StandardEffects;
+use crate::hir::{
+    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, LocalId, MatchArm, Pattern,
+    RecordFieldExpr, Stmt, Type, TypeKind,
+};
 use crate::ice_err;
+use crate::span::Span;
 
-use crate::mir::body::MirBodyBuilder;
 use crate::mir::body::MirBody;
+use crate::mir::body::MirBodyBuilder;
 use crate::mir::static_evidence::{
-    analyze_handler_state, analyze_handler_allocation_tier,
-    analyze_inline_evidence_mode, InlineEvidenceContext,
+    analyze_handler_allocation_tier, analyze_handler_state, analyze_inline_evidence_mode,
+    InlineEvidenceContext,
 };
 use crate::mir::types::{
-    BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
-    Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind,
-    UnOp as MirUnOp, AggregateKind, SwitchTargets,
+    AggregateKind, BasicBlockId, Constant, ConstantKind, Operand, Place, PlaceElem, Rvalue,
+    Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp as MirUnOp,
 };
 
-use super::LoopContext;
 use super::util::{is_irrefutable_pattern, ExprLowering, LoopContextInfo};
-use super::{InlineHandlerBody, InlineHandlerBodies, InlineHandlerCaptureInfo, PendingClosures};
+use super::LoopContext;
+use super::{InlineHandlerBodies, InlineHandlerBody, InlineHandlerCaptureInfo, PendingClosures};
 
 use std::collections::HashSet;
 
@@ -84,7 +83,9 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
         }
 
         ExprKind::Block { stmts, expr: tail }
-        | ExprKind::Region { stmts, expr: tail, .. } => {
+        | ExprKind::Region {
+            stmts, expr: tail, ..
+        } => {
             for stmt in stmts {
                 match stmt {
                     hir::Stmt::Let { init, .. } => {
@@ -103,7 +104,11 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             }
         }
 
-        ExprKind::If { condition, then_branch, else_branch } => {
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             collect_local_refs(condition, refs, false);
             collect_local_refs(then_branch, refs, false);
             if let Some(else_br) = else_branch {
@@ -146,7 +151,10 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             collect_local_refs(index, refs, false);
         }
 
-        ExprKind::Borrow { expr: inner, mutable } => {
+        ExprKind::Borrow {
+            expr: inner,
+            mutable,
+        } => {
             // If taking &mut, the inner is in mutable context
             collect_local_refs(inner, refs, *mutable || in_mutable_context);
         }
@@ -175,7 +183,11 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             }
         }
 
-        ExprKind::Handle { body, handler_instance, .. } => {
+        ExprKind::Handle {
+            body,
+            handler_instance,
+            ..
+        } => {
             collect_local_refs(body, refs, false);
             collect_local_refs(handler_instance, refs, false);
         }
@@ -221,7 +233,10 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             }
         }
 
-        ExprKind::AddrOf { expr: inner, mutable } => {
+        ExprKind::AddrOf {
+            expr: inner,
+            mutable,
+        } => {
             collect_local_refs(inner, refs, *mutable);
         }
 
@@ -229,9 +244,7 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             collect_local_refs(init, refs, false);
         }
 
-        ExprKind::Unsafe(inner)
-        | ExprKind::Heap(inner)
-        | ExprKind::Stack(inner) => {
+        ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
             collect_local_refs(inner, refs, in_mutable_context);
         }
         ExprKind::Unchecked { body, .. } => {
@@ -321,11 +334,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let param_span = hir_params.get(i).map(|p| p.span).unwrap_or(body.span);
             let hir_local_id = hir_params.get(i).map(|p| p.id);
 
-            let mir_local = builder.add_param(
-                param_name,
-                ty.clone(),
-                param_span,
-            );
+            let mir_local = builder.add_param(param_name, ty.clone(), param_span);
             // Map the actual HIR local ID to MIR local
             if let Some(hir_local) = hir_local_id {
                 local_map.insert(hir_local, mir_local);
@@ -369,8 +378,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // 1. Body expression diverges (type Never) - we're in unreachable code
         // 2. Body returns unit but function returns non-unit - explicit return handled it
         let return_ty = self.body.return_type();
-        let skip_implicit_return = body_expr.ty.is_never()
-            || (body_expr.ty.is_unit() && !return_ty.is_unit());
+        let skip_implicit_return =
+            body_expr.ty.is_never() || (body_expr.ty.is_unit() && !return_ty.is_unit());
 
         if !skip_implicit_return {
             // Assign body result to return place
@@ -414,85 +423,79 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 self.lower_binary(*op, left, right, &expr.ty, expr.span)
             }
 
-            ExprKind::Unary { op, operand } => {
-                self.lower_unary(*op, operand, &expr.ty, expr.span)
-            }
+            ExprKind::Unary { op, operand } => self.lower_unary(*op, operand, &expr.ty, expr.span),
 
-            ExprKind::Call { callee, args } => {
-                self.lower_call(callee, args, &expr.ty, expr.span)
-            }
+            ExprKind::Call { callee, args } => self.lower_call(callee, args, &expr.ty, expr.span),
 
             ExprKind::Block { stmts, expr: tail } => {
                 self.lower_block(stmts, tail.as_deref(), &expr.ty, expr.span)
             }
 
-            ExprKind::Region { stmts, expr: tail, .. } => {
-                self.lower_region(stmts, tail.as_deref(), &expr.ty, expr.span)
-            }
+            ExprKind::Region {
+                stmts, expr: tail, ..
+            } => self.lower_region(stmts, tail.as_deref(), &expr.ty, expr.span),
 
-            ExprKind::If { condition, then_branch, else_branch } => {
-                self.lower_if(condition, then_branch, else_branch.as_deref(), &expr.ty, expr.span)
-            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.lower_if(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                &expr.ty,
+                expr.span,
+            ),
 
             ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(scrutinee, arms, &expr.ty, expr.span)
             }
 
-            ExprKind::Loop { body, label } => {
-                self.lower_loop(body, *label, &expr.ty, expr.span)
-            }
+            ExprKind::Loop { body, label } => self.lower_loop(body, *label, &expr.ty, expr.span),
 
-            ExprKind::While { condition, body, label } => {
-                self.lower_while(condition, body, *label, &expr.ty, expr.span)
-            }
+            ExprKind::While {
+                condition,
+                body,
+                label,
+            } => self.lower_while(condition, body, *label, &expr.ty, expr.span),
 
             ExprKind::Break { label, value } => {
                 self.lower_break(*label, value.as_deref(), expr.span)
             }
 
-            ExprKind::Continue { label } => {
-                self.lower_continue(*label, expr.span)
-            }
+            ExprKind::Continue { label } => self.lower_continue(*label, expr.span),
 
-            ExprKind::Return(value) => {
-                self.lower_return(value.as_deref(), expr.span)
-            }
+            ExprKind::Return(value) => self.lower_return(value.as_deref(), expr.span),
 
-            ExprKind::Assign { target, value } => {
-                self.lower_assign(target, value, expr.span)
-            }
+            ExprKind::Assign { target, value } => self.lower_assign(target, value, expr.span),
 
-            ExprKind::Tuple(elems) => {
-                self.lower_tuple(elems, &expr.ty, expr.span)
-            }
+            ExprKind::Tuple(elems) => self.lower_tuple(elems, &expr.ty, expr.span),
 
-            ExprKind::Array(elems) => {
-                self.lower_array(elems, &expr.ty, expr.span)
-            }
+            ExprKind::Array(elems) => self.lower_array(elems, &expr.ty, expr.span),
 
-            ExprKind::Struct { def_id, fields, base } => {
-                self.lower_struct(*def_id, fields, base.as_deref(), &expr.ty, expr.span)
-            }
+            ExprKind::Struct {
+                def_id,
+                fields,
+                base,
+            } => self.lower_struct(*def_id, fields, base.as_deref(), &expr.ty, expr.span),
 
             ExprKind::Field { base, field_idx } => {
                 self.lower_field(base, *field_idx, &expr.ty, expr.span)
             }
 
-            ExprKind::Index { base, index } => {
-                self.lower_index(base, index, &expr.ty, expr.span)
-            }
+            ExprKind::Index { base, index } => self.lower_index(base, index, &expr.ty, expr.span),
 
-            ExprKind::Borrow { expr: inner, mutable } => {
-                self.lower_borrow(inner, *mutable, &expr.ty, expr.span)
-            }
+            ExprKind::Borrow {
+                expr: inner,
+                mutable,
+            } => self.lower_borrow(inner, *mutable, &expr.ty, expr.span),
 
-            ExprKind::Deref(inner) => {
-                self.lower_deref(inner, &expr.ty, expr.span)
-            }
+            ExprKind::Deref(inner) => self.lower_deref(inner, &expr.ty, expr.span),
 
-            ExprKind::Cast { expr: inner, target_ty } => {
-                self.lower_cast(inner, target_ty, expr.span)
-            }
+            ExprKind::Cast {
+                expr: inner,
+                target_ty,
+            } => self.lower_cast(inner, target_ty, expr.span),
 
             ExprKind::ConstParam(id) => {
                 let temp = self.new_temp(expr.ty.clone(), expr.span);
@@ -508,44 +511,48 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
             ExprKind::Error => {
                 // Propagate error
-                Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
-            }
-
-            // Explicitly handle unimplemented expression kinds with proper errors
-            ExprKind::MethodCall { .. } => {
                 Err(vec![Diagnostic::error(
-                    "MIR lowering: method calls should be desugared before MIR lowering".to_string(),
+                    "lowering error expression".to_string(),
                     expr.span,
                 )])
             }
+
+            // Explicitly handle unimplemented expression kinds with proper errors
+            ExprKind::MethodCall { .. } => Err(vec![Diagnostic::error(
+                "MIR lowering: method calls should be desugared before MIR lowering".to_string(),
+                expr.span,
+            )]),
 
             ExprKind::Repeat { value, count } => {
                 self.lower_repeat(value, *count, &expr.ty, expr.span)
             }
 
-            ExprKind::Variant { def_id, variant_idx, fields } => {
-                self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span)
-            }
+            ExprKind::Variant {
+                def_id,
+                variant_idx,
+                fields,
+            } => self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span),
 
             ExprKind::Closure { body_id, captures } => {
                 self.lower_closure(*body_id, captures, &expr.ty, expr.span)
             }
 
-            ExprKind::AddrOf { expr: inner, mutable } => {
-                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
-            }
+            ExprKind::AddrOf {
+                expr: inner,
+                mutable,
+            } => self.lower_addr_of(inner, *mutable, &expr.ty, expr.span),
 
-            ExprKind::Let { pattern, init } => {
-                self.lower_let(pattern, init, &expr.ty, expr.span)
-            }
+            ExprKind::Let { pattern, init } => self.lower_let(pattern, init, &expr.ty, expr.span),
 
-            ExprKind::Unsafe(inner)
-            | ExprKind::Heap(inner)
-            | ExprKind::Stack(inner) => {
+            ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
                 // For now, just lower the inner expression (safety/placement handled elsewhere)
                 self.lower_expr(inner)
             }
-            ExprKind::Unchecked { ref checks, ref when_condition, body } => {
+            ExprKind::Unchecked {
+                ref checks,
+                ref when_condition,
+                body,
+            } => {
                 // Check if conditional mode applies: when = "release" only active in release builds
                 let condition_met = match when_condition.as_deref() {
                     Some("release") => self.is_release,
@@ -563,25 +570,36 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 }
             }
 
-            ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {
-                self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span)
-            }
+            ExprKind::Perform {
+                effect_id,
+                op_index,
+                args,
+                type_args: _,
+            } => self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span),
 
-            ExprKind::Resume { value } => {
-                self.lower_resume(value.as_deref(), expr.span)
-            }
+            ExprKind::Resume { value } => self.lower_resume(value.as_deref(), expr.span),
 
-            ExprKind::Handle { body, handler_id, handler_instance } => {
-                self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span)
-            }
+            ExprKind::Handle {
+                body,
+                handler_id,
+                handler_instance,
+            } => self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span),
 
             ExprKind::InlineHandle { body, handlers } => {
                 self.lower_inline_handle(body, handlers, &expr.ty, expr.span)
             }
 
-            ExprKind::Range { start, end, inclusive } => {
-                self.lower_range(start.as_deref(), end.as_deref(), *inclusive, &expr.ty, expr.span)
-            }
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.lower_range(
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+                &expr.ty,
+                expr.span,
+            ),
 
             ExprKind::MethodFamily { name, candidates } => {
                 // Method family should be resolved at call site during type checking.
@@ -597,9 +615,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 )])
             }
 
-            ExprKind::Record { fields } => {
-                self.lower_record(fields, &expr.ty, expr.span)
-            }
+            ExprKind::Record { fields } => self.lower_record(fields, &expr.ty, expr.span),
 
             ExprKind::Default => {
                 // Create a default-initialized value
@@ -612,36 +628,29 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             }
 
             // Macro expansion nodes - these should be lowered during a macro expansion pass
-            ExprKind::MacroExpansion { macro_name, .. } => {
-                Err(vec![Diagnostic::error(
-                    format!("macro expansion '{}!' should be expanded before MIR lowering", macro_name),
-                    expr.span,
-                )])
-            }
-            ExprKind::VecLiteral(_) => {
-                Err(vec![Diagnostic::error(
-                    "vec! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::VecRepeat { .. } => {
-                Err(vec![Diagnostic::error(
-                    "vec! repeat macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::Assert { .. } => {
-                Err(vec![Diagnostic::error(
-                    "assert! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::Dbg(_) => {
-                Err(vec![Diagnostic::error(
-                    "dbg! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
+            ExprKind::MacroExpansion { macro_name, .. } => Err(vec![Diagnostic::error(
+                format!(
+                    "macro expansion '{}!' should be expanded before MIR lowering",
+                    macro_name
+                ),
+                expr.span,
+            )]),
+            ExprKind::VecLiteral(_) => Err(vec![Diagnostic::error(
+                "vec! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::VecRepeat { .. } => Err(vec![Diagnostic::error(
+                "vec! repeat macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::Assert { .. } => Err(vec![Diagnostic::error(
+                "assert! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::Dbg(_) => Err(vec![Diagnostic::error(
+                "dbg! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
 
             ExprKind::SliceLen(slice_expr) => {
                 // Lower slice/array length to Rvalue::Len
@@ -687,7 +696,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 Ok(Operand::Copy(Place::local(len_temp)))
             }
 
-            ExprKind::ArrayToSlice { expr: array_expr, array_len } => {
+            ExprKind::ArrayToSlice {
+                expr: array_expr,
+                array_len,
+            } => {
                 // Lower array-to-slice coercion: &[T; N] -> &[T]
                 let array_ref_op = self.lower_expr(array_expr)?;
 
@@ -822,8 +834,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Creating an unnecessary continuation for tail-resumptive handlers is
         // harmless (the handler just ignores it), but skipping the continuation
         // for a non-tail-resumptive handler breaks post-resume code execution.
-        let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
-            .unwrap_or_else(|| {
+        let is_tail_resumptive =
+            StandardEffects::is_tail_resumptive(effect_id).unwrap_or_else(|| {
                 // Check if this user-defined effect has a well-known name
                 if let Some(item) = self.hir.get_item(effect_id) {
                     if matches!(item.kind, hir::ItemKind::Effect { .. }) {
@@ -871,11 +883,16 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         // Emit Resume terminator
         // Resume is a diverging operation - control transfers to the continuation
-        self.terminate(TerminatorKind::Resume { value: resume_value });
+        self.terminate(TerminatorKind::Resume {
+            value: resume_value,
+        });
 
         // Resume never returns (control flow transfers elsewhere)
         // Return a unit constant as placeholder - this code is unreachable
-        Ok(Operand::Constant(Constant::new(Type::never(), ConstantKind::Unit)))
+        Ok(Operand::Constant(Constant::new(
+            Type::never(),
+            ConstantKind::Unit,
+        )))
     }
 
     /// Lower a handle expression.
@@ -937,7 +954,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         // Step 5: Call the return clause to transform the body result
         // The return clause function is {handler_name}_return (content-based naming)
-        let handler_name = self.hir.get_item(handler_id)
+        let handler_name = self
+            .hir
+            .get_item(handler_id)
             .map(|item| item.name.clone())
             .unwrap_or_else(|| format!("unknown_handler_{}", handler_id.index));
         let dest = self.new_temp(ty.clone(), span);
@@ -979,8 +998,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        use crate::mir::types::{InlineHandlerOp, InlineHandlerCapture};
-        use crate::mir::static_evidence::{InlineEvidenceContext, analyze_inline_evidence_mode, analyze_handler_allocation_tier};
+        use crate::mir::static_evidence::{
+            analyze_handler_allocation_tier, analyze_inline_evidence_mode, InlineEvidenceContext,
+        };
+        use crate::mir::types::{InlineHandlerCapture, InlineHandlerOp};
 
         // Inline handlers are stateless (no explicit state)
         // Analyze allocation tier and inline mode for optimization
@@ -1007,10 +1028,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let synthetic_fn_def_id = DefId::new(0xFFFE_0000 + synthetic_id);
 
             // Get operation index by looking up in effect definition
-            let op_index = self.hir.get_item(handler.effect_id)
+            let op_index = self
+                .hir
+                .get_item(handler.effect_id)
                 .and_then(|item| {
                     if let hir::ItemKind::Effect { operations, .. } = &item.kind {
-                        operations.iter()
+                        operations
+                            .iter()
                             .position(|op| op.name == handler.op_name)
                             .map(|i| i as u32)
                     } else {
@@ -1026,7 +1050,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
             // Filter out operation parameters - they're not captures
             let param_set: HashSet<LocalId> = handler.params.iter().cloned().collect();
-            let captures: Vec<_> = refs.into_iter()
+            let captures: Vec<_> = refs
+                .into_iter()
                 .filter(|c| !param_set.contains(&c.local_id))
                 .collect();
 
@@ -1073,17 +1098,20 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             // - Operation parameters (bound to params)
             // - Access to resume() for continuing the computation
             // - Captures from enclosing scope
-            self.inline_handler_bodies.insert(synthetic_fn_def_id, InlineHandlerBody {
-                parent_def_id: self.def_id,
-                effect_id: handler.effect_id,
-                op_name: handler.op_name.clone(),
-                op_index,
-                params: handler.params.clone(),
-                param_types: handler.param_types.clone(),
-                return_type: handler.return_type.clone(),
-                body: handler.body.clone(),
-                captures: body_captures,
-            });
+            self.inline_handler_bodies.insert(
+                synthetic_fn_def_id,
+                InlineHandlerBody {
+                    parent_def_id: self.def_id,
+                    effect_id: handler.effect_id,
+                    op_name: handler.op_name.clone(),
+                    op_index,
+                    params: handler.params.clone(),
+                    param_types: handler.param_types.clone(),
+                    return_type: handler.return_type.clone(),
+                    body: handler.body.clone(),
+                    captures: body_captures,
+                },
+            );
         }
 
         // Track handler depth for inline optimization
@@ -1188,7 +1216,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         self.push_assign(
             dest_place.clone(),
             Rvalue::Aggregate {
-                kind: AggregateKind::Range { element: elem_ty, inclusive },
+                kind: AggregateKind::Range {
+                    element: elem_ty,
+                    inclusive,
+                },
                 operands,
             },
         );
@@ -1296,10 +1327,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         let dest_place = Place::local(dest);
 
         // Create the AddressOf rvalue
-        self.push_assign(
-            dest_place.clone(),
-            Rvalue::AddressOf { place, mutable },
-        );
+        self.push_assign(dest_place.clone(), Rvalue::AddressOf { place, mutable });
 
         Ok(Operand::Copy(dest_place))
     }
@@ -1400,19 +1428,25 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
     /// Look up a builtin function DefId by its runtime name.
     fn lookup_builtin(&self, runtime_name: &str) -> Option<DefId> {
-        self.hir.builtin_fns.iter()
+        self.hir
+            .builtin_fns
+            .iter()
             .find(|(_, name)| name.as_str() == runtime_name)
             .map(|(def_id, _)| *def_id)
     }
 
     /// Create an Operand referencing a builtin function.
     fn builtin_fn_operand(&self, runtime_name: &str, ty: Type) -> Result<Operand, Vec<Diagnostic>> {
-        let def_id = self.lookup_builtin(runtime_name)
-            .ok_or_else(|| vec![Diagnostic::error(
+        let def_id = self.lookup_builtin(runtime_name).ok_or_else(|| {
+            vec![Diagnostic::error(
                 format!("builtin function '{}' not found", runtime_name),
                 Span::dummy(),
-            )])?;
-        Ok(Operand::Constant(Constant::new(ty, ConstantKind::FnDef(def_id))))
+            )]
+        })?;
+        Ok(Operand::Constant(Constant::new(
+            ty,
+            ConstantKind::FnDef(def_id),
+        )))
     }
 
     /// Emit a call to a builtin function and return the result operand.
@@ -1468,11 +1502,11 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         // Default sizes: 1 MB initial, 1 GB max
         let initial_size = Operand::Constant(Constant::new(
             u64_ty.clone(),
-            ConstantKind::Int(1_048_576),  // 1 MB
+            ConstantKind::Int(1_048_576), // 1 MB
         ));
         let max_size = Operand::Constant(Constant::new(
             u64_ty.clone(),
-            ConstantKind::Int(1_073_741_824),  // 1 GB
+            ConstantKind::Int(1_073_741_824), // 1 GB
         ));
 
         // 1. region_id = blood_region_create(1048576, 1073741824)
@@ -1500,12 +1534,8 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         self.push_assign(Place::local(result_temp), Rvalue::Use(body_result));
 
         // 4. blood_region_deactivate()
-        let _deactivate_result = self.emit_builtin_call(
-            "blood_region_deactivate",
-            vec![],
-            Type::unit(),
-            span,
-        )?;
+        let _deactivate_result =
+            self.emit_builtin_call("blood_region_deactivate", vec![], Type::unit(), span)?;
 
         // 5. should_destroy = blood_region_exit_scope(region_id)
         let should_destroy = self.emit_builtin_call(
@@ -1523,7 +1553,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             discr: should_destroy,
             targets: SwitchTargets::new(
                 vec![(1, bb_destroy)],
-                bb_continue,  // default: don't destroy (suspended continuations)
+                bb_continue, // default: don't destroy (suspended continuations)
             ),
         });
 
@@ -1571,7 +1601,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             // If the block's type is Never (all paths diverge), we're in unreachable code.
             // Either way, use the proper unit type for the constant.
             if ty.is_never() {
-                Ok(Operand::Constant(Constant::new(Type::never(), ConstantKind::Unit)))
+                Ok(Operand::Constant(Constant::new(
+                    Type::never(),
+                    ConstantKind::Unit,
+                )))
             } else {
                 Ok(Operand::Constant(Constant::unit()))
             }
@@ -1588,24 +1621,31 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     // The local_id is the hidden tuple local, and element_locals are the bindings
 
                     // Get the hidden tuple local info
-                    let hir_local = self.body.get_local(*local_id)
-                        .ok_or_else(|| vec![ice_err!(
+                    let hir_local = self.body.get_local(*local_id).ok_or_else(|| {
+                        vec![ice_err!(
                             Span::dummy(),
                             "hidden tuple local not found in HIR body during MIR lowering";
                             "local_id" => local_id
-                        )])?;
-                    let tuple_mir_local = self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
+                        )]
+                    })?;
+                    let tuple_mir_local =
+                        self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
                     self.local_map.insert(*local_id, tuple_mir_local);
 
                     // Storage live for the hidden tuple local
                     self.push_stmt(StatementKind::StorageLive(tuple_mir_local));
 
                     // Create MIR locals for each element
-                    let element_mir_locals: Vec<LocalId> = element_locals.iter()
+                    let element_mir_locals: Vec<LocalId> = element_locals
+                        .iter()
                         .map(|elem_id| {
-                            let elem_hir_local = self.body.get_local(*elem_id)
+                            let elem_hir_local = self
+                                .body
+                                .get_local(*elem_id)
                                 .expect("element local not found in HIR body");
-                            let mir_local = self.builder.new_temp(elem_hir_local.ty.clone(), elem_hir_local.span);
+                            let mir_local = self
+                                .builder
+                                .new_temp(elem_hir_local.ty.clone(), elem_hir_local.span);
                             self.local_map.insert(*elem_id, mir_local);
                             self.push_stmt(StatementKind::StorageLive(mir_local));
                             mir_local
@@ -1621,19 +1661,24 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
                         // Extract each field and assign to the corresponding element local
                         for (i, mir_local) in element_mir_locals.iter().enumerate() {
-                            let field_place = Place::local(tuple_mir_local).project(PlaceElem::Field(i as u32));
-                            self.push_assign(Place::local(*mir_local), Rvalue::Use(Operand::Copy(field_place)));
+                            let field_place =
+                                Place::local(tuple_mir_local).project(PlaceElem::Field(i as u32));
+                            self.push_assign(
+                                Place::local(*mir_local),
+                                Rvalue::Use(Operand::Copy(field_place)),
+                            );
                         }
                     }
                 } else {
                     // Normal non-tuple let binding
                     // Get or create the MIR local
-                    let hir_local = self.body.get_local(*local_id)
-                        .ok_or_else(|| vec![ice_err!(
+                    let hir_local = self.body.get_local(*local_id).ok_or_else(|| {
+                        vec![ice_err!(
                             Span::dummy(),
                             "local not found in HIR body during MIR lowering";
                             "local_id" => local_id
-                        )])?;
+                        )]
+                    })?;
                     let mir_local = self.builder.new_temp(hir_local.ty.clone(), hir_local.span);
                     self.local_map.insert(*local_id, mir_local);
 
@@ -1766,7 +1811,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             };
 
             // Test pattern - on match go to body, on no-match go to next arm
-            self.test_pattern_cf(&arm.pattern, &scrut_place, arm_body_blocks[i], next_arm_test, span)?;
+            self.test_pattern_cf(
+                &arm.pattern,
+                &scrut_place,
+                arm_body_blocks[i],
+                next_arm_test,
+                span,
+            )?;
 
             if i + 1 < arms.len() {
                 // Position for next arm's test
@@ -1819,7 +1870,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     discr: guard_result,
                     targets: SwitchTargets::new(
                         vec![(1, guard_pass)], // true (1) -> guard_pass
-                        guard_fail,             // false (0) -> guard_fail
+                        guard_fail,            // false (0) -> guard_fail
                     ),
                 });
 
@@ -1955,7 +2006,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         let ctx = if let Some(label) = label {
-            self.loop_stack.iter().rev().find(|c| c.label == Some(label))
+            self.loop_stack
+                .iter()
+                .rev()
+                .find(|c| c.label == Some(label))
         } else {
             self.loop_stack.last()
         };
@@ -1968,9 +2022,14 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                     self.push_assign(Place::local(result_local), Rvalue::Use(val_operand));
                 }
             }
-            self.terminate(TerminatorKind::Goto { target: ctx.break_block });
+            self.terminate(TerminatorKind::Goto {
+                target: ctx.break_block,
+            });
         } else {
-            return Err(vec![Diagnostic::error("break outside of loop".to_string(), span)]);
+            return Err(vec![Diagnostic::error(
+                "break outside of loop".to_string(),
+                span,
+            )]);
         }
 
         // Unreachable after break
@@ -1988,15 +2047,23 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         let ctx = if let Some(label) = label {
-            self.loop_stack.iter().rev().find(|c| c.label == Some(label))
+            self.loop_stack
+                .iter()
+                .rev()
+                .find(|c| c.label == Some(label))
         } else {
             self.loop_stack.last()
         };
 
         if let Some(ctx) = ctx.cloned() {
-            self.terminate(TerminatorKind::Goto { target: ctx.continue_block });
+            self.terminate(TerminatorKind::Goto {
+                target: ctx.continue_block,
+            });
         } else {
-            return Err(vec![Diagnostic::error("continue outside of loop".to_string(), span)]);
+            return Err(vec![Diagnostic::error(
+                "continue outside of loop".to_string(),
+                span,
+            )]);
         }
 
         let next = self.builder.new_block();
@@ -2018,7 +2085,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let val = self.lower_expr(value)?;
             self.push_assign(return_place, Rvalue::Use(val));
         } else {
-            self.push_assign(return_place, Rvalue::Use(Operand::Constant(Constant::unit())));
+            self.push_assign(
+                return_place,
+                Rvalue::Use(Operand::Constant(Constant::unit())),
+            );
         }
 
         self.terminate(TerminatorKind::Return);
@@ -2160,10 +2230,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let base_op = self.lower_expr(base_expr)?;
             // Store base in a temporary so we can extract fields from it
             let base_temp = self.new_temp(ty.clone(), span);
-            self.push_assign(
-                Place::local(base_temp),
-                Rvalue::Use(base_op),
-            );
+            self.push_assign(Place::local(base_temp), Rvalue::Use(base_op));
             Some(Place::local(base_temp))
         } else {
             None
@@ -2199,7 +2266,11 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         self.push_assign(
             Place::local(temp),
             Rvalue::Aggregate {
-                kind: AggregateKind::Adt { def_id, variant_idx: None, type_args },
+                kind: AggregateKind::Adt {
+                    def_id,
+                    variant_idx: None,
+                    type_args,
+                },
                 operands,
             },
         );
@@ -2232,7 +2303,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         ty: &Type,
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
-        use crate::hir::{TypeKind, PrimitiveTy};
+        use crate::hir::{PrimitiveTy, TypeKind};
 
         // Check if this is string indexing (requires runtime call)
         let is_string = match base.ty.kind() {
@@ -2240,8 +2311,7 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             TypeKind::Primitive(PrimitiveTy::String) => true,
             TypeKind::Ref { inner, .. } => matches!(
                 inner.kind(),
-                TypeKind::Primitive(PrimitiveTy::Str) |
-                TypeKind::Primitive(PrimitiveTy::String)
+                TypeKind::Primitive(PrimitiveTy::Str) | TypeKind::Primitive(PrimitiveTy::String)
             ),
             _ => false,
         };
@@ -2252,10 +2322,13 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let index_op = self.lower_expr(index)?;
 
             let temp = self.new_temp(ty.clone(), span);
-            self.push_assign(Place::local(temp), Rvalue::StringIndex {
-                base: base_op,
-                index: index_op,
-            });
+            self.push_assign(
+                Place::local(temp),
+                Rvalue::StringIndex {
+                    base: base_op,
+                    index: index_op,
+                },
+            );
 
             Ok(Operand::Copy(Place::local(temp)))
         } else {
@@ -2290,7 +2363,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             } else {
                 // Result is the element value: copy from indexed place
                 let temp = self.new_temp(ty.clone(), span);
-                self.push_assign(Place::local(temp), Rvalue::Use(Operand::Copy(indexed_place)));
+                self.push_assign(
+                    Place::local(temp),
+                    Rvalue::Use(Operand::Copy(indexed_place)),
+                );
                 Ok(Operand::Copy(Place::local(temp)))
             }
         }
@@ -2424,7 +2500,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 let inner_place = self.lower_place(inner)?;
                 Ok(inner_place.project(PlaceElem::Deref))
             }
-            ExprKind::Unary { op: UnaryOp::Deref, operand } => {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
                 // Handle Unary Deref the same as ExprKind::Deref
                 let inner_place = self.lower_place(operand)?;
                 Ok(inner_place.project(PlaceElem::Deref))
@@ -2443,7 +2522,6 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         }
     }
 
-
     // Helper methods
 
     fn map_local(&mut self, hir_local: LocalId) -> LocalId {
@@ -2451,7 +2529,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             mir_local
         } else {
             // Create a new local if not mapped
-            let local = self.body.get_local(hir_local)
+            let local = self
+                .body
+                .get_local(hir_local)
                 .expect("ICE: HIR local not found in body during MIR lowering");
             let ty = local.ty.clone();
             let span = local.span;
@@ -2511,7 +2591,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             let place = Place::local(mir_local);
 
             // Get the type of the captured local from our local map
-            let capture_ty = self.body.get_local(capture.local_id)
+            let capture_ty = self
+                .body
+                .get_local(capture.local_id)
                 .map(|l| l.ty.clone())
                 .unwrap_or_else(Type::error);
 
@@ -2526,18 +2608,17 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         }
 
         // Schedule the closure body for later lowering (with captures and types)
-        self.pending_closures.push((body_id, closure_def_id, captures_with_types));
+        self.pending_closures
+            .push((body_id, closure_def_id, captures_with_types));
 
         // Create a Closure type with the synthetic DefId
         // Extract params and ret from the original function type
         let closure_ty = match ty.kind() {
-            TypeKind::Fn { params, ret, .. } => {
-                Type::new(TypeKind::Closure {
-                    def_id: closure_def_id,
-                    params: params.clone(),
-                    ret: ret.clone(),
-                })
-            }
+            TypeKind::Fn { params, ret, .. } => Type::new(TypeKind::Closure {
+                def_id: closure_def_id,
+                params: params.clone(),
+                ret: ret.clone(),
+            }),
             _ => {
                 // If not a Fn type, use it directly (error recovery)
                 ty.clone()
@@ -2551,7 +2632,9 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
         self.push_assign(
             Place::local(temp),
             Rvalue::Aggregate {
-                kind: AggregateKind::Closure { def_id: closure_def_id },
+                kind: AggregateKind::Closure {
+                    def_id: closure_def_id,
+                },
                 operands: capture_operands,
             },
         );
@@ -2628,7 +2711,10 @@ impl<'hir, 'ctx> ExprLowering for FunctionLowering<'hir, 'ctx> {
 
     fn get_loop_context(&self, label: Option<hir::LoopId>) -> Option<LoopContextInfo> {
         let ctx = if let Some(label) = label {
-            self.loop_stack.iter().rev().find(|c| c.label == Some(label))
+            self.loop_stack
+                .iter()
+                .rev()
+                .find(|c| c.label == Some(label))
         } else {
             self.loop_stack.last()
         };
@@ -2639,5 +2725,4 @@ impl<'hir, 'ctx> ExprLowering for FunctionLowering<'hir, 'ctx> {
             result_place: c.result_local.map(Place::local),
         })
     }
-
 }

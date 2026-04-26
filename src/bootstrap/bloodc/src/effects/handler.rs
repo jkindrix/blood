@@ -170,19 +170,23 @@ fn is_tail_resume(expr: &Expr) -> bool {
         ExprKind::Resume { .. } => true,
 
         // Block: tail position is the trailing expression
-        ExprKind::Block { expr: Some(tail), .. } => is_tail_resume(tail),
+        ExprKind::Block {
+            expr: Some(tail), ..
+        } => is_tail_resume(tail),
         ExprKind::Block { expr: None, .. } => false,
 
         // If: both branches must be tail-resumptive
-        ExprKind::If { then_branch, else_branch: Some(else_br), .. } => {
-            is_tail_resume(then_branch) && is_tail_resume(else_br)
-        }
-        ExprKind::If { else_branch: None, .. } => false,
+        ExprKind::If {
+            then_branch,
+            else_branch: Some(else_br),
+            ..
+        } => is_tail_resume(then_branch) && is_tail_resume(else_br),
+        ExprKind::If {
+            else_branch: None, ..
+        } => false,
 
         // Match: all arms must be tail-resumptive
-        ExprKind::Match { arms, .. } => {
-            arms.iter().all(|arm| is_tail_resume(&arm.body))
-        }
+        ExprKind::Match { arms, .. } => arms.iter().all(|arm| is_tail_resume(&arm.body)),
 
         // Return with resume value
         ExprKind::Return(Some(inner)) => is_tail_resume(inner),
@@ -347,7 +351,9 @@ mod tests {
 
     fn make_resume(value: Option<Expr>) -> Expr {
         Expr {
-            kind: ExprKind::Resume { value: value.map(Box::new) },
+            kind: ExprKind::Resume {
+                value: value.map(Box::new),
+            },
             ty: Type::unit(),
             span: Span::dummy(),
         }

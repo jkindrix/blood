@@ -152,7 +152,11 @@ fn compile_with_cache(source_path: &Path, cache_dir: &Path) -> CompileResult {
         success: output.status.success(),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        executable: if executable_exists { Some(executable) } else { None },
+        executable: if executable_exists {
+            Some(executable)
+        } else {
+            None
+        },
     }
 }
 
@@ -245,11 +249,14 @@ fn cleanup_fixture(path: &Path) {
 fn test_compile_simple_main() {
     let cache_dir = create_test_cache("simple_main");
 
-    let fixture = create_fixture("simple_main", r#"
+    let fixture = create_fixture(
+        "simple_main",
+        r#"
 fn main() -> i32 {
     42
 }
-"#);
+"#,
+    );
 
     let result = compile_with_cache(&fixture, &cache_dir);
     assert!(result.success, "Compilation failed: {}", result.stderr);
@@ -264,13 +271,16 @@ fn main() -> i32 {
 fn test_compile_arithmetic() {
     let cache_dir = create_test_cache("arithmetic");
 
-    let fixture = create_fixture("arithmetic", r#"
+    let fixture = create_fixture(
+        "arithmetic",
+        r#"
 fn main() -> i32 {
     let x = 10;
     let y = 5;
     x + y + 3
 }
-"#);
+"#,
+    );
 
     let result = compile_with_cache(&fixture, &cache_dir);
     assert!(result.success, "Compilation failed: {}", result.stderr);
@@ -285,7 +295,9 @@ fn main() -> i32 {
 fn test_compile_conditionals() {
     let cache_dir = create_test_cache("conditionals");
 
-    let fixture = create_fixture("conditionals", r#"
+    let fixture = create_fixture(
+        "conditionals",
+        r#"
 fn main() -> i32 {
     let x = 10;
     if x > 5 {
@@ -294,7 +306,8 @@ fn main() -> i32 {
         0
     }
 }
-"#);
+"#,
+    );
 
     let result = compile_with_cache(&fixture, &cache_dir);
     assert!(result.success, "Compilation failed: {}", result.stderr);
@@ -334,8 +347,7 @@ fn test_simple_deep_handler() {
     assert!(
         compile_result.success,
         "Compilation failed:\nstdout: {}\nstderr: {}",
-        compile_result.stdout,
-        compile_result.stderr
+        compile_result.stdout, compile_result.stderr
     );
 
     let executable = compile_result.executable.expect("No executable found");
@@ -364,8 +376,7 @@ fn test_non_tail_resume_handler() {
     assert!(
         compile_result.success,
         "Compilation failed:\nstdout: {}\nstderr: {}",
-        compile_result.stdout,
-        compile_result.stderr
+        compile_result.stdout, compile_result.stderr
     );
 
     let executable = compile_result.executable.expect("No executable found");
@@ -394,15 +405,17 @@ fn test_multi_perform_handler() {
     assert!(
         compile_result.success,
         "Compilation failed:\nstdout: {}\nstderr: {}",
-        compile_result.stdout,
-        compile_result.stderr
+        compile_result.stdout, compile_result.stderr
     );
 
     let executable = compile_result.executable.expect("No executable found");
     let run_result = run_executable(&executable);
 
     // multi_perform_test.blood: performs inc() 3 times, returns sum 1+2+3=6
-    assert_eq!(run_result.exit_code, 6, "multi_perform_test should return 6");
+    assert_eq!(
+        run_result.exit_code, 6,
+        "multi_perform_test should return 6"
+    );
 
     cleanup_test_cache(&cache_dir);
 }
@@ -424,15 +437,17 @@ fn test_nested_handler() {
     assert!(
         compile_result.success,
         "Compilation failed:\nstdout: {}\nstderr: {}",
-        compile_result.stdout,
-        compile_result.stderr
+        compile_result.stdout, compile_result.stderr
     );
 
     let executable = compile_result.executable.expect("No executable found");
     let run_result = run_executable(&executable);
 
     // nested_handler_test.blood should return 5
-    assert_eq!(run_result.exit_code, 5, "nested_handler_test should return 5");
+    assert_eq!(
+        run_result.exit_code, 5,
+        "nested_handler_test should return 5"
+    );
 
     cleanup_test_cache(&cache_dir);
 }
@@ -464,7 +479,11 @@ fn test_cache_no_pollution_between_handlers() {
 
     // Compile in order: non_tail_resume first, then simple_deep
     let result1 = compile_with_cache(&non_tail_resume, &cache_dir);
-    assert!(result1.success, "non_tail_resume failed: {}", result1.stderr);
+    assert!(
+        result1.success,
+        "non_tail_resume failed: {}",
+        result1.stderr
+    );
     let exit1 = run_executable(result1.executable.as_ref().unwrap()).exit_code;
     assert_eq!(exit1, 11, "non_tail_resume should return 11");
 
@@ -472,7 +491,10 @@ fn test_cache_no_pollution_between_handlers() {
     let result2 = compile_with_cache(&simple_deep, &cache_dir);
     assert!(result2.success, "simple_deep failed: {}", result2.stderr);
     let exit2 = run_executable(result2.executable.as_ref().unwrap()).exit_code;
-    assert_eq!(exit2, 1, "simple_deep should return 1 (not polluted by cache)");
+    assert_eq!(
+        exit2, 1,
+        "simple_deep should return 1 (not polluted by cache)"
+    );
 
     // Now compile in reverse order with fresh cache
     cleanup_test_cache(&cache_dir);
@@ -487,9 +509,16 @@ fn test_cache_no_pollution_between_handlers() {
 
     clear_obj_files(&non_tail_resume);
     let result4 = compile_with_cache(&non_tail_resume, &cache_dir2);
-    assert!(result4.success, "non_tail_resume failed: {}", result4.stderr);
+    assert!(
+        result4.success,
+        "non_tail_resume failed: {}",
+        result4.stderr
+    );
     let exit4 = run_executable(result4.executable.as_ref().unwrap()).exit_code;
-    assert_eq!(exit4, 11, "non_tail_resume should return 11 (not polluted by cache)");
+    assert_eq!(
+        exit4, 11,
+        "non_tail_resume should return 11 (not polluted by cache)"
+    );
 
     cleanup_test_cache(&cache_dir2);
 }
@@ -499,11 +528,14 @@ fn test_cache_no_pollution_between_handlers() {
 fn test_cache_hit_same_file() {
     let cache_dir = create_test_cache("cache_hit");
 
-    let fixture = create_fixture("cache_test", r#"
+    let fixture = create_fixture(
+        "cache_test",
+        r#"
 fn main() -> i32 {
     77
 }
-"#);
+"#,
+    );
 
     // First compilation
     let result1 = compile_with_cache(&fixture, &cache_dir);
@@ -528,7 +560,9 @@ fn test_different_handlers_different_hashes() {
     let cache_dir = create_test_cache("different_hashes");
 
     // Create two handlers with identical structure but different names
-    let handler_a = create_fixture("handler_a", r#"
+    let handler_a = create_fixture(
+        "handler_a",
+        r#"
 effect Counter {
     op inc() -> i32;
 }
@@ -547,9 +581,12 @@ fn main() -> i32 {
         perform Counter.inc()
     }
 }
-"#);
+"#,
+    );
 
-    let handler_b = create_fixture("handler_b", r#"
+    let handler_b = create_fixture(
+        "handler_b",
+        r#"
 effect Counter {
     op inc() -> i32;
 }
@@ -568,7 +605,8 @@ fn main() -> i32 {
         perform Counter.inc()
     }
 }
-"#);
+"#,
+    );
 
     // Compile both
     let result_a = compile_with_cache(&handler_a, &cache_dir);
@@ -612,11 +650,14 @@ fn test_sequential_compilation_many_files() {
         .map(|i| {
             let fixture = create_fixture(
                 &format!("sequential_{}", i),
-                &format!(r#"
+                &format!(
+                    r#"
 fn main() -> i32 {{
     {}
 }}
-"#, i * 10)
+"#,
+                    i * 10
+                ),
             );
             (fixture, i * 10)
         })
@@ -625,10 +666,15 @@ fn main() -> i32 {{
     // Compile and run each
     for (path, expected) in &fixtures {
         let result = compile_with_cache(path, &cache_dir);
-        assert!(result.success, "Compilation of {:?} failed: {}", path, result.stderr);
+        assert!(
+            result.success,
+            "Compilation of {:?} failed: {}",
+            path, result.stderr
+        );
         let exit_code = run_executable(result.executable.as_ref().unwrap()).exit_code;
         assert_eq!(
-            exit_code, *expected,
+            exit_code,
+            *expected,
             "File {:?} should return {}",
             path.file_name(),
             expected
@@ -638,10 +684,15 @@ fn main() -> i32 {{
     // Run them all again to verify cache doesn't corrupt anything
     for (path, expected) in &fixtures {
         let result = compile_with_cache(path, &cache_dir);
-        assert!(result.success, "Cached compilation of {:?} failed: {}", path, result.stderr);
+        assert!(
+            result.success,
+            "Cached compilation of {:?} failed: {}",
+            path, result.stderr
+        );
         let exit_code = run_executable(result.executable.as_ref().unwrap()).exit_code;
         assert_eq!(
-            exit_code, *expected,
+            exit_code,
+            *expected,
             "Cached file {:?} should still return {}",
             path.file_name(),
             expected
@@ -660,11 +711,14 @@ fn main() -> i32 {{
 fn test_cache_invalidation_on_modification() {
     let cache_dir = create_test_cache("modification");
 
-    let fixture = create_fixture("modify_test", r#"
+    let fixture = create_fixture(
+        "modify_test",
+        r#"
 fn main() -> i32 {
     1
 }
-"#);
+"#,
+    );
 
     // First compilation
     let result1 = compile_with_cache(&fixture, &cache_dir);
@@ -673,14 +727,18 @@ fn main() -> i32 {
     assert_eq!(exit1, 1, "Initial compilation should return 1");
 
     // Modify the file
-    fs::write(&fixture, r#"
+    fs::write(
+        &fixture,
+        r#"
 fn main() -> i32 {
     2
 }
-"#).expect("Failed to modify fixture");
+"#,
+    )
+    .expect("Failed to modify fixture");
 
     // Recompile - should pick up the change
-    clear_obj_files(&fixture);  // Force recompilation
+    clear_obj_files(&fixture); // Force recompilation
     let result2 = compile_with_cache(&fixture, &cache_dir);
     assert!(result2.success, "Second compilation failed");
     let exit2 = run_executable(result2.executable.as_ref().unwrap()).exit_code;
@@ -699,14 +757,14 @@ fn main() -> i32 {
 fn example_expected_exits() -> HashMap<&'static str, i32> {
     let mut map = HashMap::new();
     // Effect handler tests
-    map.insert("simple_deep.blood", 1);      // inc() once returns 1
+    map.insert("simple_deep.blood", 1); // inc() once returns 1
     map.insert("non_tail_resume.blood", 11); // 1 + 10 = 11
     map.insert("multi_perform_test.blood", 6); // 1 + 2 + 3 = 6
     map.insert("nested_handler_test.blood", 5);
 
     // Basic tests
-    map.insert("simple.blood", 7);           // add(3, 4) = 7
-    map.insert("hello.blood", 0);            // prints and returns unit (0)
+    map.insert("simple.blood", 7); // add(3, 4) = 7
+    map.insert("hello.blood", 0); // prints and returns unit (0)
     map
 }
 
@@ -729,11 +787,7 @@ fn test_all_known_examples() {
         let result = compile_with_cache(&source, &cache_dir);
 
         if !result.success {
-            panic!(
-                "Failed to compile {}: {}",
-                filename,
-                result.stderr
-            );
+            panic!("Failed to compile {}: {}", filename, result.stderr);
         }
 
         if let Some(ref executable) = result.executable {
@@ -766,7 +820,9 @@ fn regression_test_defid_cache_pollution() {
 
     // Create two files with handlers that would have the same DefId index
     // but different behavior
-    let file_a = create_fixture("regression_a", r#"
+    let file_a = create_fixture(
+        "regression_a",
+        r#"
 effect State {
     op get() -> i32;
 }
@@ -782,9 +838,12 @@ fn main() -> i32 {
         perform State.get()
     }
 }
-"#);
+"#,
+    );
 
-    let file_b = create_fixture("regression_b", r#"
+    let file_b = create_fixture(
+        "regression_b",
+        r#"
 effect State {
     op get() -> i32;
 }
@@ -800,7 +859,8 @@ fn main() -> i32 {
         perform State.get()
     }
 }
-"#);
+"#,
+    );
 
     // Compile file_a first
     let result_a = compile_with_cache(&file_a, &cache_dir);
@@ -813,7 +873,10 @@ fn main() -> i32 {
     let result_b = compile_with_cache(&file_b, &cache_dir);
     assert!(result_b.success, "File B compilation failed");
     let exit_b = run_executable(result_b.executable.as_ref().unwrap()).exit_code;
-    assert_eq!(exit_b, 99, "File B should return 99 (not polluted by cache)");
+    assert_eq!(
+        exit_b, 99,
+        "File B should return 99 (not polluted by cache)"
+    );
 
     // Verify file_a still works correctly
     let result_a2 = compile_with_cache(&file_a, &cache_dir);
@@ -833,7 +896,9 @@ fn test_cache_isolation_by_source_path() {
     let cache_dir = create_test_cache("source_path_isolation");
 
     // Two files with identical function names and signatures but different return values
-    let file_a = create_fixture("cache_iso_a", r#"
+    let file_a = create_fixture(
+        "cache_iso_a",
+        r#"
 fn compute() -> i32 {
     100
 }
@@ -841,9 +906,12 @@ fn compute() -> i32 {
 fn main() -> i32 {
     compute()
 }
-"#);
+"#,
+    );
 
-    let file_b = create_fixture("cache_iso_b", r#"
+    let file_b = create_fixture(
+        "cache_iso_b",
+        r#"
 fn compute() -> i32 {
     200
 }
@@ -851,7 +919,8 @@ fn compute() -> i32 {
 fn main() -> i32 {
     compute()
 }
-"#);
+"#,
+    );
 
     // Compile file_a first
     let result_a = compile_with_cache(&file_a, &cache_dir);
@@ -864,7 +933,10 @@ fn main() -> i32 {
     let result_b = compile_with_cache(&file_b, &cache_dir);
     assert!(result_b.success, "File B compilation failed");
     let exit_b = run_executable(result_b.executable.as_ref().unwrap()).exit_code;
-    assert_eq!(exit_b, 200, "File B should return 200 (not polluted by file A's cache)");
+    assert_eq!(
+        exit_b, 200,
+        "File B should return 200 (not polluted by file A's cache)"
+    );
 
     // Verify file_a still works correctly after file_b was compiled
     let result_a2 = compile_with_cache(&file_a, &cache_dir);
@@ -902,7 +974,11 @@ fn run_effect_test(name: &str) {
     let cache_dir = create_test_cache(&format!("effect_{}", name));
     let source = effects_fixtures_dir().join(format!("{}.blood", name));
 
-    assert!(source.exists(), "Effect test fixture not found: {:?}", source);
+    assert!(
+        source.exists(),
+        "Effect test fixture not found: {:?}",
+        source
+    );
 
     let result = compile_with_cache(&source, &cache_dir);
     assert!(
@@ -997,7 +1073,11 @@ fn run_effect_compile_failure_test(name: &str, expected_error: &str) {
     let cache_dir = create_test_cache(&format!("effect_{}", name));
     let source = effects_fixtures_dir().join(format!("{}.blood", name));
 
-    assert!(source.exists(), "Effect test fixture not found: {:?}", source);
+    assert!(
+        source.exists(),
+        "Effect test fixture not found: {:?}",
+        source
+    );
 
     let result = compile_with_cache(&source, &cache_dir);
     assert!(
@@ -1008,7 +1088,9 @@ fn run_effect_compile_failure_test(name: &str, expected_error: &str) {
     assert!(
         result.stderr.contains(expected_error),
         "Expected error '{}' in output for '{}', got: {}",
-        expected_error, name, result.stderr
+        expected_error,
+        name,
+        result.stderr
     );
 
     clear_obj_files(&source);

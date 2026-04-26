@@ -28,11 +28,11 @@
 //!
 //! Multi-shot continuations can be added later using explicit `clone` operations.
 
+use parking_lot::Mutex;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use parking_lot::Mutex;
 
 /// Unique identifier for a continuation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -162,7 +162,9 @@ impl Continuation {
 
         let closure = self.closure.take().expect("continuation closure missing");
         let result = closure(Box::new(value));
-        *result.downcast::<R>().expect("continuation return type mismatch")
+        *result
+            .downcast::<R>()
+            .expect("continuation return type mismatch")
     }
 
     /// Try to resume the continuation with a value.
@@ -321,7 +323,11 @@ impl EffectContext {
             is_tail_resumptive: false,
             continuation: Some(k),
             resume_value: None,
-            snapshot: if snapshot.is_null() { None } else { Some(snapshot) },
+            snapshot: if snapshot.is_null() {
+                None
+            } else {
+                Some(snapshot)
+            },
         }
     }
 
@@ -332,7 +338,11 @@ impl EffectContext {
 
     /// Set the generation snapshot.
     pub fn set_snapshot(&mut self, snapshot: SnapshotHandle) {
-        self.snapshot = if snapshot.is_null() { None } else { Some(snapshot) };
+        self.snapshot = if snapshot.is_null() {
+            None
+        } else {
+            Some(snapshot)
+        };
     }
 
     /// Take the snapshot, leaving None in its place.
@@ -372,7 +382,10 @@ pub struct ContinuationWithSnapshot {
 impl ContinuationWithSnapshot {
     /// Create a new continuation with snapshot.
     pub fn new(continuation: Continuation, snapshot: SnapshotHandle) -> Self {
-        Self { continuation, snapshot }
+        Self {
+            continuation,
+            snapshot,
+        }
     }
 
     /// Get the continuation ID.

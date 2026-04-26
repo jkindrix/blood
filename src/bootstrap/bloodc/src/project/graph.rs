@@ -6,12 +6,12 @@
 //! - Cycle detection for circular dependency errors
 //! - Invalidation propagation for incremental compilation
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::Path;
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
 use super::resolve::ModuleId;
 
@@ -136,7 +136,8 @@ impl DependencyGraph {
         let mut path = Vec::new();
 
         for &node in &self.nodes {
-            if let Some(cycle) = self.dfs_find_cycle(node, &mut visited, &mut rec_stack, &mut path) {
+            if let Some(cycle) = self.dfs_find_cycle(node, &mut visited, &mut rec_stack, &mut path)
+            {
                 return Some(cycle);
             }
         }
@@ -293,7 +294,8 @@ impl DependencyGraph {
         let mut levels: HashMap<ModuleId, usize> = HashMap::new();
 
         for &node in &sorted {
-            let max_dep_level = self.dependencies_of(node)
+            let max_dep_level = self
+                .dependencies_of(node)
                 .filter_map(|dep| levels.get(&dep))
                 .max()
                 .copied()

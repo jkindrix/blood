@@ -6,10 +6,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::Visibility;
-use crate::hir::{DefId, DefKind, LocalId, Type, PrimitiveTy};
+use crate::hir::{DefId, DefKind, LocalId, PrimitiveTy, Type};
 // Type primitives imported if needed for future expansion
-use crate::span::Span;
 use crate::diagnostics::Diagnostic;
+use crate::span::Span;
 
 use super::error::{TypeError, TypeErrorKind};
 
@@ -186,7 +186,9 @@ impl<'a> Resolver<'a> {
     /// the root scope is always present (invariant established in `new()`).
     #[inline]
     fn current_scope_idx(&self) -> usize {
-        *self.scope_stack.last()
+        *self
+            .scope_stack
+            .last()
             .expect("BUG: scope stack should never be empty - root scope must always be present")
     }
 
@@ -234,29 +236,25 @@ impl<'a> Resolver<'a> {
             // Allow user definitions to shadow prelude imports
             let is_prelude = match existing {
                 Binding::Def(prev_def_id) => self.prelude_def_ids.contains(prev_def_id),
-                Binding::Methods(def_ids) => def_ids.iter().all(|id| self.prelude_def_ids.contains(id)),
+                Binding::Methods(def_ids) => {
+                    def_ids.iter().all(|id| self.prelude_def_ids.contains(id))
+                }
                 _ => false,
             };
             if !is_prelude {
-                let mut err = TypeError::new(
-                    TypeErrorKind::DuplicateDefinition { name },
-                    span,
-                );
+                let mut err = TypeError::new(TypeErrorKind::DuplicateDefinition { name }, span);
                 // Add secondary label pointing to the previous definition
                 match existing {
                     Binding::Def(prev_def_id) => {
                         if let Some(prev_info) = self.def_info.get(prev_def_id) {
-                            err = err.with_secondary_label(
-                                prev_info.span,
-                                "previous definition here",
-                            );
+                            err = err
+                                .with_secondary_label(prev_info.span, "previous definition here");
                         }
                     }
-                    Binding::Local { span: prev_span, .. } => {
-                        err = err.with_secondary_label(
-                            *prev_span,
-                            "previous definition here",
-                        );
+                    Binding::Local {
+                        span: prev_span, ..
+                    } => {
+                        err = err.with_secondary_label(*prev_span, "previous definition here");
                     }
                     Binding::Methods(_) => {}
                 }
@@ -267,14 +265,17 @@ impl<'a> Resolver<'a> {
 
         let def_id = self.next_def_id();
 
-        self.def_info.insert(def_id, DefInfo {
-            kind,
-            name: name.clone(),
-            span,
-            ty: None,
-            parent: None,
-            visibility: Visibility::Public,
-        });
+        self.def_info.insert(
+            def_id,
+            DefInfo {
+                kind,
+                name: name.clone(),
+                span,
+                ty: None,
+                parent: None,
+                visibility: Visibility::Public,
+            },
+        );
 
         self.current_scope_mut()
             .bindings
@@ -293,22 +294,20 @@ impl<'a> Resolver<'a> {
     /// Used for items like bridge functions that are accessed via namespace
     /// syntax (e.g., `libc::abs`) rather than direct name lookup.
     /// This avoids conflicts with global builtins that have the same name.
-    pub fn define_namespaced_item(
-        &mut self,
-        name: String,
-        kind: DefKind,
-        span: Span,
-    ) -> DefId {
+    pub fn define_namespaced_item(&mut self, name: String, kind: DefKind, span: Span) -> DefId {
         let def_id = self.next_def_id();
 
-        self.def_info.insert(def_id, DefInfo {
-            kind,
-            name,
-            span,
-            ty: None,
-            parent: None,
-            visibility: Visibility::Public,
-        });
+        self.def_info.insert(
+            def_id,
+            DefInfo {
+                kind,
+                name,
+                span,
+                ty: None,
+                parent: None,
+                visibility: Visibility::Public,
+            },
+        );
 
         // Note: Do NOT add to current scope bindings or globals.
         // Namespaced items are accessed via their namespace (e.g., bridge_name::fn_name).
@@ -331,21 +330,26 @@ impl<'a> Resolver<'a> {
     ) -> Result<DefId, Box<TypeError>> {
         let def_id = self.next_def_id();
 
-        self.def_info.insert(def_id, DefInfo {
-            kind: DefKind::Fn,
-            name: name.clone(),
-            span,
-            ty: None,
-            parent: None,
-            visibility,
-        });
+        self.def_info.insert(
+            def_id,
+            DefInfo {
+                kind: DefKind::Fn,
+                name: name.clone(),
+                span,
+                ty: None,
+                parent: None,
+                visibility,
+            },
+        );
 
         // Check if a binding with this name already exists
         if let Some(existing) = self.current_scope().bindings.get(&name).cloned() {
             // Check if the existing binding is from the prelude — if so, replace it
             let is_prelude = match &existing {
                 Binding::Def(prev_def_id) => self.prelude_def_ids.contains(prev_def_id),
-                Binding::Methods(def_ids) => def_ids.iter().all(|id| self.prelude_def_ids.contains(id)),
+                Binding::Methods(def_ids) => {
+                    def_ids.iter().all(|id| self.prelude_def_ids.contains(id))
+                }
                 _ => false,
             };
             if is_prelude {
@@ -354,45 +358,46 @@ impl<'a> Resolver<'a> {
                     .bindings
                     .insert(name.clone(), Binding::Def(def_id));
             } else {
-            match existing {
-                Binding::Def(existing_def_id) => {
-                    // Check if the existing definition is a function
-                    if let Some(info) = self.def_info.get(&existing_def_id) {
-                        if info.kind == DefKind::Fn {
-                            // Convert to method family with both functions
-                            self.current_scope_mut()
-                                .bindings
-                                .insert(name.clone(), Binding::Methods(vec![existing_def_id, def_id]));
+                match existing {
+                    Binding::Def(existing_def_id) => {
+                        // Check if the existing definition is a function
+                        if let Some(info) = self.def_info.get(&existing_def_id) {
+                            if info.kind == DefKind::Fn {
+                                // Convert to method family with both functions
+                                self.current_scope_mut().bindings.insert(
+                                    name.clone(),
+                                    Binding::Methods(vec![existing_def_id, def_id]),
+                                );
+                            } else {
+                                // Non-function with same name - error
+                                return Err(Box::new(TypeError::new(
+                                    TypeErrorKind::DuplicateDefinition { name },
+                                    span,
+                                )));
+                            }
                         } else {
-                            // Non-function with same name - error
+                            // Shouldn't happen - def_id without info
                             return Err(Box::new(TypeError::new(
                                 TypeErrorKind::DuplicateDefinition { name },
                                 span,
                             )));
                         }
-                    } else {
-                        // Shouldn't happen - def_id without info
+                    }
+                    Binding::Methods(mut methods) => {
+                        // Already a method family, add to it
+                        methods.push(def_id);
+                        self.current_scope_mut()
+                            .bindings
+                            .insert(name.clone(), Binding::Methods(methods));
+                    }
+                    Binding::Local { .. } => {
+                        // Can't define function with same name as local
                         return Err(Box::new(TypeError::new(
                             TypeErrorKind::DuplicateDefinition { name },
                             span,
                         )));
                     }
                 }
-                Binding::Methods(mut methods) => {
-                    // Already a method family, add to it
-                    methods.push(def_id);
-                    self.current_scope_mut()
-                        .bindings
-                        .insert(name.clone(), Binding::Methods(methods));
-                }
-                Binding::Local { .. } => {
-                    // Can't define function with same name as local
-                    return Err(Box::new(TypeError::new(
-                        TypeErrorKind::DuplicateDefinition { name },
-                        span,
-                    )));
-                }
-            }
             }
         } else {
             // No existing binding - create new single definition
@@ -423,14 +428,17 @@ impl<'a> Resolver<'a> {
     ) -> Result<DefId, Box<TypeError>> {
         let def_id = self.next_def_id();
 
-        self.def_info.insert(def_id, DefInfo {
-            kind: DefKind::AssocFn,
-            name: name.clone(),
-            span,
-            ty: None,
-            parent: None,
-            visibility,
-        });
+        self.def_info.insert(
+            def_id,
+            DefInfo {
+                kind: DefKind::AssocFn,
+                name: name.clone(),
+                span,
+                ty: None,
+                parent: None,
+                visibility,
+            },
+        );
 
         // Check if a binding with this name already exists
         if let Some(existing) = self.current_scope().bindings.get(&name).cloned() {
@@ -440,9 +448,10 @@ impl<'a> Resolver<'a> {
                     if let Some(info) = self.def_info.get(&existing_def_id) {
                         if info.kind == DefKind::AssocFn {
                             // Convert to method family with both functions
-                            self.current_scope_mut()
-                                .bindings
-                                .insert(name.clone(), Binding::Methods(vec![existing_def_id, def_id]));
+                            self.current_scope_mut().bindings.insert(
+                                name.clone(),
+                                Binding::Methods(vec![existing_def_id, def_id]),
+                            );
                         } else {
                             // Non-function with same name - error
                             return Err(Box::new(TypeError::new(
@@ -498,9 +507,7 @@ impl<'a> Resolver<'a> {
             )));
         }
 
-        self.current_scope_mut()
-            .type_bindings
-            .insert(name, def_id);
+        self.current_scope_mut().type_bindings.insert(name, def_id);
 
         Ok(())
     }
@@ -517,24 +524,17 @@ impl<'a> Resolver<'a> {
     ) -> Result<(), Box<TypeError>> {
         // Check for duplicates in current scope
         if let Some(existing) = self.current_scope().bindings.get(&name) {
-            let mut err = TypeError::new(
-                TypeErrorKind::DuplicateDefinition { name },
-                span,
-            );
+            let mut err = TypeError::new(TypeErrorKind::DuplicateDefinition { name }, span);
             match existing {
                 Binding::Def(prev_def_id) => {
                     if let Some(prev_info) = self.def_info.get(prev_def_id) {
-                        err = err.with_secondary_label(
-                            prev_info.span,
-                            "previous definition here",
-                        );
+                        err = err.with_secondary_label(prev_info.span, "previous definition here");
                     }
                 }
-                Binding::Local { span: prev_span, .. } => {
-                    err = err.with_secondary_label(
-                        *prev_span,
-                        "previous definition here",
-                    );
+                Binding::Local {
+                    span: prev_span, ..
+                } => {
+                    err = err.with_secondary_label(*prev_span, "previous definition here");
                 }
                 Binding::Methods(_) => {}
             }
@@ -569,9 +569,7 @@ impl<'a> Resolver<'a> {
             )));
         }
 
-        self.current_scope_mut()
-            .type_bindings
-            .insert(name, def_id);
+        self.current_scope_mut().type_bindings.insert(name, def_id);
 
         Ok(())
     }
@@ -737,8 +735,7 @@ impl<'a> Resolver<'a> {
 
         // Also add primitive type names
         let primitives = [
-            "i8", "i16", "i32", "i64", "i128", "isize",
-            "u8", "u16", "u32", "u64", "u128", "usize",
+            "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
             "f32", "f64", "bool", "char", "str", "String",
         ];
         for prim in primitives {

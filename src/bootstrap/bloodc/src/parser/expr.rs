@@ -163,7 +163,12 @@ impl<'src> Parser<'src> {
     }
 
     /// Inner implementation of parse_expr_prec_with with struct literal control.
-    fn parse_expr_prec_with_inner(&mut self, left: Expr, min_prec: Precedence, no_struct: bool) -> Expr {
+    fn parse_expr_prec_with_inner(
+        &mut self,
+        left: Expr,
+        min_prec: Precedence,
+        no_struct: bool,
+    ) -> Expr {
         self.parse_expr_prec_with_inner_opts(left, min_prec, no_struct, false)
     }
 
@@ -235,10 +240,16 @@ impl<'src> Parser<'src> {
                         span,
                     }
                 }
-                TokenKind::PlusEq | TokenKind::MinusEq | TokenKind::StarEq |
-                TokenKind::SlashEq | TokenKind::PercentEq | TokenKind::AndEq |
-                TokenKind::OrEq | TokenKind::CaretEq | TokenKind::ShlEq |
-                TokenKind::ShrEq => {
+                TokenKind::PlusEq
+                | TokenKind::MinusEq
+                | TokenKind::StarEq
+                | TokenKind::SlashEq
+                | TokenKind::PercentEq
+                | TokenKind::AndEq
+                | TokenKind::OrEq
+                | TokenKind::CaretEq
+                | TokenKind::ShlEq
+                | TokenKind::ShrEq => {
                     // Compound assignment operators - guaranteed to have a matching bin_op
                     let bin_op = token_to_compound_op(op_token)
                         .expect("BUG: matched compound op token but conversion failed");
@@ -678,7 +689,10 @@ impl<'src> Parser<'src> {
                     // Continue parsing path segments if we see :: or .
                     // Same heuristic as parse_expr_path: accept . after TypeIdent always,
                     // after lowercase only when followed by TypeIdent.
-                    let first_is_type = maybe_name_text.chars().next().map_or(false, |c| c.is_uppercase());
+                    let first_is_type = maybe_name_text
+                        .chars()
+                        .next()
+                        .map_or(false, |c| c.is_uppercase());
                     let mut last_was_type_ident = first_is_type;
                     loop {
                         let consumed_sep = if self.check(TokenKind::ColonColon) {
@@ -807,7 +821,9 @@ impl<'src> Parser<'src> {
 
             // The `default` keyword as a standalone expression creates a default value
             // (only when not followed by a path separator indicating a path like `Default.default()`)
-            TokenKind::Default if !self.check_next(TokenKind::ColonColon) && !self.check_next(TokenKind::Dot) => {
+            TokenKind::Default
+                if !self.check_next(TokenKind::ColonColon) && !self.check_next(TokenKind::Dot) =>
+            {
                 self.advance();
                 Expr {
                     span: start.merge(self.previous.span),
@@ -829,10 +845,11 @@ impl<'src> Parser<'src> {
             // Identifiers and paths (including contextual keywords usable as identifiers)
             // Note: Default can be identifier in names (fn default, field default)
             // They are parsed as identifiers/paths first, not as special expressions.
-            TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Default => {
-                self.parse_path_or_struct_expr()
-            }
+            TokenKind::Ident
+            | TokenKind::TypeIdent
+            | TokenKind::SelfLower
+            | TokenKind::SelfUpper
+            | TokenKind::Default => self.parse_path_or_struct_expr(),
 
             // Parenthesized expression or tuple
             TokenKind::LParen => {
@@ -1030,7 +1047,11 @@ impl<'src> Parser<'src> {
                 }
                 let body = self.parse_block();
                 Expr {
-                    kind: ExprKind::Unchecked { checks, when_condition, body },
+                    kind: ExprKind::Unchecked {
+                        checks,
+                        when_condition,
+                        body,
+                    },
                     span: start.merge(self.previous.span),
                 }
             }
@@ -1075,7 +1096,11 @@ impl<'src> Parser<'src> {
             }
 
             // Some keywords can be used as identifiers in expression context
-            TokenKind::Handler | TokenKind::Effect | TokenKind::Deep | TokenKind::Shallow | TokenKind::Op => {
+            TokenKind::Handler
+            | TokenKind::Effect
+            | TokenKind::Deep
+            | TokenKind::Shallow
+            | TokenKind::Op => {
                 // Treat as identifier
                 self.advance();
                 let name = self.spanned_symbol();
@@ -1096,7 +1121,15 @@ impl<'src> Parser<'src> {
             }
 
             _ => {
-                self.error_expected_one_of(&["literal", "identifier", "`(`", "`[`", "`{`", "`if`", "`match`"]);
+                self.error_expected_one_of(&[
+                    "literal",
+                    "identifier",
+                    "`(`",
+                    "`[`",
+                    "`{`",
+                    "`if`",
+                    "`match`",
+                ]);
                 // Advance to prevent infinite loop during error recovery
                 self.advance();
                 Expr {
@@ -1152,7 +1185,11 @@ impl<'src> Parser<'src> {
         // Determine delimiter and parse accordingly
         let (delim, _open_kind, close_kind) = match self.current.kind {
             TokenKind::LParen => (MacroDelimiter::Paren, TokenKind::LParen, TokenKind::RParen),
-            TokenKind::LBracket => (MacroDelimiter::Bracket, TokenKind::LBracket, TokenKind::RBracket),
+            TokenKind::LBracket => (
+                MacroDelimiter::Bracket,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+            ),
             TokenKind::LBrace => (MacroDelimiter::Brace, TokenKind::LBrace, TokenKind::RBrace),
             _ => {
                 self.error_at_current(
@@ -1173,35 +1210,25 @@ impl<'src> Parser<'src> {
         let kind = match macro_name.as_str() {
             // Format-style macros: format!("...", args), println!("...", args), etc.
             // Also includes todo!, unimplemented!, unreachable! which behave like panic! with default messages
-            "format" | "println" | "print" | "eprintln" | "eprint" | "panic" | "write" | "writeln"
-            | "todo" | "unimplemented" | "unreachable" => {
+            "format" | "println" | "print" | "eprintln" | "eprint" | "panic" | "write"
+            | "writeln" | "todo" | "unimplemented" | "unreachable" => {
                 self.parse_format_macro_args(delim, close_kind)
             }
 
             // Vec macro: vec![1, 2, 3] or vec![0; 10]
-            "vec" => {
-                self.parse_vec_macro_args(close_kind)
-            }
+            "vec" => self.parse_vec_macro_args(close_kind),
 
             // Assert macros: assert!(cond) or assert!(cond, "message")
-            "assert" | "debug_assert" => {
-                self.parse_assert_macro_args(close_kind)
-            }
+            "assert" | "debug_assert" => self.parse_assert_macro_args(close_kind),
 
             // Dbg macro: dbg!(expr)
-            "dbg" => {
-                self.parse_dbg_macro_args(close_kind)
-            }
+            "dbg" => self.parse_dbg_macro_args(close_kind),
 
             // Matches macro: matches!(expr, pattern)
-            "matches" => {
-                self.parse_matches_macro_args(close_kind)
-            }
+            "matches" => self.parse_matches_macro_args(close_kind),
 
             // Unknown macro - store as custom for future user-defined macro support
-            _ => {
-                self.parse_custom_macro_args(delim, close_kind)
-            }
+            _ => self.parse_custom_macro_args(delim, close_kind),
         };
 
         let end_span = self.previous.span;
@@ -1269,7 +1296,11 @@ impl<'src> Parser<'src> {
                 let name_span = self.current.span;
                 self.advance(); // consume ident
                 let name_symbol = self.spanned_symbol();
-                let name_str = self.interner.resolve(name_symbol.node).unwrap_or("").to_string();
+                let name_str = self
+                    .interner
+                    .resolve(name_symbol.node)
+                    .unwrap_or("")
+                    .to_string();
 
                 if self.check(TokenKind::Eq) {
                     // This is a named argument
@@ -1328,7 +1359,11 @@ impl<'src> Parser<'src> {
             self.advance();
         }
 
-        MacroCallKind::Format { format_str, args, named_args }
+        MacroCallKind::Format {
+            format_str,
+            args,
+            named_args,
+        }
     }
 
     /// Parse vec! macro arguments: `[1, 2, 3]` or `[0; 10]`
@@ -1429,7 +1464,10 @@ impl<'src> Parser<'src> {
             self.advance();
         }
 
-        MacroCallKind::Assert { condition: Box::new(condition), message }
+        MacroCallKind::Assert {
+            condition: Box::new(condition),
+            message,
+        }
     }
 
     /// Parse dbg! macro arguments: `(expr)`
@@ -1678,8 +1716,12 @@ impl<'src> Parser<'src> {
         // For identifiers/paths (including contextual keywords), don't allow struct literals but DO allow macros
         let is_path_start = matches!(
             self.current.kind,
-            TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
-            | TokenKind::Handle | TokenKind::Default
+            TokenKind::Ident
+                | TokenKind::TypeIdent
+                | TokenKind::SelfLower
+                | TokenKind::SelfUpper
+                | TokenKind::Handle
+                | TokenKind::Default
         ) || Self::is_contextual_keyword(self.current.kind);
         if is_path_start {
             let path = self.parse_expr_path();
@@ -1689,9 +1731,9 @@ impl<'src> Parser<'src> {
                 && (self.check_next(TokenKind::LParen)
                     || self.check_next(TokenKind::LBracket)
                     || self.check_next(TokenKind::LBrace))
-                {
-                    return self.parse_macro_call(path, start);
-                }
+            {
+                return self.parse_macro_call(path, start);
+            }
 
             // Don't check for struct literal here - just return the path
             return Expr {
@@ -1764,7 +1806,8 @@ impl<'src> Parser<'src> {
                 self.advance();
                 // :: always continues the path
             } else if self.check(TokenKind::Dot) {
-                let last_was_type_ident = segments.last()
+                let last_was_type_ident = segments
+                    .last()
                     .map(|seg| {
                         let name_str = self.interner_symbol_str(seg.name.node);
                         name_str.chars().next().map_or(false, |c| c.is_uppercase())
@@ -2210,15 +2253,17 @@ impl<'src> Parser<'src> {
         } else {
             // Convert type path to expression path
             let expr_path = crate::ast::ExprPath {
-                segments: type_path.segments.iter().map(|seg| {
-                    crate::ast::ExprPathSegment {
+                segments: type_path
+                    .segments
+                    .iter()
+                    .map(|seg| crate::ast::ExprPathSegment {
                         name: seg.name.clone(),
                         args: seg.args.as_ref().map(|args| crate::ast::TypeArgs {
                             args: args.args.clone(),
                             span: args.span,
                         }),
-                    }
-                }).collect(),
+                    })
+                    .collect(),
                 span: type_path.span,
             };
 
@@ -2413,7 +2458,10 @@ impl<'src> Parser<'src> {
                 (empty_effect, op_segment.name.clone())
             } else {
                 self.error_expected("Effect.operation or Effect::operation pattern");
-                let empty = crate::ast::TypePath { segments: vec![], span: self.current.span };
+                let empty = crate::ast::TypePath {
+                    segments: vec![],
+                    span: self.current.span,
+                };
                 (empty, Spanned::new(self.intern(""), self.current.span))
             };
 

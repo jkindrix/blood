@@ -6,21 +6,23 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
+use inkwell::basic_block::BasicBlock;
+use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::builder::Builder;
-use inkwell::basic_block::BasicBlock;
-use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 
-use crate::hir::{self, DefId, LocalId, Type, PrimitiveTy, IntTy, UintTy, FloatTy};
-use crate::hir::ty::{TypeKind, TyVarId};
-use crate::mir::{EscapeAnalyzer, EscapeResults, MirBody, InlineHandlerBodies, ClosureAnalysisResults};
 use crate::codegen::mir_codegen::MirTypesCodegen;
 use crate::diagnostics::Diagnostic;
+use crate::effects::{EffectInfo, EffectLowering, HandlerInfo};
+use crate::hir::ty::{TyVarId, TypeKind};
+use crate::hir::{self, DefId, FloatTy, IntTy, LocalId, PrimitiveTy, Type, UintTy};
+use crate::mir::{
+    ClosureAnalysisResults, EscapeAnalyzer, EscapeResults, InlineHandlerBodies, MirBody,
+};
 use crate::span::Span;
-use crate::effects::{EffectLowering, EffectInfo, HandlerInfo};
 
 /// Build a mapping from arbitrary TyVarIds to sequential indices (0, 1, 2, ...).
 ///
@@ -37,7 +39,8 @@ fn build_tyvar_mapping(types: &[Type]) -> HashMap<TyVarId, u32> {
     all_tyvars.dedup();
 
     // Build mapping: first unique TyVarId -> 0, second -> 1, etc.
-    all_tyvars.iter()
+    all_tyvars
+        .iter()
         .enumerate()
         .map(|(idx, &tyvar)| (tyvar, idx as u32))
         .collect()
@@ -52,7 +55,8 @@ fn normalize_types_together(types: &[Type]) -> Vec<Type> {
     let tyvar_to_idx = build_tyvar_mapping(types);
 
     // Normalize each type using the shared mapping
-    types.iter()
+    types
+        .iter()
         .map(|ty| normalize_type_recursive(ty, &tyvar_to_idx))
         .collect()
 }
@@ -81,7 +85,12 @@ fn collect_tyvars(ty: &Type, tyvars: &mut Vec<TyVarId>) {
                 collect_tyvars(arg, tyvars);
             }
         }
-        TypeKind::Fn { params, ret, effects, .. } => {
+        TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            ..
+        } => {
             for p in params {
                 collect_tyvars(p, tyvars);
             }
@@ -109,7 +118,8 @@ fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<TyVarId, u32>) -> 
             }
         }
         TypeKind::Tuple(fields) => {
-            let normalized: Vec<Type> = fields.iter()
+            let normalized: Vec<Type> = fields
+                .iter()
                 .map(|f| normalize_type_recursive(f, tyvar_to_idx))
                 .collect();
             Type::tuple(normalized)
@@ -128,29 +138,47 @@ fn normalize_type_recursive(ty: &Type, tyvar_to_idx: &HashMap<TyVarId, u32>) -> 
         }
         TypeKind::Ptr { inner, mutable } => {
             let normalized = normalize_type_recursive(inner, tyvar_to_idx);
-            Type::new(TypeKind::Ptr { inner: normalized, mutable: *mutable })
+            Type::new(TypeKind::Ptr {
+                inner: normalized,
+                mutable: *mutable,
+            })
         }
         TypeKind::Adt { def_id, args } => {
-            let normalized_args: Vec<Type> = args.iter()
+            let normalized_args: Vec<Type> = args
+                .iter()
                 .map(|a| normalize_type_recursive(a, tyvar_to_idx))
                 .collect();
             Type::adt(*def_id, normalized_args)
         }
-        TypeKind::Fn { params, ret, effects, const_args } => {
-            let normalized_params: Vec<Type> = params.iter()
+        TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            const_args,
+        } => {
+            let normalized_params: Vec<Type> = params
+                .iter()
                 .map(|p| normalize_type_recursive(p, tyvar_to_idx))
                 .collect();
             let normalized_ret = normalize_type_recursive(ret, tyvar_to_idx);
             // Also normalize effect type args
-            let normalized_effects: Vec<hir::FnEffect> = effects.iter()
+            let normalized_effects: Vec<hir::FnEffect> = effects
+                .iter()
                 .map(|eff| hir::FnEffect {
                     def_id: eff.def_id,
-                    type_args: eff.type_args.iter()
+                    type_args: eff
+                        .type_args
+                        .iter()
                         .map(|ty| normalize_type_recursive(ty, tyvar_to_idx))
                         .collect(),
                 })
                 .collect();
-            Type::function_with_const_args(normalized_params, normalized_ret, normalized_effects, const_args.clone())
+            Type::function_with_const_args(
+                normalized_params,
+                normalized_ret,
+                normalized_effects,
+                const_args.clone(),
+            )
         }
         _ => ty.clone(),
     }
@@ -222,14 +250,14 @@ fn build_def_paths(hir_crate: &hir::Crate) -> HashMap<DefId, String> {
 }
 
 // Submodules
-mod types;
-mod handlers;
-mod expr;
+mod closures;
 mod control;
-mod patterns;
 mod dispatch;
 mod effects;
-mod closures;
+mod expr;
+mod handlers;
+mod patterns;
+mod types;
 
 #[cfg(test)]
 mod tests;
@@ -289,9 +317,11 @@ impl SubstContext {
 
     fn substitute_const(&self, cv: &hir::ConstValue) -> hir::ConstValue {
         match cv {
-            hir::ConstValue::Param(id) => {
-                self.const_subst.get(id).cloned().unwrap_or_else(|| cv.clone())
-            }
+            hir::ConstValue::Param(id) => self
+                .const_subst
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| cv.clone()),
             _ => cv.clone(),
         }
     }
@@ -308,7 +338,8 @@ fn substitute_type_with_ctx(ty: &Type, ctx: &SubstContext) -> Type {
             }
         }
         TypeKind::Tuple(fields) => {
-            let subst_fields: Vec<Type> = fields.iter()
+            let subst_fields: Vec<Type> = fields
+                .iter()
                 .map(|f| substitute_type_with_ctx(f, ctx))
                 .collect();
             Type::tuple(subst_fields)
@@ -318,49 +349,63 @@ fn substitute_type_with_ctx(ty: &Type, ctx: &SubstContext) -> Type {
             let subst_size = ctx.substitute_const(size);
             Type::array_with_const(subst_elem, subst_size)
         }
-        TypeKind::Slice { element } => {
-            Type::slice(substitute_type_with_ctx(element, ctx))
-        }
+        TypeKind::Slice { element } => Type::slice(substitute_type_with_ctx(element, ctx)),
         TypeKind::Ref { inner, mutable } => {
             Type::reference(substitute_type_with_ctx(inner, ctx), *mutable)
         }
-        TypeKind::Ptr { inner, mutable } => {
-            Type::new(TypeKind::Ptr {
-                inner: substitute_type_with_ctx(inner, ctx),
-                mutable: *mutable,
-            })
-        }
+        TypeKind::Ptr { inner, mutable } => Type::new(TypeKind::Ptr {
+            inner: substitute_type_with_ctx(inner, ctx),
+            mutable: *mutable,
+        }),
         TypeKind::Adt { def_id, args } => {
-            let subst_args: Vec<Type> = args.iter()
+            let subst_args: Vec<Type> = args
+                .iter()
                 .map(|a| substitute_type_with_ctx(a, ctx))
                 .collect();
             Type::adt(*def_id, subst_args)
         }
-        TypeKind::Fn { params, ret, effects, const_args } => {
-            let subst_params: Vec<Type> = params.iter()
+        TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            const_args,
+        } => {
+            let subst_params: Vec<Type> = params
+                .iter()
                 .map(|p| substitute_type_with_ctx(p, ctx))
                 .collect();
-            let subst_effects: Vec<hir::FnEffect> = effects.iter()
+            let subst_effects: Vec<hir::FnEffect> = effects
+                .iter()
                 .map(|eff| hir::FnEffect {
                     def_id: eff.def_id,
-                    type_args: eff.type_args.iter()
+                    type_args: eff
+                        .type_args
+                        .iter()
                         .map(|ty| substitute_type_with_ctx(ty, ctx))
                         .collect(),
                 })
                 .collect();
             // Also substitute const params in const_args
-            let subst_const_args: Vec<(hir::ConstParamId, hir::ConstValue)> = const_args.iter()
+            let subst_const_args: Vec<(hir::ConstParamId, hir::ConstValue)> = const_args
+                .iter()
                 .map(|(param_id, val)| {
                     let subst_val = match val {
-                        hir::ConstValue::Param(p) => {
-                            ctx.const_subst.get(p).cloned().unwrap_or_else(|| val.clone())
-                        }
+                        hir::ConstValue::Param(p) => ctx
+                            .const_subst
+                            .get(p)
+                            .cloned()
+                            .unwrap_or_else(|| val.clone()),
                         _ => val.clone(),
                     };
                     (*param_id, subst_val)
                 })
                 .collect();
-            Type::function_with_const_args(subst_params, substitute_type_with_ctx(ret, ctx), subst_effects, subst_const_args)
+            Type::function_with_const_args(
+                subst_params,
+                substitute_type_with_ctx(ret, ctx),
+                subst_effects,
+                subst_const_args,
+            )
         }
         _ => ty.clone(),
     }
@@ -390,7 +435,10 @@ fn infer_type_and_const_args(
     // Unify return type
     unify_types(generic_ret, concrete_ret, &mut type_subst, &mut const_subst);
 
-    InferResult { type_subst, const_subst }
+    InferResult {
+        type_subst,
+        const_subst,
+    }
 }
 
 /// Recursively unify a generic type with a concrete type, populating the substitution maps.
@@ -405,9 +453,20 @@ fn unify_types(
             // Found a type variable - record its concrete type
             type_subst.entry(*id).or_insert_with(|| concrete.clone());
         }
-        TypeKind::Fn { params: gen_params, ret: gen_ret, effects: gen_effects, const_args: gen_const_args } => {
+        TypeKind::Fn {
+            params: gen_params,
+            ret: gen_ret,
+            effects: gen_effects,
+            const_args: gen_const_args,
+        } => {
             // Recursively unify function types
-            if let TypeKind::Fn { params: conc_params, ret: conc_ret, effects: conc_effects, const_args: conc_const_args } = concrete.kind() {
+            if let TypeKind::Fn {
+                params: conc_params,
+                ret: conc_ret,
+                effects: conc_effects,
+                const_args: conc_const_args,
+            } = concrete.kind()
+            {
                 for (gp, cp) in gen_params.iter().zip(conc_params.iter()) {
                     unify_types(gp, cp, type_subst, const_subst);
                 }
@@ -417,7 +476,9 @@ fn unify_types(
                 for gen_eff in gen_effects {
                     for conc_eff in conc_effects {
                         if gen_eff.def_id == conc_eff.def_id {
-                            for (gen_arg, conc_arg) in gen_eff.type_args.iter().zip(conc_eff.type_args.iter()) {
+                            for (gen_arg, conc_arg) in
+                                gen_eff.type_args.iter().zip(conc_eff.type_args.iter())
+                            {
                                 unify_types(gen_arg, conc_arg, type_subst, const_subst);
                             }
                         }
@@ -426,14 +487,18 @@ fn unify_types(
                 // Unify const args - if concrete type has explicit const args, use them
                 // This handles the turbofish case: make_matrix::<3, 4>()
                 for (param_id, conc_val) in conc_const_args {
-                    const_subst.entry(*param_id).or_insert_with(|| conc_val.clone());
+                    const_subst
+                        .entry(*param_id)
+                        .or_insert_with(|| conc_val.clone());
                 }
                 // If generic has const args but concrete doesn't, that's also valid (inference)
                 for (param_id, gen_val) in gen_const_args {
                     if let hir::ConstValue::Param(_) = gen_val {
                         // Skip - this will be resolved later
                     } else {
-                        const_subst.entry(*param_id).or_insert_with(|| gen_val.clone());
+                        const_subst
+                            .entry(*param_id)
+                            .or_insert_with(|| gen_val.clone());
                     }
                 }
             }
@@ -445,8 +510,15 @@ fn unify_types(
                 }
             }
         }
-        TypeKind::Array { element: gen_elem, size: gen_size } => {
-            if let TypeKind::Array { element: conc_elem, size: conc_size } = concrete.kind() {
+        TypeKind::Array {
+            element: gen_elem,
+            size: gen_size,
+        } => {
+            if let TypeKind::Array {
+                element: conc_elem,
+                size: conc_size,
+            } = concrete.kind()
+            {
                 unify_types(gen_elem, conc_elem, type_subst, const_subst);
                 // Extract const param mapping from array size
                 if let hir::ConstValue::Param(id) = gen_size {
@@ -459,18 +531,31 @@ fn unify_types(
                 unify_types(gen_elem, conc_elem, type_subst, const_subst);
             }
         }
-        TypeKind::Ref { inner: gen_inner, .. } => {
-            if let TypeKind::Ref { inner: conc_inner, .. } = concrete.kind() {
+        TypeKind::Ref {
+            inner: gen_inner, ..
+        } => {
+            if let TypeKind::Ref {
+                inner: conc_inner, ..
+            } = concrete.kind()
+            {
                 unify_types(gen_inner, conc_inner, type_subst, const_subst);
             }
         }
-        TypeKind::Ptr { inner: gen_inner, .. } => {
-            if let TypeKind::Ptr { inner: conc_inner, .. } = concrete.kind() {
+        TypeKind::Ptr {
+            inner: gen_inner, ..
+        } => {
+            if let TypeKind::Ptr {
+                inner: conc_inner, ..
+            } = concrete.kind()
+            {
                 unify_types(gen_inner, conc_inner, type_subst, const_subst);
             }
         }
         TypeKind::Adt { args: gen_args, .. } => {
-            if let TypeKind::Adt { args: conc_args, .. } = concrete.kind() {
+            if let TypeKind::Adt {
+                args: conc_args, ..
+            } = concrete.kind()
+            {
                 for (ga, ca) in gen_args.iter().zip(conc_args.iter()) {
                     unify_types(ga, ca, type_subst, const_subst);
                 }
@@ -482,7 +567,10 @@ fn unify_types(
 }
 
 /// Substitute types in a MIR statement with full context.
-fn substitute_statement_types_with_ctx(stmt: &mut crate::mir::types::Statement, ctx: &SubstContext) {
+fn substitute_statement_types_with_ctx(
+    stmt: &mut crate::mir::types::Statement,
+    ctx: &SubstContext,
+) {
     use crate::mir::types::StatementKind;
 
     match &mut stmt.kind {
@@ -531,13 +619,20 @@ fn substitute_rvalue_types_with_ctx(rvalue: &mut crate::mir::types::Rvalue, ctx:
                 substitute_operand_types_with_ctx(op, ctx);
             }
         }
-        Rvalue::Discriminant(_) | Rvalue::Len(_) | Rvalue::VecLen(_) | Rvalue::ReadGeneration(_) => {}
+        Rvalue::Discriminant(_)
+        | Rvalue::Len(_)
+        | Rvalue::VecLen(_)
+        | Rvalue::ReadGeneration(_) => {}
         Rvalue::Cast { operand, target_ty } => {
             substitute_operand_types_with_ctx(operand, ctx);
             *target_ty = substitute_type_with_ctx(target_ty, ctx);
         }
         Rvalue::NullCheck(op) => substitute_operand_types_with_ctx(op, ctx),
-        Rvalue::MakeGenPtr { address, generation, metadata } => {
+        Rvalue::MakeGenPtr {
+            address,
+            generation,
+            metadata,
+        } => {
             substitute_operand_types_with_ctx(address, ctx);
             substitute_operand_types_with_ctx(generation, ctx);
             substitute_operand_types_with_ctx(metadata, ctx);
@@ -557,7 +652,7 @@ fn substitute_rvalue_types_with_ctx(rvalue: &mut crate::mir::types::Rvalue, ctx:
 
 /// Substitute types in an operand with full context (including const param substitution).
 fn substitute_operand_types_with_ctx(op: &mut crate::mir::types::Operand, ctx: &SubstContext) {
-    use crate::mir::types::{Operand, ConstantKind};
+    use crate::mir::types::{ConstantKind, Operand};
 
     match op {
         Operand::Constant(c) => {
@@ -578,7 +673,10 @@ fn substitute_operand_types_with_ctx(op: &mut crate::mir::types::Operand, ctx: &
 }
 
 /// Substitute types in a terminator with full context.
-fn substitute_terminator_types_with_ctx(term: &mut crate::mir::types::Terminator, ctx: &SubstContext) {
+fn substitute_terminator_types_with_ctx(
+    term: &mut crate::mir::types::Terminator,
+    ctx: &SubstContext,
+) {
     use crate::mir::types::TerminatorKind;
 
     match &mut term.kind {
@@ -616,13 +714,20 @@ fn substitute_terminator_types_with_ctx(term: &mut crate::mir::types::Terminator
 
 /// Collect all closure DefIds referenced in a MIR body.
 fn collect_closure_def_ids(mir: &MirBody) -> Vec<DefId> {
-    use crate::mir::types::{Rvalue, AggregateKind, StatementKind};
+    use crate::mir::types::{AggregateKind, Rvalue, StatementKind};
 
     let mut closure_ids = Vec::new();
 
     for block in &mir.basic_blocks {
         for stmt in &block.statements {
-            if let StatementKind::Assign(_, Rvalue::Aggregate { kind: AggregateKind::Closure { def_id }, .. }) = &stmt.kind {
+            if let StatementKind::Assign(
+                _,
+                Rvalue::Aggregate {
+                    kind: AggregateKind::Closure { def_id },
+                    ..
+                },
+            ) = &stmt.kind
+            {
                 closure_ids.push(*def_id);
             }
         }
@@ -633,11 +738,18 @@ fn collect_closure_def_ids(mir: &MirBody) -> Vec<DefId> {
 
 /// Remap closure DefIds in a MIR body using the provided mapping.
 fn remap_closure_def_ids(mir: &mut MirBody, remap: &HashMap<DefId, DefId>) {
-    use crate::mir::types::{Rvalue, AggregateKind, StatementKind};
+    use crate::mir::types::{AggregateKind, Rvalue, StatementKind};
 
     for block in &mut mir.basic_blocks {
         for stmt in &mut block.statements {
-            if let StatementKind::Assign(_, Rvalue::Aggregate { kind: AggregateKind::Closure { def_id }, .. }) = &mut stmt.kind {
+            if let StatementKind::Assign(
+                _,
+                Rvalue::Aggregate {
+                    kind: AggregateKind::Closure { def_id },
+                    ..
+                },
+            ) = &mut stmt.kind
+            {
                 if let Some(&new_id) = remap.get(def_id) {
                     *def_id = new_id;
                 }
@@ -764,7 +876,8 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Maps DefId to MirBody for generic functions.
     pub(super) generic_mir_bodies: HashMap<DefId, MirBody>,
     /// Monomorphization cache: (generic DefId, type args, const args) -> monomorphized DefId.
-    pub(super) mono_cache: HashMap<(DefId, Vec<Type>, Vec<(hir::ConstParamId, hir::ConstValue)>), DefId>,
+    pub(super) mono_cache:
+        HashMap<(DefId, Vec<Type>, Vec<(hir::ConstParamId, hir::ConstValue)>), DefId>,
     /// Counter for generating unique monomorphized DefIds (for non-closure functions).
     pub(super) mono_counter: u32,
     /// Counter for generating unique monomorphized closure DefIds.
@@ -964,9 +1077,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// 1. Closure analysis results are available
     /// 2. The closure's environment size is within the inline threshold
     /// 3. The closure doesn't escape (only used in direct calls)
-    pub fn should_inline_closure_env(&self, closure_def_id: &DefId, dest_local: Option<LocalId>) -> bool {
+    pub fn should_inline_closure_env(
+        &self,
+        closure_def_id: &DefId,
+        dest_local: Option<LocalId>,
+    ) -> bool {
         // Check closure analysis says it's an inline candidate
-        let is_inline_candidate = self.closure_analysis
+        let is_inline_candidate = self
+            .closure_analysis
             .as_ref()
             .and_then(|ca| ca.get(*closure_def_id))
             .map(|info| info.is_inline_candidate)
@@ -1054,7 +1172,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// - Runtime function declarations
     ///
     /// After this, MIR bodies can be compiled using `compile_mir_body`.
-    pub fn compile_crate_declarations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+    pub fn compile_crate_declarations(
+        &mut self,
+        hir_crate: &hir::Crate,
+    ) -> Result<(), Vec<Diagnostic>> {
         // Build module-qualified paths for stable linker symbols
         self.def_paths = build_def_paths(hir_crate);
 
@@ -1076,34 +1197,37 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // Must normalize all fields together to ensure consistent TyVarId mapping
                     let field_types: Vec<Type> = match &struct_def.kind {
                         hir::StructKind::Record(fields) => {
-                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            let raw_types: Vec<Type> =
+                                fields.iter().map(|f| f.ty.clone()).collect();
                             normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Tuple(fields) => {
-                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            let raw_types: Vec<Type> =
+                                fields.iter().map(|f| f.ty.clone()).collect();
                             normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
                     if struct_def.is_packed || struct_def.align.is_some() {
-                        self.struct_layout_attrs.insert(*def_id, (struct_def.is_packed, struct_def.align));
+                        self.struct_layout_attrs
+                            .insert(*def_id, (struct_def.is_packed, struct_def.align));
                     }
                 }
                 hir::ItemKind::Enum(enum_def) => {
                     // For enums, we need to collect ALL field types across ALL variants
                     // to build a consistent TyVarId mapping
-                    let all_field_types: Vec<Type> = enum_def.variants.iter()
-                        .flat_map(|variant| {
-                            match &variant.fields {
-                                hir::StructKind::Record(fields) => {
-                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
-                                }
-                                hir::StructKind::Tuple(fields) => {
-                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
-                                }
-                                hir::StructKind::Unit => Vec::new(),
+                    let all_field_types: Vec<Type> = enum_def
+                        .variants
+                        .iter()
+                        .flat_map(|variant| match &variant.fields {
+                            hir::StructKind::Record(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
                             }
+                            hir::StructKind::Tuple(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                            }
+                            hir::StructKind::Unit => Vec::new(),
                         })
                         .collect();
 
@@ -1111,21 +1235,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let tyvar_to_idx = build_tyvar_mapping(&all_field_types);
 
                     // Now normalize each variant's fields using the shared mapping
-                    let variants: Vec<Vec<Type>> = enum_def.variants.iter().map(|variant| {
-                        match &variant.fields {
-                            hir::StructKind::Record(fields) => {
-                                fields.iter()
-                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
-                                    .collect()
-                            }
-                            hir::StructKind::Tuple(fields) => {
-                                fields.iter()
-                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
-                                    .collect()
-                            }
+                    let variants: Vec<Vec<Type>> = enum_def
+                        .variants
+                        .iter()
+                        .map(|variant| match &variant.fields {
+                            hir::StructKind::Record(fields) => fields
+                                .iter()
+                                .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                .collect(),
+                            hir::StructKind::Tuple(fields) => fields
+                                .iter()
+                                .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                .collect(),
                             hir::StructKind::Unit => Vec::new(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     self.enum_defs.insert(*def_id, variants);
                 }
                 hir::ItemKind::Effect { .. } => {
@@ -1179,7 +1303,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let field_types = normalize_types_together(&raw_types);
                 self.struct_defs.insert(*def_id, field_types);
 
-                match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
+                match self
+                    .effect_lowering
+                    .lower_handler_decl(item, Some(&hir_crate.bodies))
+                {
                     Ok(handler_info) => {
                         self.handler_defs.insert(*def_id, handler_info);
                         // Pre-create registry index global for PushHandler to reference
@@ -1221,7 +1348,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 if !fn_def.sig.generics.is_empty() || !fn_def.sig.const_generics.is_empty() {
                     if let Some(body_id) = fn_def.body_id {
                         if let Some(body) = hir_crate.get_body(body_id) {
-                            self.generic_fn_defs.insert(*def_id, (fn_def.clone(), body.clone()));
+                            self.generic_fn_defs
+                                .insert(*def_id, (fn_def.clone(), body.clone()));
                         }
                     }
                 }
@@ -1240,9 +1368,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.declare_ffi_functions(hir_crate)?;
 
         // Drain any errors collected during type lowering (which uses &self).
-        self.errors.extend(
-            self.type_lowering_errors.borrow_mut().drain(..)
-        );
+        self.errors
+            .extend(self.type_lowering_errors.borrow_mut().drain(..));
 
         if self.errors.is_empty() {
             Ok(())
@@ -1268,7 +1395,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
                 hir::ItemKind::Bridge(bridge_def) => {
                     // Get the wasm import module from link specs if present
-                    let wasm_import_module = bridge_def.link_specs.iter()
+                    let wasm_import_module = bridge_def
+                        .link_specs
+                        .iter()
                         .find_map(|ls| ls.wasm_import_module.clone());
 
                     // Declare FFI structs with C layout
@@ -1310,9 +1439,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             wasm_import_module.as_deref(),
                         )?;
                         // Also register in functions map for call resolution
-                        if let Some(fn_value) = self.module.get_function(
-                            extern_fn.link_name.as_ref().unwrap_or(&extern_fn.name)
-                        ) {
+                        if let Some(fn_value) = self
+                            .module
+                            .get_function(extern_fn.link_name.as_ref().unwrap_or(&extern_fn.name))
+                        {
                             self.functions.insert(extern_fn.def_id, fn_value);
                         }
                     }
@@ -1325,16 +1455,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
     /// Declare an FFI struct type with C-compatible layout.
     fn declare_ffi_struct(&mut self, ffi_struct: &hir::FfiStruct) -> Result<(), Vec<Diagnostic>> {
-        let field_types: Vec<_> = ffi_struct.fields.iter()
+        let field_types: Vec<_> = ffi_struct
+            .fields
+            .iter()
             .map(|f| self.lower_type(&f.ty))
             .collect();
 
         let _struct_type = self.context.struct_type(&field_types, ffi_struct.is_packed);
 
         // Register the struct type for later use
-        self.struct_defs.insert(ffi_struct.def_id, ffi_struct.fields.iter()
-            .map(|f| f.ty.clone())
-            .collect());
+        self.struct_defs.insert(
+            ffi_struct.def_id,
+            ffi_struct.fields.iter().map(|f| f.ty.clone()).collect(),
+        );
 
         // Also create an opaque named struct for better LLVM IR readability
         let _named_struct = self.context.opaque_struct_type(&ffi_struct.name);
@@ -1357,7 +1490,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             let const_name = format!("{}_{}", ffi_enum.name, variant.name);
             if let inkwell::types::BasicTypeEnum::IntType(int_type) = repr_type {
                 let const_val = int_type.const_int(variant.value as u64, variant.value < 0);
-                let global = self.module.add_global(int_type, Some(AddressSpace::default()), &const_name);
+                let global =
+                    self.module
+                        .add_global(int_type, Some(AddressSpace::default()), &const_name);
                 global.set_initializer(&const_val);
                 global.set_constant(true);
                 global.set_linkage(inkwell::module::Linkage::Private);
@@ -1400,7 +1535,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Register the union type - we use the first field's type for simplicity
         // In practice, users must cast to the appropriate field type
         if let Some(first_field) = ffi_union.fields.first() {
-            self.struct_defs.insert(ffi_union.def_id, vec![first_field.ty.clone()]);
+            self.struct_defs
+                .insert(ffi_union.def_id, vec![first_field.ty.clone()]);
         } else {
             // Empty union - just use a zero-sized placeholder
             self.struct_defs.insert(ffi_union.def_id, Vec::new());
@@ -1414,19 +1550,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let llvm_type = self.lower_type(&ffi_const.ty);
 
         let const_val: inkwell::values::BasicValueEnum = match llvm_type {
-            inkwell::types::BasicTypeEnum::IntType(int_type) => {
-                int_type.const_int(ffi_const.value as u64, ffi_const.value < 0).into()
-            }
+            inkwell::types::BasicTypeEnum::IntType(int_type) => int_type
+                .const_int(ffi_const.value as u64, ffi_const.value < 0)
+                .into(),
             inkwell::types::BasicTypeEnum::FloatType(float_type) => {
                 float_type.const_float(ffi_const.value as f64).into()
             }
             _ => {
                 // For non-numeric types, use i64 and let the user cast
-                self.context.i64_type().const_int(ffi_const.value as u64, ffi_const.value < 0).into()
+                self.context
+                    .i64_type()
+                    .const_int(ffi_const.value as u64, ffi_const.value < 0)
+                    .into()
             }
         };
 
-        let global = self.module.add_global(llvm_type, Some(AddressSpace::default()), &ffi_const.name);
+        let global =
+            self.module
+                .add_global(llvm_type, Some(AddressSpace::default()), &ffi_const.name);
         global.set_initializer(&const_val);
         global.set_constant(true);
 
@@ -1437,9 +1578,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Declare an FFI callback type (function pointer).
-    fn declare_ffi_callback(&mut self, ffi_callback: &hir::FfiCallback) -> Result<(), Vec<Diagnostic>> {
+    fn declare_ffi_callback(
+        &mut self,
+        ffi_callback: &hir::FfiCallback,
+    ) -> Result<(), Vec<Diagnostic>> {
         // Lower parameter types
-        let param_types: Vec<_> = ffi_callback.params.iter()
+        let param_types: Vec<_> = ffi_callback
+            .params
+            .iter()
             .map(|p| self.lower_type(p).into())
             .collect();
 
@@ -1529,11 +1675,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Create global constant with private linkage to avoid
                 // multiple definition errors when the same const is used
                 // across multiple compilation units
-                let global = self.module.add_global(
-                    llvm_type,
-                    Some(AddressSpace::default()),
-                    &item.name,
-                );
+                let global =
+                    self.module
+                        .add_global(llvm_type, Some(AddressSpace::default()), &item.name);
                 global.set_initializer(&init_value);
                 global.set_constant(true);
                 global.set_linkage(inkwell::module::Linkage::Private);
@@ -1554,7 +1698,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
         sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
         for (&def_id, item) in sorted_items {
-            if let hir::ItemKind::Static { ty, mutable, body_id } = &item.kind {
+            if let hir::ItemKind::Static {
+                ty,
+                mutable,
+                body_id,
+            } = &item.kind
+            {
                 // Lower the type
                 let llvm_type = self.lower_type(ty);
 
@@ -1573,11 +1722,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // multiple definition errors when the same static is compiled
                 // in multiple object files (e.g., when a module is imported
                 // from multiple places in per-definition compilation)
-                let global = self.module.add_global(
-                    llvm_type,
-                    Some(AddressSpace::default()),
-                    &item.name,
-                );
+                let global =
+                    self.module
+                        .add_global(llvm_type, Some(AddressSpace::default()), &item.name);
                 global.set_initializer(&init_value);
                 global.set_constant(!*mutable); // Only constant if not mutable
                 global.set_linkage(inkwell::module::Linkage::LinkOnceODR);
@@ -1596,23 +1743,28 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Get the base type of a place (either from a local or a static).
-    pub fn get_place_base_type(&self, place: &crate::mir::Place, body: &crate::mir::MirBody) -> Result<Type, Vec<Diagnostic>> {
+    pub fn get_place_base_type(
+        &self,
+        place: &crate::mir::Place,
+        body: &crate::mir::MirBody,
+    ) -> Result<Type, Vec<Diagnostic>> {
         use crate::mir::types::PlaceBase;
         match &place.base {
             PlaceBase::Local(local_id) => {
-                let local_info = body.locals.get(local_id.index as usize)
-                    .ok_or_else(|| vec![Diagnostic::error(
+                let local_info = body.locals.get(local_id.index as usize).ok_or_else(|| {
+                    vec![Diagnostic::error(
                         format!("Local _{} not found in MIR body", local_id.index),
                         body.span,
-                    )])?;
+                    )]
+                })?;
                 Ok(local_info.ty.clone())
             }
-            PlaceBase::Static(def_id) => {
-                self.get_static_type(*def_id).ok_or_else(|| vec![Diagnostic::error(
+            PlaceBase::Static(def_id) => self.get_static_type(*def_id).ok_or_else(|| {
+                vec![Diagnostic::error(
                     format!("Static {:?} type not found", def_id),
                     body.span,
-                )])
-            }
+                )]
+            }),
         }
     }
 
@@ -1651,7 +1803,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let right_val = self.evaluate_const_expr_with_env(right, ty, bindings)?;
                 self.evaluate_const_binary_op(*op, left_val, right_val, ty)
             }
-            ExprKind::Block { stmts, expr: final_expr, .. } => {
+            ExprKind::Block {
+                stmts,
+                expr: final_expr,
+                ..
+            } => {
                 // Process let statements to build up const bindings
                 let mut local_bindings = bindings.clone();
 
@@ -1691,16 +1847,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(self.context.i8_type().const_zero().into())
                 }
             }
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 // Evaluate condition at compile time
-                let cond_val = self.evaluate_const_expr_with_env(
-                    condition,
-                    &Type::bool(),
-                    bindings,
-                )?;
+                let cond_val =
+                    self.evaluate_const_expr_with_env(condition, &Type::bool(), bindings)?;
 
                 // Extract the boolean value
-                let cond_bool = if let inkwell::values::BasicValueEnum::IntValue(int_val) = cond_val {
+                let cond_bool = if let inkwell::values::BasicValueEnum::IntValue(int_val) = cond_val
+                {
                     // Get the constant value (0 = false, non-zero = true)
                     int_val.get_zero_extended_constant().map(|v| v != 0)
                 } else {
@@ -1708,9 +1866,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 };
 
                 match cond_bool {
-                    Some(true) => {
-                        self.evaluate_const_expr_with_env(then_branch, ty, bindings)
-                    }
+                    Some(true) => self.evaluate_const_expr_with_env(then_branch, ty, bindings),
                     Some(false) => {
                         if let Some(else_branch) = else_branch {
                             self.evaluate_const_expr_with_env(else_branch, ty, bindings)
@@ -1719,12 +1875,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             Ok(self.context.i8_type().const_zero().into())
                         }
                     }
-                    None => {
-                        Err(vec![Diagnostic::error(
-                            "If condition in const context must be a compile-time constant",
-                            condition.span,
-                        )])
-                    }
+                    None => Err(vec![Diagnostic::error(
+                        "If condition in const context must be a compile-time constant",
+                        condition.span,
+                    )]),
                 }
             }
             ExprKind::Local(local_id) => {
@@ -1751,9 +1905,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     expr.span,
                 )])
             }
-            ExprKind::Cast { expr: inner_expr, target_ty } => {
+            ExprKind::Cast {
+                expr: inner_expr,
+                target_ty,
+            } => {
                 // Evaluate the inner expression
-                let inner_val = self.evaluate_const_expr_with_env(inner_expr, &inner_expr.ty, bindings)?;
+                let inner_val =
+                    self.evaluate_const_expr_with_env(inner_expr, &inner_expr.ty, bindings)?;
                 // Perform the cast at compile time
                 self.evaluate_const_cast(inner_val, &inner_expr.ty, target_ty, expr.span)
             }
@@ -1773,15 +1931,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
 
                 // Create a constant struct for the tuple
-                let llvm_types: Vec<inkwell::types::BasicTypeEnum> = element_values.iter()
-                    .map(|v| v.get_type())
-                    .collect();
+                let llvm_types: Vec<inkwell::types::BasicTypeEnum> =
+                    element_values.iter().map(|v| v.get_type()).collect();
                 let struct_type = self.context.struct_type(&llvm_types, false);
                 let const_values: Vec<inkwell::values::BasicValueEnum> = element_values;
                 Ok(struct_type.const_named_struct(&const_values).into())
             }
             ExprKind::Array(elements) => {
-                if let hir::TypeKind::Array { element: elem_ty, .. } = ty.kind() {
+                if let hir::TypeKind::Array {
+                    element: elem_ty, ..
+                } = ty.kind()
+                {
                     let mut element_values = Vec::new();
                     for elem in elements {
                         let val = self.evaluate_const_expr_with_env(elem, elem_ty, bindings)?;
@@ -1796,7 +1956,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                     // All elements must be the same type
                     let first = element_values[0];
-                    let array_vals: Result<Vec<_>, _> = element_values.iter()
+                    let array_vals: Result<Vec<_>, _> = element_values
+                        .iter()
                         .map(|v| match v {
                             inkwell::values::BasicValueEnum::IntValue(iv) => Ok(*iv),
                             _ => Err(()),
@@ -1820,14 +1981,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     )])
                 }
             }
-            ExprKind::Variant { def_id: _, variant_idx, fields } => {
+            ExprKind::Variant {
+                def_id: _,
+                variant_idx,
+                fields,
+            } => {
                 // Get the LLVM type for the enum
                 let enum_llvm_type = self.lower_type(ty);
 
                 // Handle unit enums (no payload fields) - lowered to just i32 tag
                 if enum_llvm_type.is_int_type() {
                     // Unit enum - just return the tag value as a constant
-                    let tag = self.context.i32_type().const_int(*variant_idx as u64, false);
+                    let tag = self
+                        .context
+                        .i32_type()
+                        .const_int(*variant_idx as u64, false);
                     return Ok(tag.into());
                 }
 
@@ -1838,17 +2006,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let mut field_values: Vec<inkwell::values::BasicValueEnum<'ctx>> = Vec::new();
 
                 // First field is always the discriminant/tag
-                let tag = self.context.i32_type().const_int(*variant_idx as u64, false);
+                let tag = self
+                    .context
+                    .i32_type()
+                    .const_int(*variant_idx as u64, false);
                 field_values.push(tag.into());
 
                 // Get variant field types from the enum type
                 // The struct type has: [tag, field1, field2, ...]
                 // We need to match field expressions to their expected types
                 for (i, field_expr) in fields.iter().enumerate() {
-                    let field_val = self.evaluate_const_expr_with_env(field_expr, &field_expr.ty, bindings)?;
+                    let field_val =
+                        self.evaluate_const_expr_with_env(field_expr, &field_expr.ty, bindings)?;
 
                     // Check if we need to pad the value to match the struct field type
-                    let struct_field_type = enum_struct_type.get_field_type_at_index((i + 1) as u32);
+                    let struct_field_type =
+                        enum_struct_type.get_field_type_at_index((i + 1) as u32);
                     if let Some(expected_type) = struct_field_type {
                         let actual_type = field_val.get_type();
 
@@ -1856,7 +2029,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         if actual_type != expected_type {
                             // For now, try to use the value directly if it fits
                             // This handles cases where the enum payload is smaller than the max variant
-                            if let (inkwell::values::BasicValueEnum::IntValue(iv), inkwell::types::BasicTypeEnum::IntType(target_int)) = (field_val, expected_type) {
+                            if let (
+                                inkwell::values::BasicValueEnum::IntValue(iv),
+                                inkwell::types::BasicTypeEnum::IntType(target_int),
+                            ) = (field_val, expected_type)
+                            {
                                 let from_bits = iv.get_type().get_bit_width();
                                 let to_bits = target_int.get_bit_width();
                                 if from_bits < to_bits {
@@ -1901,7 +2078,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 Ok(enum_struct_type.const_named_struct(&field_values).into())
             }
             _ => Err(vec![Diagnostic::error(
-                format!("Expression kind {:?} is not const-evaluable", std::mem::discriminant(&expr.kind)),
+                format!(
+                    "Expression kind {:?} is not const-evaluable",
+                    std::mem::discriminant(&expr.kind)
+                ),
                 expr.span,
             )]),
         }
@@ -1920,15 +2100,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // LLVM 18 removed most const cast APIs. Extract values, convert in Rust,
         // and create new LLVM constants.
         match (value, target_llvm_ty) {
-            (inkwell::values::BasicValueEnum::IntValue(int_val), inkwell::types::BasicTypeEnum::IntType(target_int)) => {
+            (
+                inkwell::values::BasicValueEnum::IntValue(int_val),
+                inkwell::types::BasicTypeEnum::IntType(target_int),
+            ) => {
                 // Integer to integer cast
                 let from_bits = int_val.get_type().get_bit_width();
                 let to_bits = target_int.get_bit_width();
                 if from_bits < to_bits {
                     // Zero-extend: extract value and create wider constant
-                    let val = int_val.get_zero_extended_constant().ok_or_else(|| vec![Diagnostic::error(
-                        "Integer cast requires a constant value in const context", span,
-                    )])?;
+                    let val = int_val.get_zero_extended_constant().ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "Integer cast requires a constant value in const context",
+                            span,
+                        )]
+                    })?;
                     Ok(target_int.const_int(val, false).into())
                 } else if from_bits > to_bits {
                     // Truncate (still available in LLVM 18)
@@ -1937,25 +2123,43 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(int_val.into())
                 }
             }
-            (inkwell::values::BasicValueEnum::IntValue(int_val), inkwell::types::BasicTypeEnum::FloatType(target_float)) => {
+            (
+                inkwell::values::BasicValueEnum::IntValue(int_val),
+                inkwell::types::BasicTypeEnum::FloatType(target_float),
+            ) => {
                 // Integer to float cast: extract int, convert in Rust, create float constant
-                let val = int_val.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
-                    "Integer-to-float cast requires a constant value in const context", span,
-                )])?;
+                let val = int_val.get_sign_extended_constant().ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Integer-to-float cast requires a constant value in const context",
+                        span,
+                    )]
+                })?;
                 Ok(target_float.const_float(val as f64).into())
             }
-            (inkwell::values::BasicValueEnum::FloatValue(float_val), inkwell::types::BasicTypeEnum::IntType(target_int)) => {
+            (
+                inkwell::values::BasicValueEnum::FloatValue(float_val),
+                inkwell::types::BasicTypeEnum::IntType(target_int),
+            ) => {
                 // Float to integer cast: extract float, convert in Rust, create int constant
-                let (val, _lossy) = float_val.get_constant().ok_or_else(|| vec![Diagnostic::error(
-                    "Float-to-integer cast requires a constant value in const context", span,
-                )])?;
+                let (val, _lossy) = float_val.get_constant().ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Float-to-integer cast requires a constant value in const context",
+                        span,
+                    )]
+                })?;
                 Ok(target_int.const_int(val as i64 as u64, true).into())
             }
-            (inkwell::values::BasicValueEnum::FloatValue(float_val), inkwell::types::BasicTypeEnum::FloatType(target_float)) => {
+            (
+                inkwell::values::BasicValueEnum::FloatValue(float_val),
+                inkwell::types::BasicTypeEnum::FloatType(target_float),
+            ) => {
                 // Float to float cast: extract, create constant with target type
-                let (val, _lossy) = float_val.get_constant().ok_or_else(|| vec![Diagnostic::error(
-                    "Float cast requires a constant value in const context", span,
-                )])?;
+                let (val, _lossy) = float_val.get_constant().ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Float cast requires a constant value in const context",
+                        span,
+                    )]
+                })?;
                 Ok(target_float.const_float(val).into())
             }
             _ => Err(vec![Diagnostic::error(
@@ -1982,7 +2186,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(int_type.const_int(*value as u64, true).into())
                 } else {
                     // Fallback to i64
-                    Ok(self.context.i64_type().const_int(*value as u64, true).into())
+                    Ok(self
+                        .context
+                        .i64_type()
+                        .const_int(*value as u64, true)
+                        .into())
                 }
             }
             LiteralValue::Uint(value) => {
@@ -1992,7 +2200,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(int_type.const_int(*value as u64, false).into())
                 } else {
                     // Fallback to u64
-                    Ok(self.context.i64_type().const_int(*value as u64, false).into())
+                    Ok(self
+                        .context
+                        .i64_type()
+                        .const_int(*value as u64, false)
+                        .into())
                 }
             }
             LiteralValue::Float(value) => {
@@ -2007,9 +2219,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     Ok(self.context.f64_type().const_float(*value).into())
                 }
             }
-            LiteralValue::Bool(value) => {
-                Ok(self.context.bool_type().const_int(*value as u64, false).into())
-            }
+            LiteralValue::Bool(value) => Ok(self
+                .context
+                .bool_type()
+                .const_int(*value as u64, false)
+                .into()),
             LiteralValue::Char(c) => {
                 // Chars are u32 in Blood/Rust
                 Ok(self.context.i32_type().const_int(*c as u64, false).into())
@@ -2018,7 +2232,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Create a global string constant and str slice {ptr, len}
                 let bytes = s.as_bytes();
                 let string_type = self.context.i8_type().array_type((bytes.len() + 1) as u32);
-                let global = self.module.add_global(string_type, Some(AddressSpace::default()), "");
+                let global = self
+                    .module
+                    .add_global(string_type, Some(AddressSpace::default()), "");
                 global.set_initializer(&self.context.const_string(bytes, true));
                 global.set_constant(true);
 
@@ -2028,9 +2244,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Create str slice struct {ptr, len}
                 let str_type = self.context.struct_type(
-                    &[self.context.ptr_type(AddressSpace::default()).into(),
-                      self.context.i64_type().into()],
-                    false
+                    &[
+                        self.context.ptr_type(AddressSpace::default()).into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
                 );
                 let str_val = str_type.const_named_struct(&[ptr.into(), len.into()]);
                 Ok(str_val.into())
@@ -2038,7 +2256,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             LiteralValue::ByteString(bytes) => {
                 // Create a global byte array constant and byte slice {ptr, len}
                 let array_type = self.context.i8_type().array_type(bytes.len() as u32);
-                let global = self.module.add_global(array_type, Some(AddressSpace::default()), "bytes");
+                let global =
+                    self.module
+                        .add_global(array_type, Some(AddressSpace::default()), "bytes");
                 global.set_initializer(&self.context.const_string(bytes, false));
                 global.set_constant(true);
 
@@ -2048,9 +2268,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                 // Create byte slice struct {ptr, len}
                 let slice_type = self.context.struct_type(
-                    &[self.context.ptr_type(AddressSpace::default()).into(),
-                      self.context.i64_type().into()],
-                    false
+                    &[
+                        self.context.ptr_type(AddressSpace::default()).into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
                 );
                 let slice_val = slice_type.const_named_struct(&[ptr.into(), len.into()]);
                 Ok(slice_val.into())
@@ -2143,19 +2365,39 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 BinOp::Ge => left_int.const_int_compare(inkwell::IntPredicate::SGE, right_int),
                 // These const operations were removed in LLVM 15+; compute in Rust
                 BinOp::Div | BinOp::Rem | BinOp::BitAnd | BinOp::BitOr | BinOp::Shr => {
-                    let lv = left_int.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
-                        "Left operand must be a constant in const context".to_string(), self.current_span(),
-                    )])?;
-                    let rv = right_int.get_sign_extended_constant().ok_or_else(|| vec![Diagnostic::error(
-                        "Right operand must be a constant in const context".to_string(), self.current_span(),
-                    )])?;
+                    let lv = left_int.get_sign_extended_constant().ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "Left operand must be a constant in const context".to_string(),
+                            self.current_span(),
+                        )]
+                    })?;
+                    let rv = right_int.get_sign_extended_constant().ok_or_else(|| {
+                        vec![Diagnostic::error(
+                            "Right operand must be a constant in const context".to_string(),
+                            self.current_span(),
+                        )]
+                    })?;
                     let result_val: i64 = match op {
-                        BinOp::Div => if rv != 0 { lv.wrapping_div(rv) } else {
-                            return Err(vec![Diagnostic::error("Division by zero in const context", self.current_span())]);
-                        },
-                        BinOp::Rem => if rv != 0 { lv.wrapping_rem(rv) } else {
-                            return Err(vec![Diagnostic::error("Remainder by zero in const context", self.current_span())]);
-                        },
+                        BinOp::Div => {
+                            if rv != 0 {
+                                lv.wrapping_div(rv)
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    "Division by zero in const context",
+                                    self.current_span(),
+                                )]);
+                            }
+                        }
+                        BinOp::Rem => {
+                            if rv != 0 {
+                                lv.wrapping_rem(rv)
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    "Remainder by zero in const context",
+                                    self.current_span(),
+                                )]);
+                            }
+                        }
                         BinOp::BitAnd => lv & rv,
                         BinOp::BitOr => lv | rv,
                         BinOp::Shr => lv.wrapping_shr(rv as u32),
@@ -2180,12 +2422,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             let right_float = right.into_float_value();
             let float_type = left_float.get_type();
 
-            let lv = left_float.get_constant().ok_or_else(|| vec![Diagnostic::error(
-                "Left float operand must be a constant in const context".to_string(), self.current_span(),
-            )])?.0;
-            let rv = right_float.get_constant().ok_or_else(|| vec![Diagnostic::error(
-                "Right float operand must be a constant in const context".to_string(), self.current_span(),
-            )])?.0;
+            let lv = left_float
+                .get_constant()
+                .ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Left float operand must be a constant in const context".to_string(),
+                        self.current_span(),
+                    )]
+                })?
+                .0;
+            let rv = right_float
+                .get_constant()
+                .ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Right float operand must be a constant in const context".to_string(),
+                        self.current_span(),
+                    )]
+                })?
+                .0;
 
             let result_val: f64 = match op {
                 BinOp::Add => lv + rv,
@@ -2194,7 +2448,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 BinOp::Div => lv / rv,
                 _ => {
                     return Err(vec![Diagnostic::error(
-                        format!("Float binary operator {:?} not supported in const context", op),
+                        format!(
+                            "Float binary operator {:?} not supported in const context",
+                            op
+                        ),
                         self.current_span(),
                     )]);
                 }
@@ -2223,13 +2480,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         use inkwell::module::Linkage;
 
         // Build parameter types
-        let param_types: Vec<_> = extern_fn.sig.inputs.iter()
+        let param_types: Vec<_> = extern_fn
+            .sig
+            .inputs
+            .iter()
             .map(|ty| self.lower_type(ty).into())
             .collect();
 
         // Build function type
         let fn_type = if extern_fn.sig.output.is_unit() {
-            self.context.void_type().fn_type(&param_types, extern_fn.is_variadic)
+            self.context
+                .void_type()
+                .fn_type(&param_types, extern_fn.is_variadic)
         } else {
             let ret_type = self.lower_type(&extern_fn.sig.output);
             ret_type.fn_type(&param_types, extern_fn.is_variadic)
@@ -2240,7 +2502,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let link_name = extern_fn.link_name.as_ref().unwrap_or(&name_owned);
 
         // Add the function with external linkage
-        let fn_value = self.module.add_function(link_name, fn_type, Some(Linkage::External));
+        let fn_value = self
+            .module
+            .add_function(link_name, fn_type, Some(Linkage::External));
 
         // Set calling convention based on ABI
         match extern_fn.abi.as_str() {
@@ -2268,22 +2532,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 use inkwell::attributes::AttributeLoc;
 
                 // Create and set wasm-import-name attribute (the function name in the WASM module)
-                let import_name_attr = self.context.create_string_attribute(
-                    "wasm-import-name",
-                    link_name,
-                );
+                let import_name_attr = self
+                    .context
+                    .create_string_attribute("wasm-import-name", link_name);
                 fn_value.add_attribute(AttributeLoc::Function, import_name_attr);
 
                 // Set wasm-import-module if provided (defaults to "env" if not specified)
                 let module_name = wasm_import_module.unwrap_or("env");
-                let import_module_attr = self.context.create_string_attribute(
-                    "wasm-import-module",
-                    module_name,
-                );
+                let import_module_attr = self
+                    .context
+                    .create_string_attribute("wasm-import-module", module_name);
                 fn_value.add_attribute(AttributeLoc::Function, import_module_attr);
 
                 // Also store in map for reference
-                self.wasm_imports.insert(link_name.to_string(), module_name.to_string());
+                self.wasm_imports
+                    .insert(link_name.to_string(), module_name.to_string());
             }
             _ => {
                 // Default to C calling convention
@@ -2309,7 +2572,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// This function is retained only for legacy tests. Production code uses
     /// `compile_definition_to_object()` which calls `compile_mir_body()`.
-    #[deprecated(since = "0.3.0", note = "Use compile_mir_body() for generation check emission")]
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use compile_mir_body() for generation check emission"
+    )]
     pub fn compile_crate(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
         // Build module-qualified paths for stable linker symbols
         self.def_paths = build_def_paths(hir_crate);
@@ -2335,34 +2601,37 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // Must normalize all fields together to ensure consistent TyVarId mapping
                     let field_types: Vec<Type> = match &struct_def.kind {
                         hir::StructKind::Record(fields) => {
-                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            let raw_types: Vec<Type> =
+                                fields.iter().map(|f| f.ty.clone()).collect();
                             normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Tuple(fields) => {
-                            let raw_types: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                            let raw_types: Vec<Type> =
+                                fields.iter().map(|f| f.ty.clone()).collect();
                             normalize_types_together(&raw_types)
                         }
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
                     if struct_def.is_packed || struct_def.align.is_some() {
-                        self.struct_layout_attrs.insert(*def_id, (struct_def.is_packed, struct_def.align));
+                        self.struct_layout_attrs
+                            .insert(*def_id, (struct_def.is_packed, struct_def.align));
                     }
                 }
                 hir::ItemKind::Enum(enum_def) => {
                     // For enums, we need to collect ALL field types across ALL variants
                     // to build a consistent TyVarId mapping
-                    let all_field_types: Vec<Type> = enum_def.variants.iter()
-                        .flat_map(|variant| {
-                            match &variant.fields {
-                                hir::StructKind::Record(fields) => {
-                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
-                                }
-                                hir::StructKind::Tuple(fields) => {
-                                    fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
-                                }
-                                hir::StructKind::Unit => Vec::new(),
+                    let all_field_types: Vec<Type> = enum_def
+                        .variants
+                        .iter()
+                        .flat_map(|variant| match &variant.fields {
+                            hir::StructKind::Record(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
                             }
+                            hir::StructKind::Tuple(fields) => {
+                                fields.iter().map(|f| f.ty.clone()).collect::<Vec<_>>()
+                            }
+                            hir::StructKind::Unit => Vec::new(),
                         })
                         .collect();
 
@@ -2370,21 +2639,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let tyvar_to_idx = build_tyvar_mapping(&all_field_types);
 
                     // Now normalize each variant's fields using the shared mapping
-                    let variants: Vec<Vec<Type>> = enum_def.variants.iter().map(|variant| {
-                        match &variant.fields {
-                            hir::StructKind::Record(fields) => {
-                                fields.iter()
-                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
-                                    .collect()
-                            }
-                            hir::StructKind::Tuple(fields) => {
-                                fields.iter()
-                                    .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
-                                    .collect()
-                            }
+                    let variants: Vec<Vec<Type>> = enum_def
+                        .variants
+                        .iter()
+                        .map(|variant| match &variant.fields {
+                            hir::StructKind::Record(fields) => fields
+                                .iter()
+                                .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                .collect(),
+                            hir::StructKind::Tuple(fields) => fields
+                                .iter()
+                                .map(|f| normalize_type_recursive(&f.ty, &tyvar_to_idx))
+                                .collect(),
                             hir::StructKind::Unit => Vec::new(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     self.enum_defs.insert(*def_id, variants);
                 }
                 hir::ItemKind::Effect { .. } => {
@@ -2426,7 +2695,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let field_types = normalize_types_together(&raw_types);
                 self.struct_defs.insert(*def_id, field_types);
 
-                match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
+                match self
+                    .effect_lowering
+                    .lower_handler_decl(item, Some(&hir_crate.bodies))
+                {
                     Ok(handler_info) => {
                         self.handler_defs.insert(*def_id, handler_info);
                         // Pre-create registry index global for PushHandler to reference
@@ -2495,9 +2767,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.register_handlers_with_runtime()?;
 
         // Drain any errors collected during type lowering (which uses &self).
-        self.errors.extend(
-            self.type_lowering_errors.borrow_mut().drain(..)
-        );
+        self.errors
+            .extend(self.type_lowering_errors.borrow_mut().drain(..));
 
         if self.errors.is_empty() {
             Ok(())
@@ -2535,14 +2806,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Allocate space for parameters
         for (i, param) in body.params().enumerate() {
             let llvm_type = self.lower_type(&param.ty);
-            let alloca = self.builder.build_alloca(llvm_type, &param.name.clone().unwrap_or_else(|| format!("arg{}", i)))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            let alloca = self
+                .builder
+                .build_alloca(
+                    llvm_type,
+                    &param.name.clone().unwrap_or_else(|| format!("arg{}", i)),
+                )
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             // Store parameter value
-            let param_value = fn_value.get_nth_param(i as u32)
-                .ok_or_else(|| vec![Diagnostic::error("Parameter not found", self.current_span())])?;
-            self.builder.build_store(alloca, param_value)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            let param_value = fn_value.get_nth_param(i as u32).ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Parameter not found",
+                    self.current_span(),
+                )]
+            })?;
+            self.builder.build_store(alloca, param_value).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
             self.locals.insert(param.id, alloca);
             self.local_types.insert(param.id, llvm_type);
@@ -2559,23 +2848,43 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if is_main {
                 // main must return i32 for C runtime - return 0 on success
                 let zero = self.context.i32_type().const_int(0, false);
-                self.builder.build_return(Some(&zero))
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                self.builder.build_return(Some(&zero)).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             } else {
-                self.builder.build_return(None)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                self.builder.build_return(None).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
             }
         } else if let Some(value) = result {
-            self.builder.build_return(Some(&value))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            self.builder.build_return(Some(&value)).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         } else if is_main {
             // main must return i32 for C runtime - return 0 on success
             let zero = self.context.i32_type().const_int(0, false);
-            self.builder.build_return(Some(&zero))
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            self.builder.build_return(Some(&zero)).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         } else {
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            self.builder.build_return(None).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
         }
 
         self.current_fn = None;
@@ -2587,11 +2896,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// This is a safe wrapper around `builder.get_insert_block()` that
     /// returns a proper error instead of panicking if no block is active.
     pub(super) fn get_current_block(&self) -> Result<BasicBlock<'ctx>, Vec<Diagnostic>> {
-        self.builder.get_insert_block()
-            .ok_or_else(|| vec![Diagnostic::error(
+        self.builder.get_insert_block().ok_or_else(|| {
+            vec![Diagnostic::error(
                 "Internal error: no active basic block".to_string(),
                 self.current_span(),
-            )])
+            )]
+        })
     }
 
     /// Declare a function (without body).
@@ -2619,7 +2929,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Track main's DefId for special return handling
             self.main_fn_def_id = Some(def_id);
             // main must return i32 for C runtime compatibility, even if Blood type is unit
-            let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = fn_def.sig.inputs.iter()
+            let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = fn_def
+                .sig
+                .inputs
+                .iter()
                 .map(|p| self.lower_type(p).into())
                 .collect();
             let fn_type = self.context.i32_type().fn_type(&param_types, false);
@@ -2665,15 +2978,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// For example: `add(i32, i32)` in module `mod_a` becomes `blood$mod_a$add$i32$i32`
     fn mangle_function_name(&self, def_id: DefId, name: &str, sig: &hir::FnSig) -> String {
-        let qualified_path = self.def_paths.get(&def_id)
+        let qualified_path = self
+            .def_paths
+            .get(&def_id)
             .map(|p| p.replace("::", "$"))
             .unwrap_or_else(|| name.to_string());
         if sig.inputs.is_empty() {
             format!("blood${}", qualified_path)
         } else {
-            let param_mangles: Vec<String> = sig.inputs.iter()
-                .map(|ty| self.mangle_type(ty))
-                .collect();
+            let param_mangles: Vec<String> =
+                sig.inputs.iter().map(|ty| self.mangle_type(ty)).collect();
             format!("blood${}${}", qualified_path, param_mangles.join("$"))
         }
     }
@@ -2738,9 +3052,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 PrimitiveTy::Never => "never".to_string(),
             },
             TypeKind::Tuple(elems) => {
-                let elem_mangles: Vec<String> = elems.iter()
-                    .map(|ty| self.mangle_type(ty))
-                    .collect();
+                let elem_mangles: Vec<String> =
+                    elems.iter().map(|ty| self.mangle_type(ty)).collect();
                 format!("T{}", elem_mangles.join("_"))
             }
             TypeKind::Array { element, size } => {
@@ -2764,22 +3077,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
             TypeKind::Adt { def_id, args } => {
-                let qualified_name = self.def_paths.get(def_id)
+                let qualified_name = self
+                    .def_paths
+                    .get(def_id)
                     .cloned()
                     .unwrap_or_else(|| format!("D{}", def_id.index()));
                 if args.is_empty() {
                     format!("D_{}", qualified_name)
                 } else {
-                    let arg_mangles: Vec<String> = args.iter()
-                        .map(|ty| self.mangle_type(ty))
-                        .collect();
+                    let arg_mangles: Vec<String> =
+                        args.iter().map(|ty| self.mangle_type(ty)).collect();
                     format!("D_{}_{}", qualified_name, arg_mangles.join("_"))
                 }
             }
             TypeKind::Fn { params, ret, .. } => {
-                let param_mangles: Vec<String> = params.iter()
-                    .map(|ty| self.mangle_type(ty))
-                    .collect();
+                let param_mangles: Vec<String> =
+                    params.iter().map(|ty| self.mangle_type(ty)).collect();
                 format!("F{}_{}", param_mangles.join("_"), self.mangle_type(ret))
             }
             TypeKind::Never => "never".to_string(),
@@ -2815,11 +3128,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Build parameter types: first is always i8* (env), then the actual params
         let params: Vec<_> = mir_body.params().collect::<Vec<_>>();
-        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::with_capacity(params.len());
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> =
+            Vec::with_capacity(params.len());
 
         // First param is always the environment pointer (i8*), skip the MIR's __env type
         // because we use a uniform i8* representation regardless of actual captures
-        let first_is_env = params.first()
+        let first_is_env = params
+            .first()
             .map(|p| p.name.as_deref() == Some("__env"))
             .unwrap_or(false);
 
@@ -2868,7 +3183,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         concrete_params: &[Type],
         concrete_ret: &Type,
     ) -> Option<inkwell::values::FunctionValue<'ctx>> {
-        self.monomorphize_function_with_const_args(generic_def_id, concrete_params, concrete_ret, &[])
+        self.monomorphize_function_with_const_args(
+            generic_def_id,
+            concrete_params,
+            concrete_ret,
+            &[],
+        )
     }
 
     /// Monomorphize a function with explicit const generic arguments.
@@ -2892,7 +3212,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Second, try trait default methods
-        if let Some((trait_id, sig, _body)) = self.trait_default_fn_defs.get(&generic_def_id).cloned() {
+        if let Some((trait_id, sig, _body)) =
+            self.trait_default_fn_defs.get(&generic_def_id).cloned()
+        {
             return self.monomorphize_trait_default_method(
                 generic_def_id,
                 trait_id,
@@ -2931,7 +3253,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Build type args list from inferred substitution (in order of fn_def.sig.generics)
-        let type_args: Vec<Type> = fn_def.sig.generics.iter()
+        let type_args: Vec<Type> = fn_def
+            .sig
+            .generics
+            .iter()
             .filter_map(|tyvar_id| infer_result.type_subst.get(tyvar_id).cloned())
             .collect();
 
@@ -2941,7 +3266,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Build const args for cache key
-        let mut const_args_sorted: Vec<_> = infer_result.const_subst.iter()
+        let mut const_args_sorted: Vec<_> = infer_result
+            .const_subst
+            .iter()
             .map(|(k, v)| (*k, v.clone()))
             .collect();
         const_args_sorted.sort_by_key(|(k, _)| k.0);
@@ -2979,10 +3306,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Use only generic_def_id and concrete types (not mono_def_id) so the name
         // is stable across compilation units. Combined with LinkOnceODR linkage,
         // this allows the linker to merge identical instantiations.
-        let param_mangles: Vec<String> = concrete_params.iter()
+        let param_mangles: Vec<String> = concrete_params
+            .iter()
             .map(|ty| self.mangle_type(ty))
             .collect();
-        let generic_fn_path = self.def_paths.get(&generic_def_id)
+        let generic_fn_path = self
+            .def_paths
+            .get(&generic_def_id)
             .map(|p| p.replace("::", "$"))
             .unwrap_or_else(|| format!("{}", generic_def_id.index()));
         let llvm_name = if param_mangles.is_empty() {
@@ -2992,7 +3322,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Build LLVM function type from concrete types
-        let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = concrete_params.iter()
+        let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = concrete_params
+            .iter()
             .map(|ty| self.lower_type(ty).into())
             .collect();
 
@@ -3007,7 +3338,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // This allows the linker to merge identical instantiations when
         // multiple closures/functions call the same generic with the same types.
         use inkwell::module::Linkage;
-        let fn_value = self.module.add_function(&llvm_name, fn_type, Some(Linkage::LinkOnceODR));
+        let fn_value = self
+            .module
+            .add_function(&llvm_name, fn_type, Some(Linkage::LinkOnceODR));
         self.functions.insert(mono_def_id, fn_value);
 
         // Cache the monomorphization
@@ -3034,12 +3367,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Mark persist() call destinations as GlobalEscape (Persistent tier)
         for bb in &mono_mir.basic_blocks {
             if let Some(ref term) = bb.terminator {
-                if let crate::mir::TerminatorKind::Call { ref func, ref destination, .. } = term.kind {
+                if let crate::mir::TerminatorKind::Call {
+                    ref func,
+                    ref destination,
+                    ..
+                } = term.kind
+                {
                     if let crate::mir::Operand::Constant(ref constant) = func {
                         if let crate::mir::ConstantKind::FnDef(def_id) = constant.kind {
                             if let Some(name) = self.builtin_fns.get(&def_id) {
                                 if name == "persist" {
-                                    if let crate::mir::types::PlaceBase::Local(local_id) = destination.base {
+                                    if let crate::mir::types::PlaceBase::Local(local_id) =
+                                        destination.base
+                                    {
                                         escape_results.force_global_escape(local_id);
                                     }
                                 }
@@ -3062,7 +3402,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if result.is_ok() {
             // Take the pending closure MIRs to avoid borrowing issues
             let pending_closures: Vec<(DefId, MirBody)> =
-                std::mem::take(&mut self.mono_closure_mirs).into_iter().collect();
+                std::mem::take(&mut self.mono_closure_mirs)
+                    .into_iter()
+                    .collect();
 
             for (closure_def_id, closure_mir) in pending_closures {
                 // Clear state for each closure compilation
@@ -3079,7 +3421,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let closure_escape = analyzer.analyze(&closure_mir);
 
                 // Compile the closure
-                if let Err(e) = self.compile_mir_body(closure_def_id, &closure_mir, Some(&closure_escape)) {
+                if let Err(e) =
+                    self.compile_mir_body(closure_def_id, &closure_mir, Some(&closure_escape))
+                {
                     result = Err(e);
                     break;
                 }
@@ -3170,16 +3514,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         remap_closure_def_ids(&mut mono_mir, &closure_remap);
 
         // Build mangled name for monomorphized function
-        let param_mangles: Vec<String> = concrete_params.iter()
+        let param_mangles: Vec<String> = concrete_params
+            .iter()
             .map(|ty| self.mangle_type(ty))
             .collect();
-        let method_path = self.def_paths.get(&method_def_id)
+        let method_path = self
+            .def_paths
+            .get(&method_def_id)
             .map(|p| p.replace("::", "$"))
             .unwrap_or_else(|| format!("trait_default_{}", method_def_id.index()));
         let llvm_name = format!("blood_mono${}${}", method_path, param_mangles.join("$"));
 
         // Build LLVM function type from concrete types
-        let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = concrete_params.iter()
+        let param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = concrete_params
+            .iter()
             .map(|ty| self.lower_type(ty).into())
             .collect();
 
@@ -3192,7 +3540,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Declare the monomorphized function with LinkOnceODR linkage
         use inkwell::module::Linkage;
-        let fn_value = self.module.add_function(&llvm_name, fn_type, Some(Linkage::LinkOnceODR));
+        let fn_value = self
+            .module
+            .add_function(&llvm_name, fn_type, Some(Linkage::LinkOnceODR));
         self.functions.insert(mono_def_id, fn_value);
 
         // Cache the monomorphization
@@ -3217,12 +3567,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Mark persist() call destinations as GlobalEscape (Persistent tier)
         for bb in &mono_mir.basic_blocks {
             if let Some(ref term) = bb.terminator {
-                if let crate::mir::TerminatorKind::Call { ref func, ref destination, .. } = term.kind {
+                if let crate::mir::TerminatorKind::Call {
+                    ref func,
+                    ref destination,
+                    ..
+                } = term.kind
+                {
                     if let crate::mir::Operand::Constant(ref constant) = func {
                         if let crate::mir::ConstantKind::FnDef(def_id) = constant.kind {
                             if let Some(name) = self.builtin_fns.get(&def_id) {
                                 if name == "persist" {
-                                    if let crate::mir::types::PlaceBase::Local(local_id) = destination.base {
+                                    if let crate::mir::types::PlaceBase::Local(local_id) =
+                                        destination.base
+                                    {
                                         escape_results.force_global_escape(local_id);
                                     }
                                 }
@@ -3243,7 +3600,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Compile any monomorphized closures
         if result.is_ok() {
             let pending_closures: Vec<(DefId, MirBody)> =
-                std::mem::take(&mut self.mono_closure_mirs).into_iter().collect();
+                std::mem::take(&mut self.mono_closure_mirs)
+                    .into_iter()
+                    .collect();
 
             for (closure_def_id, closure_mir) in pending_closures {
                 self.locals.clear();
@@ -3257,7 +3616,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let mut analyzer = EscapeAnalyzer::new();
                 let closure_escape = analyzer.analyze(&closure_mir);
 
-                if let Err(e) = self.compile_mir_body(closure_def_id, &closure_mir, Some(&closure_escape)) {
+                if let Err(e) =
+                    self.compile_mir_body(closure_def_id, &closure_mir, Some(&closure_escape))
+                {
                     result = Err(e);
                     break;
                 }
@@ -3339,7 +3700,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             self.declare_closure_from_mir(new_closure_id, &mono_closure_mir);
 
             // Store the monomorphized closure MIR for later compilation
-            self.mono_closure_mirs.insert(new_closure_id, mono_closure_mir);
+            self.mono_closure_mirs
+                .insert(new_closure_id, mono_closure_mir);
 
             // Record the remapping
             remap.insert(old_closure_id, new_closure_id);
@@ -3359,10 +3721,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// 3. Without a wrapper, the first argument would be mistaken for env_ptr
     ///
     /// The wrapper is cached to avoid creating duplicates.
-    pub fn get_or_create_fn_ptr_wrapper(
-        &mut self,
-        def_id: DefId,
-    ) -> Option<FunctionValue<'ctx>> {
+    pub fn get_or_create_fn_ptr_wrapper(&mut self, def_id: DefId) -> Option<FunctionValue<'ctx>> {
         // Check cache first
         if let Some(&wrapper) = self.fn_ptr_wrappers.get(&def_id) {
             return Some(wrapper);
@@ -3390,7 +3749,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let wrapper_fn_type = if let Some(ret_type) = original_fn_type.get_return_type() {
             ret_type.fn_type(&wrapper_param_types, false)
         } else {
-            self.context.void_type().fn_type(&wrapper_param_types, false)
+            self.context
+                .void_type()
+                .fn_type(&wrapper_param_types, false)
         };
 
         // Create the wrapper function with a unique name.
@@ -3399,7 +3760,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let original_name = original_fn.get_name().to_str().unwrap_or("unknown");
         let wrapper_name = format!("{}$fnptr", original_name);
         use inkwell::module::Linkage;
-        let wrapper_fn = self.module.add_function(&wrapper_name, wrapper_fn_type, Some(Linkage::LinkOnceODR));
+        let wrapper_fn =
+            self.module
+                .add_function(&wrapper_name, wrapper_fn_type, Some(Linkage::LinkOnceODR));
 
         // Save current builder position (we're in the middle of compiling another function)
         let saved_insert_block = self.builder.get_insert_block();
@@ -3414,13 +3777,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         for i in 1..=original_param_count {
             // SAFETY: wrapper_fn has original_param_count+1 params (env_ptr + original params)
             // so params 1..=original_param_count are valid indices
-            let param = wrapper_fn.get_nth_param(i)
+            let param = wrapper_fn
+                .get_nth_param(i)
                 .expect("BUG: wrapper function should have env_ptr + original params");
             args.push(param.into());
         }
 
         // Call the original function
-        let call_result = self.builder.build_call(original_fn, &args, "forward")
+        let call_result = self
+            .builder
+            .build_call(original_fn, &args, "forward")
             .ok()?;
 
         // Return the result
@@ -3456,45 +3822,52 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("print_int", print_int_type, None);
 
         // println_int(i32) -> void
-        self.module.add_function("println_int", print_int_type, None);
+        self.module
+            .add_function("println_int", print_int_type, None);
 
         // print_i64(i64) -> void
         let print_i64_type = void_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("print_i64", print_i64_type, None);
 
         // println_i64(i64) -> void
-        self.module.add_function("println_i64", print_i64_type, None);
+        self.module
+            .add_function("println_i64", print_i64_type, None);
 
         // debug_vec_index(i64, i64) -> void - for debugging VecIndex GEP
         let debug_vec_index_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("debug_vec_index", debug_vec_index_type, None);
+        self.module
+            .add_function("debug_vec_index", debug_vec_index_type, None);
 
         // debug_vec_ptrs(*i8, *i8) -> void - for debugging VecIndex pointers
-        let debug_vec_ptrs_type = void_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("debug_vec_ptrs", debug_vec_ptrs_type, None);
+        let debug_vec_ptrs_type =
+            void_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
+        self.module
+            .add_function("debug_vec_ptrs", debug_vec_ptrs_type, None);
 
         // debug_read_enum_at(*i8) -> void - read and print enum at pointer
         let debug_read_enum_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("debug_read_enum_at", debug_read_enum_type, None);
+        self.module
+            .add_function("debug_read_enum_at", debug_read_enum_type, None);
 
         // str slice type: { ptr: *i8, len: i64 }
-        let str_slice_type = self.context.struct_type(
-            &[i8_ptr_type.into(), i64_type.into()],
-            false
-        );
+        let str_slice_type = self
+            .context
+            .struct_type(&[i8_ptr_type.into(), i64_type.into()], false);
 
         // print_str({*i8, i64}) -> void
         let print_str_type = void_type.fn_type(&[str_slice_type.into()], false);
         self.module.add_function("print_str", print_str_type, None);
 
         // println_str({*i8, i64}) -> void
-        self.module.add_function("println_str", print_str_type, None);
+        self.module
+            .add_function("println_str", print_str_type, None);
 
         // eprint_str({*i8, i64}) -> void - print to stderr
         self.module.add_function("eprint_str", print_str_type, None);
 
         // eprintln_str({*i8, i64}) -> void - print to stderr with newline
-        self.module.add_function("eprintln_str", print_str_type, None);
+        self.module
+            .add_function("eprintln_str", print_str_type, None);
 
         // str_len({*i8, i64}) -> i64 - get string length
         let str_len_type = i64_type.fn_type(&[str_slice_type.into()], false);
@@ -3503,7 +3876,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // str_len_usize({*i8, i64}*) -> i64 - get string length as usize (takes pointer for method call semantics)
         let str_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         let str_len_usize_type = i64_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("str_len_usize", str_len_usize_type, None);
+        self.module
+            .add_function("str_len_usize", str_len_usize_type, None);
 
         // str_eq({*i8, i64}, {*i8, i64}) -> i1 - compare strings
         let bool_type = self.context.bool_type();
@@ -3511,186 +3885,248 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("str_eq", str_eq_type, None);
 
         // blood_str_concat({*i8, i64}, {*i8, i64}) -> {*i8, i64} - concatenate strings
-        let str_concat_type = str_slice_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
-        self.module.add_function("blood_str_concat", str_concat_type, None);
+        let str_concat_type =
+            str_slice_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
+        self.module
+            .add_function("blood_str_concat", str_concat_type, None);
 
         // Option<char> type: { i32 tag, i32 value }
         // tag=0 is None, tag=1 is Some(char)
-        let option_char_type = self.context.struct_type(&[i32_type.into(), i32_type.into()], false);
+        let option_char_type = self
+            .context
+            .struct_type(&[i32_type.into(), i32_type.into()], false);
 
         // str_char_at({*i8, i64}*, i64) -> {i32, i32} - get char at byte index (takes pointer for method call semantics)
-        let str_char_at_type = option_char_type.fn_type(&[str_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("str_char_at", str_char_at_type, None);
+        let str_char_at_type =
+            option_char_type.fn_type(&[str_ptr_type.into(), i64_type.into()], false);
+        self.module
+            .add_function("str_char_at", str_char_at_type, None);
 
         // str_char_at_index({*i8, i64}*, i64) -> {i32, i32} - get char at character index
-        self.module.add_function("str_char_at_index", str_char_at_type, None);
+        self.module
+            .add_function("str_char_at_index", str_char_at_type, None);
 
         // string_char_at({*i8, i64, i64}*, i64) -> {i32, i32} - get char at byte index from String
         // String layout starts the same as BloodStr, so we can use str_ptr_type for the pointer
-        self.module.add_function("string_char_at", str_char_at_type, None);
+        self.module
+            .add_function("string_char_at", str_char_at_type, None);
 
         // str_as_bytes({*i8, i64}*) -> {*i8, i64} - convert str to byte slice (essentially identity)
         let str_as_bytes_type = str_slice_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("str_as_bytes", str_as_bytes_type, None);
+        self.module
+            .add_function("str_as_bytes", str_as_bytes_type, None);
 
         // string_as_bytes({*i8, i64, i64}*) -> {*i8, i64} - convert String to byte slice
         // String layout starts the same as BloodStr, so we can use str_ptr_type for the pointer
-        self.module.add_function("string_as_bytes", str_as_bytes_type, None);
+        self.module
+            .add_function("string_as_bytes", str_as_bytes_type, None);
 
         // string_new(out: *void) -> void - create an empty String at the output location
         let string_new_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("string_new", string_new_type, None);
+        self.module
+            .add_function("string_new", string_new_type, None);
 
         // string_as_str(s: *void) -> {*i8, i64} - get str slice from String
         let string_as_str_type = str_slice_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("string_as_str", string_as_str_type, None);
+        self.module
+            .add_function("string_as_str", string_as_str_type, None);
 
         // string_len(s: *void) -> i64 - get byte length of String
         let string_len_type = i64_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("string_len", string_len_type, None);
+        self.module
+            .add_function("string_len", string_len_type, None);
 
         // string_is_empty(s: *void) -> i32 - check if String is empty
         let string_is_empty_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("string_is_empty", string_is_empty_type, None);
+        self.module
+            .add_function("string_is_empty", string_is_empty_type, None);
 
         // string_push(s: *void, ch: i32) -> void - push a character to String
         let string_push_type = void_type.fn_type(&[i8_ptr_type.into(), i32_type.into()], false);
-        self.module.add_function("string_push", string_push_type, None);
+        self.module
+            .add_function("string_push", string_push_type, None);
 
         // string_push_str(s: *void, other: {*i8, i64}*) -> void - push str to String
-        let string_push_str_type = void_type.fn_type(&[i8_ptr_type.into(), str_ptr_type.into()], false);
-        self.module.add_function("string_push_str", string_push_str_type, None);
+        let string_push_str_type =
+            void_type.fn_type(&[i8_ptr_type.into(), str_ptr_type.into()], false);
+        self.module
+            .add_function("string_push_str", string_push_str_type, None);
 
         // string_clear(s: *void) -> void - clear String contents
         let string_clear_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("string_clear", string_clear_type, None);
+        self.module
+            .add_function("string_clear", string_clear_type, None);
 
         // str_to_string(s: *{*i8, i64}, out: *void) -> void - convert str to owned String
-        let str_to_string_type = void_type.fn_type(&[str_ptr_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("str_to_string", str_to_string_type, None);
+        let str_to_string_type =
+            void_type.fn_type(&[str_ptr_type.into(), i8_ptr_type.into()], false);
+        self.module
+            .add_function("str_to_string", str_to_string_type, None);
 
         // str_len_chars({*i8, i64}*) -> i64 - count UTF-8 characters (not bytes)
         let str_len_chars_type = i64_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("str_len_chars", str_len_chars_type, None);
+        self.module
+            .add_function("str_len_chars", str_len_chars_type, None);
 
         // string_len_chars({*i8, i64, i64}*) -> i64 - count UTF-8 characters (not bytes)
         // String layout starts the same as BloodStr, so we can use str_ptr_type for the pointer
-        self.module.add_function("string_len_chars", str_len_chars_type, None);
+        self.module
+            .add_function("string_len_chars", str_len_chars_type, None);
 
         // string_contains(s: {*i8, i64}*, pattern: {*i8, i64}*) -> i32
-        let string_contains_type = i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
-        self.module.add_function("string_contains", string_contains_type, None);
+        let string_contains_type =
+            i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+        self.module
+            .add_function("string_contains", string_contains_type, None);
 
         // string_starts_with(s: {*i8, i64}*, prefix: {*i8, i64}*) -> i32
-        let string_starts_with_type = i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
-        self.module.add_function("string_starts_with", string_starts_with_type, None);
+        let string_starts_with_type =
+            i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+        self.module
+            .add_function("string_starts_with", string_starts_with_type, None);
 
         // string_ends_with(s: {*i8, i64}*, suffix: {*i8, i64}*) -> i32
-        let string_ends_with_type = i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
-        self.module.add_function("string_ends_with", string_ends_with_type, None);
+        let string_ends_with_type =
+            i32_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+        self.module
+            .add_function("string_ends_with", string_ends_with_type, None);
 
         // string_find(s: {*i8, i64}*, pattern: {*i8, i64}*, out: *void) -> void
-        let string_find_type = void_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("string_find", string_find_type, None);
+        let string_find_type = void_type.fn_type(
+            &[str_ptr_type.into(), str_ptr_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("string_find", string_find_type, None);
 
         // string_rfind(s: {*i8, i64}*, pattern: {*i8, i64}*, out: *void) -> void
-        let string_rfind_type = void_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("string_rfind", string_rfind_type, None);
+        let string_rfind_type = void_type.fn_type(
+            &[str_ptr_type.into(), str_ptr_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("string_rfind", string_rfind_type, None);
 
         // string_trim(s: {*i8, i64}*) -> {*i8, i64}
         let string_trim_type = str_slice_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("string_trim", string_trim_type, None);
+        self.module
+            .add_function("string_trim", string_trim_type, None);
 
         // string_trim_start(s: {*i8, i64}*) -> {*i8, i64}
         let string_trim_start_type = str_slice_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("string_trim_start", string_trim_start_type, None);
+        self.module
+            .add_function("string_trim_start", string_trim_start_type, None);
 
         // string_trim_end(s: {*i8, i64}*) -> {*i8, i64}
         let string_trim_end_type = str_slice_type.fn_type(&[str_ptr_type.into()], false);
-        self.module.add_function("string_trim_end", string_trim_end_type, None);
+        self.module
+            .add_function("string_trim_end", string_trim_end_type, None);
 
         // string_substring(s: *void, start: i64, end: i64, out: *void) -> void
         // Extracts a substring from byte indices [start, end) and writes to output String
         let string_substring_type = void_type.fn_type(
-            &[i8_ptr_type.into(), i64_type.into(), i64_type.into(), i8_ptr_type.into()],
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
             false,
         );
-        self.module.add_function("string_substring", string_substring_type, None);
+        self.module
+            .add_function("string_substring", string_substring_type, None);
 
         // int_to_string(i32) -> {*i8, i64} - convert integer to string
         let int_to_string_type = str_slice_type.fn_type(&[i32_type.into()], false);
-        self.module.add_function("int_to_string", int_to_string_type, None);
+        self.module
+            .add_function("int_to_string", int_to_string_type, None);
 
         // bool_to_string(i1) -> {*i8, i64} - convert boolean to string
         let bool_type = self.context.bool_type();
         let bool_to_string_type = str_slice_type.fn_type(&[bool_type.into()], false);
-        self.module.add_function("bool_to_string", bool_to_string_type, None);
+        self.module
+            .add_function("bool_to_string", bool_to_string_type, None);
 
         // i64_to_string(i64) -> {*i8, i64} - convert 64-bit integer to string
         let i64_to_string_type = str_slice_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("i64_to_string", i64_to_string_type, None);
+        self.module
+            .add_function("i64_to_string", i64_to_string_type, None);
 
         // u64_to_string(u64) -> {*i8, i64} - convert unsigned 64-bit integer to string
         let u64_type = self.context.i64_type(); // u64 has same LLVM type as i64
         let u64_to_string_type = str_slice_type.fn_type(&[u64_type.into()], false);
-        self.module.add_function("u64_to_string", u64_to_string_type, None);
+        self.module
+            .add_function("u64_to_string", u64_to_string_type, None);
 
         // char_to_string(i32) -> {*i8, i64} - convert character to string (char passed as u32/i32)
         let char_to_string_type = str_slice_type.fn_type(&[i32_type.into()], false);
-        self.module.add_function("char_to_string", char_to_string_type, None);
+        self.module
+            .add_function("char_to_string", char_to_string_type, None);
 
         // f32_to_string(f32) -> {*i8, i64} - convert f32 to string
         let f32_type = self.context.f32_type();
         let f32_to_string_type = str_slice_type.fn_type(&[f32_type.into()], false);
-        self.module.add_function("f32_to_string", f32_to_string_type, None);
+        self.module
+            .add_function("f32_to_string", f32_to_string_type, None);
 
         // f64_to_string(f64) -> {*i8, i64} - convert f64 to string
         let f64_type_def = self.context.f64_type();
         let f64_to_string_type = str_slice_type.fn_type(&[f64_type_def.into()], false);
-        self.module.add_function("f64_to_string", f64_to_string_type, None);
+        self.module
+            .add_function("f64_to_string", f64_to_string_type, None);
 
         // i8_to_string(i8) -> {*i8, i64} - convert i8 to string
         let i8_type = self.context.i8_type();
         let i8_to_string_type = str_slice_type.fn_type(&[i8_type.into()], false);
-        self.module.add_function("i8_to_string", i8_to_string_type, None);
+        self.module
+            .add_function("i8_to_string", i8_to_string_type, None);
 
         // i16_to_string(i16) -> {*i8, i64} - convert i16 to string
         let i16_type = self.context.i16_type();
         let i16_to_string_type = str_slice_type.fn_type(&[i16_type.into()], false);
-        self.module.add_function("i16_to_string", i16_to_string_type, None);
+        self.module
+            .add_function("i16_to_string", i16_to_string_type, None);
 
         // i128_to_string(i128) -> {*i8, i64} - convert i128 to string
         let i128_type = self.context.i128_type();
         let i128_to_string_type = str_slice_type.fn_type(&[i128_type.into()], false);
-        self.module.add_function("i128_to_string", i128_to_string_type, None);
+        self.module
+            .add_function("i128_to_string", i128_to_string_type, None);
 
         // u8_to_string(u8) -> {*i8, i64} - convert u8 to string
         let u8_to_string_type = str_slice_type.fn_type(&[i8_type.into()], false); // u8 has same LLVM type as i8
-        self.module.add_function("u8_to_string", u8_to_string_type, None);
+        self.module
+            .add_function("u8_to_string", u8_to_string_type, None);
 
         // u16_to_string(u16) -> {*i8, i64} - convert u16 to string
         let u16_to_string_type = str_slice_type.fn_type(&[i16_type.into()], false); // u16 has same LLVM type as i16
-        self.module.add_function("u16_to_string", u16_to_string_type, None);
+        self.module
+            .add_function("u16_to_string", u16_to_string_type, None);
 
         // u32_to_string(u32) -> {*i8, i64} - convert u32 to string
         let u32_to_string_type = str_slice_type.fn_type(&[i32_type.into()], false); // u32 has same LLVM type as i32
-        self.module.add_function("u32_to_string", u32_to_string_type, None);
+        self.module
+            .add_function("u32_to_string", u32_to_string_type, None);
 
         // u128_to_string(u128) -> {*i8, i64} - convert u128 to string
         let u128_to_string_type = str_slice_type.fn_type(&[i128_type.into()], false); // u128 has same LLVM type as i128
-        self.module.add_function("u128_to_string", u128_to_string_type, None);
+        self.module
+            .add_function("u128_to_string", u128_to_string_type, None);
 
         // i32_to_i64(i32) -> i64 - widen i32 to i64
         let i32_to_i64_type = i64_type.fn_type(&[i32_type.into()], false);
-        self.module.add_function("i32_to_i64", i32_to_i64_type, None);
+        self.module
+            .add_function("i32_to_i64", i32_to_i64_type, None);
 
         // i64_to_i32(i64) -> i32 - truncate i64 to i32
         let i64_to_i32_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("i64_to_i32", i64_to_i32_type, None);
+        self.module
+            .add_function("i64_to_i32", i64_to_i32_type, None);
 
         // char_from_u32(u32) -> u32 (char as u32) - convert code point to char
         let char_from_u32_type = i32_type.fn_type(&[i32_type.into()], false);
-        self.module.add_function("char_from_u32", char_from_u32_type, None);
+        self.module
+            .add_function("char_from_u32", char_from_u32_type, None);
 
         // parse_f64(str) -> f64 - parse string as f64, returns 0.0 on failure
         let f64_ty = self.context.f64_type();
@@ -3698,8 +4134,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("parse_f64", parse_f64_type, None);
 
         // parse_i64_radix(str, u32) -> i64 - parse string as i64 with radix, returns 0 on failure
-        let parse_i64_radix_type = i64_type.fn_type(&[str_slice_type.into(), i32_type.into()], false);
-        self.module.add_function("parse_i64_radix", parse_i64_radix_type, None);
+        let parse_i64_radix_type =
+            i64_type.fn_type(&[str_slice_type.into(), i32_type.into()], false);
+        self.module
+            .add_function("parse_i64_radix", parse_i64_radix_type, None);
 
         // read_line() -> {*i8, i64} - read a line from stdin
         let read_line_type = str_slice_type.fn_type(&[], false);
@@ -3720,50 +4158,66 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_assert_eq_int(i32, i32) -> void - assert two ints are equal
         let assert_eq_int_type = void_type.fn_type(&[i32_type.into(), i32_type.into()], false);
-        self.module.add_function("blood_assert_eq_int", assert_eq_int_type, None);
+        self.module
+            .add_function("blood_assert_eq_int", assert_eq_int_type, None);
 
         // blood_assert_eq_bool(i1, i1) -> void - assert two bools are equal
         let bool_type = self.context.bool_type();
         let assert_eq_bool_type = void_type.fn_type(&[bool_type.into(), bool_type.into()], false);
-        self.module.add_function("blood_assert_eq_bool", assert_eq_bool_type, None);
+        self.module
+            .add_function("blood_assert_eq_bool", assert_eq_bool_type, None);
 
         // blood_assert_eq_i64(i64, i64) -> void
         let assert_eq_i64_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_assert_eq_i64", assert_eq_i64_type, None);
+        self.module
+            .add_function("blood_assert_eq_i64", assert_eq_i64_type, None);
 
         // blood_assert_eq_u32(i32, i32) -> void (u32 is i32 at LLVM level)
-        self.module.add_function("blood_assert_eq_u32", assert_eq_int_type, None);
+        self.module
+            .add_function("blood_assert_eq_u32", assert_eq_int_type, None);
 
         // blood_assert_eq_u64(i64, i64) -> void
-        self.module.add_function("blood_assert_eq_u64", assert_eq_i64_type, None);
+        self.module
+            .add_function("blood_assert_eq_u64", assert_eq_i64_type, None);
 
         // blood_assert_eq_usize(i64, i64) -> void (usize is i64 on 64-bit)
-        self.module.add_function("blood_assert_eq_usize", assert_eq_i64_type, None);
+        self.module
+            .add_function("blood_assert_eq_usize", assert_eq_i64_type, None);
 
         // blood_assert_eq_str({*i8, i64}, {*i8, i64}) -> void
-        let str_slice_type_for_assert = self.context.struct_type(
-            &[i8_ptr_type.into(), i64_type.into()],
-            false
+        let str_slice_type_for_assert = self
+            .context
+            .struct_type(&[i8_ptr_type.into(), i64_type.into()], false);
+        let assert_eq_str_type = void_type.fn_type(
+            &[
+                str_slice_type_for_assert.into(),
+                str_slice_type_for_assert.into(),
+            ],
+            false,
         );
-        let assert_eq_str_type = void_type.fn_type(&[str_slice_type_for_assert.into(), str_slice_type_for_assert.into()], false);
-        self.module.add_function("blood_assert_eq_str", assert_eq_str_type, None);
+        self.module
+            .add_function("blood_assert_eq_str", assert_eq_str_type, None);
 
         // blood_assert_ne_int(i32, i32) -> void
-        self.module.add_function("blood_assert_ne_int", assert_eq_int_type, None);
+        self.module
+            .add_function("blood_assert_ne_int", assert_eq_int_type, None);
 
         // print_char(i32) -> void
         self.module.add_function("print_char", print_int_type, None);
 
         // println_char(i32) -> void (char with newline)
-        self.module.add_function("println_char", print_int_type, None);
+        self.module
+            .add_function("println_char", print_int_type, None);
 
         // print_bool(i1) -> void
         let bool_type = self.context.bool_type();
         let print_bool_type = void_type.fn_type(&[bool_type.into()], false);
-        self.module.add_function("print_bool", print_bool_type, None);
+        self.module
+            .add_function("print_bool", print_bool_type, None);
 
         // println_bool(i1) -> void
-        self.module.add_function("println_bool", print_bool_type, None);
+        self.module
+            .add_function("println_bool", print_bool_type, None);
 
         // print_f64(f64) -> void
         let f64_type = self.context.f64_type();
@@ -3771,7 +4225,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("print_f64", print_f64_type, None);
 
         // println_f64(f64) -> void
-        self.module.add_function("println_f64", print_f64_type, None);
+        self.module
+            .add_function("println_f64", print_f64_type, None);
 
         // print_f32(f32) -> void
         let f32_type = self.context.f32_type();
@@ -3779,28 +4234,34 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("print_f32", print_f32_type, None);
 
         // println_f32(f32) -> void
-        self.module.add_function("println_f32", print_f32_type, None);
+        self.module
+            .add_function("println_f32", print_f32_type, None);
 
         // print_f64_prec(f64, i32) -> void
         let print_f64_prec_type = void_type.fn_type(&[f64_type.into(), i32_type.into()], false);
-        self.module.add_function("print_f64_prec", print_f64_prec_type, None);
+        self.module
+            .add_function("print_f64_prec", print_f64_prec_type, None);
 
         // println_f64_prec(f64, i32) -> void
-        self.module.add_function("println_f64_prec", print_f64_prec_type, None);
+        self.module
+            .add_function("println_f64_prec", print_f64_prec_type, None);
 
         // print_f32_prec(f32, i32) -> void
         let print_f32_prec_type = void_type.fn_type(&[f32_type.into(), i32_type.into()], false);
-        self.module.add_function("print_f32_prec", print_f32_prec_type, None);
+        self.module
+            .add_function("print_f32_prec", print_f32_prec_type, None);
 
         // println_f32_prec(f32, i32) -> void
-        self.module.add_function("println_f32_prec", print_f32_prec_type, None);
+        self.module
+            .add_function("println_f32_prec", print_f32_prec_type, None);
 
         // println() -> void
         let println_type = void_type.fn_type(&[], false);
         self.module.add_function("println", println_type, None);
 
         // print_newline() -> void
-        self.module.add_function("print_newline", println_type, None);
+        self.module
+            .add_function("print_newline", println_type, None);
 
         // === Size Functions ===
 
@@ -3818,21 +4279,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_alloc(size: i64, out_addr: *i64, out_gen_meta: *i64) -> i32
         let size_type = i64_type; // size_t
-        let alloc_type = i32_type.fn_type(&[
-            size_type.into(),
-            i64_ptr_type.into(),
-            i64_ptr_type.into(),
-        ], false);
+        let alloc_type = i32_type.fn_type(
+            &[size_type.into(), i64_ptr_type.into(), i64_ptr_type.into()],
+            false,
+        );
         self.module.add_function("blood_alloc", alloc_type, None);
 
         // blood_alloc_or_abort(size: i64, out_generation: *i32) -> i64
         // Simpler allocation that aborts on failure - no conditional branches needed
         let i32_ptr_type = self.context.ptr_type(AddressSpace::default());
-        let alloc_or_abort_type = i64_type.fn_type(&[
-            size_type.into(),
-            i32_ptr_type.into(),
-        ], false);
-        self.module.add_function("blood_alloc_or_abort", alloc_or_abort_type, None);
+        let alloc_or_abort_type = i64_type.fn_type(&[size_type.into(), i32_ptr_type.into()], false);
+        self.module
+            .add_function("blood_alloc_or_abort", alloc_or_abort_type, None);
 
         // blood_free(addr: i64, size: i64) -> void
         let free_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
@@ -3840,101 +4298,125 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_check_generation(expected: i32, actual: i32) -> i32
         let check_gen_type = i32_type.fn_type(&[i32_type.into(), i32_type.into()], false);
-        self.module.add_function("blood_check_generation", check_gen_type, None);
+        self.module
+            .add_function("blood_check_generation", check_gen_type, None);
 
         // blood_stale_reference_panic(expected: i32, actual: i32) -> void (noreturn)
         let panic_type = void_type.fn_type(&[i32_type.into(), i32_type.into()], false);
-        self.module.add_function("blood_stale_reference_panic", panic_type, None);
+        self.module
+            .add_function("blood_stale_reference_panic", panic_type, None);
 
         // blood_panic(msg: *i8) -> void (noreturn)
         let panic_msg_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("blood_panic", panic_msg_type, None);
+        self.module
+            .add_function("blood_panic", panic_msg_type, None);
 
         // blood_panic_div_zero() -> void (noreturn)
         let panic_div_zero_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_panic_div_zero", panic_div_zero_type, None);
+        self.module
+            .add_function("blood_panic_div_zero", panic_div_zero_type, None);
 
         // blood_panic_index_out_of_bounds(index: i64, length: i64) -> void (noreturn)
         let panic_oob_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_panic_index_out_of_bounds", panic_oob_type, None);
+        self.module
+            .add_function("blood_panic_index_out_of_bounds", panic_oob_type, None);
 
         // blood_register_allocation(address: i64, size: i64) -> i32 (generation)
         let register_alloc_type = i32_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_register_allocation", register_alloc_type, None);
+        self.module
+            .add_function("blood_register_allocation", register_alloc_type, None);
 
         // blood_unregister_allocation(address: i64) -> void
         let unregister_alloc_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_unregister_allocation", unregister_alloc_type, None);
+        self.module
+            .add_function("blood_unregister_allocation", unregister_alloc_type, None);
 
         // blood_validate_generation(address: i64, expected_gen: i32) -> i32 (0 = valid, 1 = stale)
         let validate_gen_type = i32_type.fn_type(&[i64_type.into(), i32_type.into()], false);
-        self.module.add_function("blood_validate_generation", validate_gen_type, None);
+        self.module
+            .add_function("blood_validate_generation", validate_gen_type, None);
 
         // blood_get_generation(address: i64) -> i32 (current generation from slot registry)
         let get_gen_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_get_generation", get_gen_type, None);
+        self.module
+            .add_function("blood_get_generation", get_gen_type, None);
 
         // blood_increment_generation(address: *void) -> void (increment generation for a slot)
         let increment_gen_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("blood_increment_generation", increment_gen_type, None);
+        self.module
+            .add_function("blood_increment_generation", increment_gen_type, None);
 
         // === Simple Memory Allocation (for Vec/collections) ===
 
         // blood_alloc_simple(size: i64) -> *void (i64 for address)
         let alloc_simple_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_alloc_simple", alloc_simple_type, None);
+        self.module
+            .add_function("blood_alloc_simple", alloc_simple_type, None);
 
         // blood_realloc(ptr: i64, size: i64) -> *void (i64 for address)
         let realloc_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_realloc", realloc_type, None);
+        self.module
+            .add_function("blood_realloc", realloc_type, None);
 
         // blood_free_simple(ptr: i64) -> void
         let free_simple_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_free_simple", free_simple_type, None);
+        self.module
+            .add_function("blood_free_simple", free_simple_type, None);
 
         // blood_memcpy(dest: i64, src: i64, n: i64) -> i64
-        let memcpy_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+        let memcpy_type =
+            i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
         self.module.add_function("blood_memcpy", memcpy_type, None);
 
         // === Pointer Read/Write Intrinsics ===
 
         // ptr_read_i32(ptr: i64) -> i32
         let ptr_read_i32_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("ptr_read_i32", ptr_read_i32_type, None);
+        self.module
+            .add_function("ptr_read_i32", ptr_read_i32_type, None);
 
         // ptr_write_i32(ptr: i64, value: i32) -> void
         let ptr_write_i32_type = void_type.fn_type(&[i64_type.into(), i32_type.into()], false);
-        self.module.add_function("ptr_write_i32", ptr_write_i32_type, None);
+        self.module
+            .add_function("ptr_write_i32", ptr_write_i32_type, None);
 
         // ptr_read_i64(ptr: i64) -> i64
         let ptr_read_i64_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("ptr_read_i64", ptr_read_i64_type, None);
+        self.module
+            .add_function("ptr_read_i64", ptr_read_i64_type, None);
 
         // ptr_write_i64(ptr: i64, value: i64) -> void
         let ptr_write_i64_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("ptr_write_i64", ptr_write_i64_type, None);
+        self.module
+            .add_function("ptr_write_i64", ptr_write_i64_type, None);
 
         // ptr_read_u64(ptr: i64) -> i64 (u64 represented as i64)
-        self.module.add_function("ptr_read_u64", ptr_read_i64_type, None);
+        self.module
+            .add_function("ptr_read_u64", ptr_read_i64_type, None);
 
         // ptr_write_u64(ptr: i64, value: i64) -> void (u64 represented as i64)
-        self.module.add_function("ptr_write_u64", ptr_write_i64_type, None);
+        self.module
+            .add_function("ptr_write_u64", ptr_write_i64_type, None);
 
         // ptr_read_u8(ptr: i64) -> i8 (u8 represented as i8)
         let ptr_read_u8_type = i8_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("ptr_read_u8", ptr_read_u8_type, None);
+        self.module
+            .add_function("ptr_read_u8", ptr_read_u8_type, None);
 
         // ptr_write_u8(ptr: i64, value: i8) -> void (u8 represented as i8)
         let ptr_write_u8_type = void_type.fn_type(&[i64_type.into(), i8_type.into()], false);
-        self.module.add_function("ptr_write_u8", ptr_write_u8_type, None);
+        self.module
+            .add_function("ptr_write_u8", ptr_write_u8_type, None);
 
         // ptr_read_f64(ptr: i64) -> f64
         let ptr_read_f64_type = f64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("ptr_read_f64", ptr_read_f64_type, None);
+        self.module
+            .add_function("ptr_read_f64", ptr_read_f64_type, None);
 
         // ptr_write_f64(ptr: i64, value: f64) -> void
         let ptr_write_f64_type = void_type.fn_type(&[i64_type.into(), f64_type.into()], false);
-        self.module.add_function("ptr_write_f64", ptr_write_f64_type, None);
+        self.module
+            .add_function("ptr_write_f64", ptr_write_f64_type, None);
 
         // print_i64(i64) -> void - already declared above, but let's ensure
 
@@ -3944,75 +4426,95 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("print_u64", print_i64_type, None);
 
         // println_u64(i64) -> void (u64 as i64)
-        self.module.add_function("println_u64", print_i64_type, None);
+        self.module
+            .add_function("println_u64", print_i64_type, None);
 
         // === Effect Runtime ===
 
         // blood_evidence_create() -> *void (EvidenceHandle)
         let void_ptr_type = i8_ptr_type; // Use i8* as void*
         let ev_create_type = void_ptr_type.fn_type(&[], false);
-        self.module.add_function("blood_evidence_create", ev_create_type, None);
+        self.module
+            .add_function("blood_evidence_create", ev_create_type, None);
 
         // blood_evidence_destroy(ev: *void) -> void
         let ev_destroy_type = void_type.fn_type(&[void_ptr_type.into()], false);
-        self.module.add_function("blood_evidence_destroy", ev_destroy_type, None);
+        self.module
+            .add_function("blood_evidence_destroy", ev_destroy_type, None);
 
         // blood_evidence_push(ev: *void, handler: i64) -> void
         let ev_push_type = void_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_evidence_push", ev_push_type, None);
+        self.module
+            .add_function("blood_evidence_push", ev_push_type, None);
 
         // blood_evidence_pop(ev: *void) -> i64
         let ev_pop_type = i64_type.fn_type(&[void_ptr_type.into()], false);
-        self.module.add_function("blood_evidence_pop", ev_pop_type, None);
+        self.module
+            .add_function("blood_evidence_pop", ev_pop_type, None);
 
         // blood_evidence_get(ev: *void, index: i64) -> i64
         let ev_get_type = i64_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_evidence_get", ev_get_type, None);
+        self.module
+            .add_function("blood_evidence_get", ev_get_type, None);
 
         // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64, is_deep: i64) -> i64
         let void_ptr_ptr_type = self.context.ptr_type(AddressSpace::default());
-        let ev_register_type = i64_type.fn_type(&[
-            void_ptr_type.into(),
-            i64_type.into(),
-            void_ptr_ptr_type.into(),  // ops is **void (pointer to array of function pointers)
-            i64_type.into(),
-            i64_type.into(),           // is_deep: 1 = deep, 0 = shallow
-        ], false);
-        self.module.add_function("blood_evidence_register", ev_register_type, None);
+        let ev_register_type = i64_type.fn_type(
+            &[
+                void_ptr_type.into(),
+                i64_type.into(),
+                void_ptr_ptr_type.into(), // ops is **void (pointer to array of function pointers)
+                i64_type.into(),
+                i64_type.into(), // is_deep: 1 = deep, 0 = shallow
+            ],
+            false,
+        );
+        self.module
+            .add_function("blood_evidence_register", ev_register_type, None);
 
         // blood_evidence_push_by_index(ev: *void, registry_index: i64, state: *void) -> void
-        let ev_push_by_index_type = void_type.fn_type(&[
-            void_ptr_type.into(),
-            i64_type.into(),
-            void_ptr_type.into(),
-        ], false);
-        self.module.add_function("blood_evidence_push_by_index", ev_push_by_index_type, None);
+        let ev_push_by_index_type = void_type.fn_type(
+            &[void_ptr_type.into(), i64_type.into(), void_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("blood_evidence_push_by_index", ev_push_by_index_type, None);
 
         // blood_evidence_set_state(ev: *void, state: *void) -> void
-        let ev_set_state_type = void_type.fn_type(&[void_ptr_type.into(), void_ptr_type.into()], false);
-        self.module.add_function("blood_evidence_set_state", ev_set_state_type, None);
+        let ev_set_state_type =
+            void_type.fn_type(&[void_ptr_type.into(), void_ptr_type.into()], false);
+        self.module
+            .add_function("blood_evidence_set_state", ev_set_state_type, None);
 
         // blood_evidence_get_state(ev: *void, index: i64) -> *void
-        let ev_get_state_type = void_ptr_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_evidence_get_state", ev_get_state_type, None);
+        let ev_get_state_type =
+            void_ptr_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
+        self.module
+            .add_function("blood_evidence_get_state", ev_get_state_type, None);
 
         // blood_evidence_current() -> *void
         let ev_current_type = void_ptr_type.fn_type(&[], false);
-        self.module.add_function("blood_evidence_current", ev_current_type, None);
+        self.module
+            .add_function("blood_evidence_current", ev_current_type, None);
 
         // blood_perform(effect_id: i64, op_index: i32, args: *i64, arg_count: i64, continuation: i64) -> i64
-        let perform_type = i64_type.fn_type(&[
-            i64_type.into(),
-            i32_type.into(),
-            i64_ptr_type.into(),
-            i64_type.into(),
-            i64_type.into(),  // continuation parameter
-        ], false);
-        self.module.add_function("blood_perform", perform_type, None);
+        let perform_type = i64_type.fn_type(
+            &[
+                i64_type.into(),
+                i32_type.into(),
+                i64_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(), // continuation parameter
+            ],
+            false,
+        );
+        self.module
+            .add_function("blood_perform", perform_type, None);
 
         // blood_handler_depth(effect_id: i64) -> i64
         let handler_depth_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_handler_depth", handler_depth_type, None);
+        self.module
+            .add_function("blood_handler_depth", handler_depth_type, None);
 
         // === Handler Abort Support (non-resuming handlers) ===
 
@@ -4030,358 +4532,491 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_set_was_resumed() -> void
         let set_resumed_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_set_was_resumed", set_resumed_type, None);
+        self.module
+            .add_function("blood_set_was_resumed", set_resumed_type, None);
 
         // blood_handler_push_abort_target(jmpbuf_ptr: ptr) -> void
         let push_abort_type = void_type.fn_type(&[void_ptr_type.into()], false);
-        self.module.add_function("blood_handler_push_abort_target", push_abort_type, None);
+        self.module
+            .add_function("blood_handler_push_abort_target", push_abort_type, None);
 
         // blood_handler_pop_abort_target() -> void
         let pop_abort_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_handler_pop_abort_target", pop_abort_type, None);
+        self.module
+            .add_function("blood_handler_pop_abort_target", pop_abort_type, None);
 
         // blood_handler_get_abort_value() -> i64
         let get_abort_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_handler_get_abort_value", get_abort_type, None);
+        self.module
+            .add_function("blood_handler_get_abort_value", get_abort_type, None);
 
         // === Fiber/Continuation Support ===
 
         // blood_fiber_create() -> i64
         let fiber_create_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_fiber_create", fiber_create_type, None);
+        self.module
+            .add_function("blood_fiber_create", fiber_create_type, None);
 
         // blood_fiber_suspend() -> i64
         let fiber_suspend_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_fiber_suspend", fiber_suspend_type, None);
+        self.module
+            .add_function("blood_fiber_suspend", fiber_suspend_type, None);
 
         // blood_fiber_resume(fiber: i64, value: i64) -> void
         let fiber_resume_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_fiber_resume", fiber_resume_type, None);
+        self.module
+            .add_function("blood_fiber_resume", fiber_resume_type, None);
 
         // === Generation Snapshots ===
 
         // blood_snapshot_create() -> SnapshotHandle (i64)
         let snapshot_create_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_snapshot_create", snapshot_create_type, None);
+        self.module
+            .add_function("blood_snapshot_create", snapshot_create_type, None);
 
         // blood_snapshot_add_entry(snapshot: i64, address: i64, generation: i32) -> void
-        let snapshot_add_type = void_type.fn_type(&[
-            i64_type.into(),
-            i64_type.into(),
-            i32_type.into(),
-        ], false);
-        self.module.add_function("blood_snapshot_add_entry", snapshot_add_type, None);
+        let snapshot_add_type =
+            void_type.fn_type(&[i64_type.into(), i64_type.into(), i32_type.into()], false);
+        self.module
+            .add_function("blood_snapshot_add_entry", snapshot_add_type, None);
 
         // blood_snapshot_validate(snapshot: i64) -> i64 (0 = valid, non-zero = error)
         let snapshot_validate_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_snapshot_validate", snapshot_validate_type, None);
+        self.module
+            .add_function("blood_snapshot_validate", snapshot_validate_type, None);
 
         // blood_snapshot_len(snapshot: i64) -> i64
         let snapshot_len_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_snapshot_len", snapshot_len_type, None);
+        self.module
+            .add_function("blood_snapshot_len", snapshot_len_type, None);
 
         // blood_snapshot_destroy(snapshot: i64) -> void
         let snapshot_destroy_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_snapshot_destroy", snapshot_destroy_type, None);
+        self.module
+            .add_function("blood_snapshot_destroy", snapshot_destroy_type, None);
 
         // === Effect Context Snapshot Functions ===
 
         // blood_effect_context_set_snapshot(snapshot: i64) -> void
         // Store snapshot in thread-local effect context during perform
         let ctx_set_snapshot_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_effect_context_set_snapshot", ctx_set_snapshot_type, None);
+        self.module.add_function(
+            "blood_effect_context_set_snapshot",
+            ctx_set_snapshot_type,
+            None,
+        );
 
         // blood_effect_context_get_snapshot() -> i64 (SnapshotHandle, null if none)
         // Retrieve snapshot from effect context during resume for validation
         let ctx_get_snapshot_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_effect_context_get_snapshot", ctx_get_snapshot_type, None);
+        self.module.add_function(
+            "blood_effect_context_get_snapshot",
+            ctx_get_snapshot_type,
+            None,
+        );
 
         // blood_effect_context_take_snapshot() -> i64 (SnapshotHandle, null if none)
         // Take ownership of snapshot from effect context
         let ctx_take_snapshot_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_effect_context_take_snapshot", ctx_take_snapshot_type, None);
+        self.module.add_function(
+            "blood_effect_context_take_snapshot",
+            ctx_take_snapshot_type,
+            None,
+        );
 
         // blood_snapshot_stale_panic(snapshot: i64, stale_index: i64) -> void (noreturn)
         // Called when snapshot validation fails - panics with stale reference error
         let stale_panic_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_snapshot_stale_panic", stale_panic_type, None);
+        self.module
+            .add_function("blood_snapshot_stale_panic", stale_panic_type, None);
 
         // === Region Management (for scoped allocation with effect suspension) ===
 
         // blood_region_create(initial_size: i64, max_size: i64) -> i64 (region_id)
         // Creates a new region with the given initial and maximum sizes
         let region_create_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_region_create", region_create_type, None);
+        self.module
+            .add_function("blood_region_create", region_create_type, None);
 
         // blood_region_destroy(region_id: i64) -> void
         // Destroys a region and frees all its memory
         let region_destroy_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_destroy", region_destroy_type, None);
+        self.module
+            .add_function("blood_region_destroy", region_destroy_type, None);
 
         // blood_region_reset(region_id: i64) -> void
         // Resets a region (bump pointer to start, keep virtual mapping)
         let region_reset_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_reset", region_reset_type, None);
+        self.module
+            .add_function("blood_region_reset", region_reset_type, None);
 
         // blood_region_protect(region_id: i64, readonly: i32) -> void
         // Set memory protection on a region's committed pages
         let region_protect_type = void_type.fn_type(&[i64_type.into(), i32_type.into()], false);
-        self.module.add_function("blood_region_protect", region_protect_type, None);
+        self.module
+            .add_function("blood_region_protect", region_protect_type, None);
 
         // blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 (address)
         // Allocates memory from a region
-        let region_alloc_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_region_alloc", region_alloc_type, None);
+        let region_alloc_type =
+            i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+        self.module
+            .add_function("blood_region_alloc", region_alloc_type, None);
 
         // blood_region_suspend(region_id: i64) -> i32 (new suspend count)
         // Suspends a region (called when effect captures continuation)
         let region_suspend_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_suspend", region_suspend_type, None);
+        self.module
+            .add_function("blood_region_suspend", region_suspend_type, None);
 
         // blood_region_resume(region_id: i64) -> i32 (packed: count | (should_dealloc << 16))
         // Resumes a region (called when continuation resumes or is dropped)
         let region_resume_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_resume", region_resume_type, None);
+        self.module
+            .add_function("blood_region_resume", region_resume_type, None);
 
         // blood_region_exit_scope(region_id: i64) -> i32 (1 = deallocate now, 0 = deferred)
         // Exit a region's lexical scope
         let region_exit_scope_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_exit_scope", region_exit_scope_type, None);
+        self.module
+            .add_function("blood_region_exit_scope", region_exit_scope_type, None);
 
         // blood_region_is_suspended(region_id: i64) -> i32 (bool)
         let region_is_suspended_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_is_suspended", region_is_suspended_type, None);
+        self.module
+            .add_function("blood_region_is_suspended", region_is_suspended_type, None);
 
         // blood_region_is_pending_deallocation(region_id: i64) -> i32 (bool)
-        self.module.add_function("blood_region_is_pending_deallocation", region_is_suspended_type, None);
+        self.module.add_function(
+            "blood_region_is_pending_deallocation",
+            region_is_suspended_type,
+            None,
+        );
 
         // blood_region_used(region_id: i64) -> i64 (used bytes)
         // Returns the current used bytes in a region
         let region_used_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_used", region_used_type, None);
+        self.module
+            .add_function("blood_region_used", region_used_type, None);
 
         // blood_region_trim(region_id: i64) -> void
         // Releases physical pages above the current allocation offset
         let region_trim_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_trim", region_trim_type, None);
+        self.module
+            .add_function("blood_region_trim", region_trim_type, None);
 
         // blood_region_committed(region_id: i64) -> i64 (committed bytes)
         let region_committed_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_committed", region_committed_type, None);
+        self.module
+            .add_function("blood_region_committed", region_committed_type, None);
 
         // blood_region_alloc_count(region_id: i64) -> i64 (allocation count)
         let region_alloc_count_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_alloc_count", region_alloc_count_type, None);
+        self.module
+            .add_function("blood_region_alloc_count", region_alloc_count_type, None);
 
         // blood_region_active_id() -> i64 (current active region handle)
         let region_active_id_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_region_active_id", region_active_id_type, None);
+        self.module
+            .add_function("blood_region_active_id", region_active_id_type, None);
 
         // blood_system_alloc_live_bytes() -> i64 (non-region live bytes)
         let system_alloc_live_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_system_alloc_live_bytes", system_alloc_live_type, None);
+        self.module.add_function(
+            "blood_system_alloc_live_bytes",
+            system_alloc_live_type,
+            None,
+        );
 
         // Realloc diagnostic counters
         let diag_u64_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_realloc_diag_count", diag_u64_type, None);
-        self.module.add_function("blood_realloc_diag_wasted", diag_u64_type, None);
-        self.module.add_function("blood_realloc_diag_inplace", diag_u64_type, None);
-        self.module.add_function("blood_realloc_diag_inplace_bytes", diag_u64_type, None);
-        self.module.add_function("blood_realloc_diag_offset_delta", diag_u64_type, None);
+        self.module
+            .add_function("blood_realloc_diag_count", diag_u64_type, None);
+        self.module
+            .add_function("blood_realloc_diag_wasted", diag_u64_type, None);
+        self.module
+            .add_function("blood_realloc_diag_inplace", diag_u64_type, None);
+        self.module
+            .add_function("blood_realloc_diag_inplace_bytes", diag_u64_type, None);
+        self.module
+            .add_function("blood_realloc_diag_offset_delta", diag_u64_type, None);
         let diag_void_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_realloc_stats_reset", diag_void_type, None);
-        self.module.add_function("blood_print_alloc_hist", diag_void_type, None);
-        self.module.add_function("blood_alloc_hist_reset", diag_void_type, None);
+        self.module
+            .add_function("blood_realloc_stats_reset", diag_void_type, None);
+        self.module
+            .add_function("blood_print_alloc_hist", diag_void_type, None);
+        self.module
+            .add_function("blood_alloc_hist_reset", diag_void_type, None);
 
         // Allocation tagging
         let tag_set_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_alloc_tag_set", tag_set_type, None);
-        self.module.add_function("blood_alloc_tag_get", diag_u64_type, None);
-        self.module.add_function("blood_alloc_tag_reset", diag_void_type, None);
-        self.module.add_function("blood_alloc_tag_report", diag_void_type, None);
+        self.module
+            .add_function("blood_alloc_tag_set", tag_set_type, None);
+        self.module
+            .add_function("blood_alloc_tag_get", diag_u64_type, None);
+        self.module
+            .add_function("blood_alloc_tag_reset", diag_void_type, None);
+        self.module
+            .add_function("blood_alloc_tag_report", diag_void_type, None);
         let tag_query_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_alloc_tag_count", tag_query_type, None);
-        self.module.add_function("blood_alloc_tag_bytes", tag_query_type, None);
+        self.module
+            .add_function("blood_alloc_tag_count", tag_query_type, None);
+        self.module
+            .add_function("blood_alloc_tag_bytes", tag_query_type, None);
 
         // blood_region_activate(region_id: i64) -> void
         // Activates a region for the current thread so String/Vec/Box allocations route to it
         let region_activate_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_region_activate", region_activate_type, None);
+        self.module
+            .add_function("blood_region_activate", region_activate_type, None);
 
         // blood_region_deactivate() -> void
         // Deactivates the current region, reverting to global allocation
         let region_deactivate_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_region_deactivate", region_deactivate_type, None);
+        self.module
+            .add_function("blood_region_deactivate", region_deactivate_type, None);
 
         // blood_region_deactivate_get() -> i64
         // Deactivates and returns the current region handle (0 if none)
         let region_deactivate_get_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_region_deactivate_get", region_deactivate_get_type, None);
+        self.module.add_function(
+            "blood_region_deactivate_get",
+            region_deactivate_get_type,
+            None,
+        );
 
         // blood_continuation_add_suspended_region(continuation_id: i64, region_id: i64) -> void
         // Associates a suspended region with a continuation
         let cont_add_region_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_continuation_add_suspended_region", cont_add_region_type, None);
+        self.module.add_function(
+            "blood_continuation_add_suspended_region",
+            cont_add_region_type,
+            None,
+        );
 
         // blood_continuation_take_suspended_regions(continuation_id: i64, out_regions: *i64, max_count: i64) -> i64 (count)
         // Gets and clears the suspended regions for a continuation (handles deferred deallocation)
-        let cont_take_regions_type = i64_type.fn_type(&[i64_type.into(), void_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_continuation_take_suspended_regions", cont_take_regions_type, None);
+        let cont_take_regions_type = i64_type.fn_type(
+            &[i64_type.into(), void_ptr_type.into(), i64_type.into()],
+            false,
+        );
+        self.module.add_function(
+            "blood_continuation_take_suspended_regions",
+            cont_take_regions_type,
+            None,
+        );
 
         // blood_continuation_resume_with_regions(continuation: i64, value: i64) -> i64
         // Resume a continuation with automatic region restoration
         let cont_resume_regions_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_continuation_resume_with_regions", cont_resume_regions_type, None);
+        self.module.add_function(
+            "blood_continuation_resume_with_regions",
+            cont_resume_regions_type,
+            None,
+        );
 
         // === Multiple Dispatch Runtime ===
 
         // blood_dispatch_lookup(method_slot: i64, type_tag: i64) -> *void (function pointer)
         // Looks up the implementation for a method given the receiver's runtime type.
-        let dispatch_lookup_type = void_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_dispatch_lookup", dispatch_lookup_type, None);
+        let dispatch_lookup_type =
+            void_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module
+            .add_function("blood_dispatch_lookup", dispatch_lookup_type, None);
 
         // blood_get_type_tag(obj: *void) -> i64
         // Gets the runtime type tag from an object's header.
         let get_type_tag_type = i64_type.fn_type(&[void_ptr_type.into()], false);
-        self.module.add_function("blood_get_type_tag", get_type_tag_type, None);
+        self.module
+            .add_function("blood_get_type_tag", get_type_tag_type, None);
 
         // blood_dispatch_register(method_slot: i64, type_tag: i64, impl_ptr: *void) -> void
         // Registers an implementation for a method/type combination in the dispatch table.
-        let dispatch_register_type = void_type.fn_type(&[
-            i64_type.into(),
-            i64_type.into(),
-            void_ptr_type.into(),
-        ], false);
-        self.module.add_function("blood_dispatch_register", dispatch_register_type, None);
+        let dispatch_register_type = void_type.fn_type(
+            &[i64_type.into(), i64_type.into(), void_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("blood_dispatch_register", dispatch_register_type, None);
 
         // === Work-Stealing Scheduler ===
 
         // blood_scheduler_init(num_workers: i64) -> i32
         let scheduler_init_type = i32_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_scheduler_init", scheduler_init_type, None);
+        self.module
+            .add_function("blood_scheduler_init", scheduler_init_type, None);
 
         // blood_scheduler_spawn(task_fn: *void, arg: *void) -> i64
-        let scheduler_spawn_type = i64_type.fn_type(&[void_ptr_type.into(), void_ptr_type.into()], false);
-        self.module.add_function("blood_scheduler_spawn", scheduler_spawn_type, None);
+        let scheduler_spawn_type =
+            i64_type.fn_type(&[void_ptr_type.into(), void_ptr_type.into()], false);
+        self.module
+            .add_function("blood_scheduler_spawn", scheduler_spawn_type, None);
 
         // blood_scheduler_spawn_simple(task_fn: *void) -> i64
         let scheduler_spawn_simple_type = i64_type.fn_type(&[void_ptr_type.into()], false);
-        self.module.add_function("blood_scheduler_spawn_simple", scheduler_spawn_simple_type, None);
+        self.module.add_function(
+            "blood_scheduler_spawn_simple",
+            scheduler_spawn_simple_type,
+            None,
+        );
 
         // blood_scheduler_yield() -> void
         let scheduler_yield_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_yield", scheduler_yield_type, None);
+        self.module
+            .add_function("blood_scheduler_yield", scheduler_yield_type, None);
 
         // blood_scheduler_run() -> void
         let scheduler_run_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_run", scheduler_run_type, None);
+        self.module
+            .add_function("blood_scheduler_run", scheduler_run_type, None);
 
         // blood_scheduler_run_background() -> i32
         let scheduler_run_bg_type = i32_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_run_background", scheduler_run_bg_type, None);
+        self.module.add_function(
+            "blood_scheduler_run_background",
+            scheduler_run_bg_type,
+            None,
+        );
 
         // blood_scheduler_shutdown() -> void
         let scheduler_shutdown_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_shutdown", scheduler_shutdown_type, None);
+        self.module
+            .add_function("blood_scheduler_shutdown", scheduler_shutdown_type, None);
 
         // blood_scheduler_wait() -> void
         let scheduler_wait_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_wait", scheduler_wait_type, None);
+        self.module
+            .add_function("blood_scheduler_wait", scheduler_wait_type, None);
 
         // blood_scheduler_active_fibers() -> i64
         let scheduler_active_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_active_fibers", scheduler_active_type, None);
+        self.module
+            .add_function("blood_scheduler_active_fibers", scheduler_active_type, None);
 
         // blood_scheduler_runnable_fibers() -> i64
-        self.module.add_function("blood_scheduler_runnable_fibers", scheduler_active_type, None);
+        self.module.add_function(
+            "blood_scheduler_runnable_fibers",
+            scheduler_active_type,
+            None,
+        );
 
         // blood_scheduler_is_running() -> i32
         let scheduler_is_running_type = i32_type.fn_type(&[], false);
-        self.module.add_function("blood_scheduler_is_running", scheduler_is_running_type, None);
+        self.module.add_function(
+            "blood_scheduler_is_running",
+            scheduler_is_running_type,
+            None,
+        );
 
         // === OS Thread Primitives ===
 
         // blood_thread_spawn(func_ptr: i64, arg: i64) -> i64
         let thread_spawn_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("blood_thread_spawn", thread_spawn_type, None);
+        self.module
+            .add_function("blood_thread_spawn", thread_spawn_type, None);
 
         // blood_thread_join(handle: i64) -> i64
         let thread_join_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("blood_thread_join", thread_join_type, None);
+        self.module
+            .add_function("blood_thread_join", thread_join_type, None);
 
         // === Fiber/Concurrency Builtins (INFRA-02 Phase 1) ===
 
         // __builtin_fiber_spawn(fn_ptr: i64) -> i64
         let fiber_spawn_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_spawn", fiber_spawn_type, None);
+        self.module
+            .add_function("__builtin_fiber_spawn", fiber_spawn_type, None);
 
         // __builtin_fiber_spawn_with(config_ptr: i64, fn_ptr: i64) -> i64
         let fiber_spawn_with_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_spawn_with", fiber_spawn_with_type, None);
+        self.module
+            .add_function("__builtin_fiber_spawn_with", fiber_spawn_with_type, None);
 
         // __builtin_fiber_join(fiber_id: i64) -> i64
         let fiber_join_type = i64_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_join", fiber_join_type, None);
+        self.module
+            .add_function("__builtin_fiber_join", fiber_join_type, None);
 
         // __builtin_fiber_current() -> i64
         let fiber_current_type = i64_type.fn_type(&[], false);
-        self.module.add_function("__builtin_fiber_current", fiber_current_type, None);
+        self.module
+            .add_function("__builtin_fiber_current", fiber_current_type, None);
 
         // __builtin_fiber_yield() -> void
         let fiber_yield_type = void_type.fn_type(&[], false);
-        self.module.add_function("__builtin_fiber_yield", fiber_yield_type, None);
+        self.module
+            .add_function("__builtin_fiber_yield", fiber_yield_type, None);
 
         // __builtin_fiber_sleep(nanos: i64) -> void
         let fiber_sleep_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_sleep", fiber_sleep_type, None);
+        self.module
+            .add_function("__builtin_fiber_sleep", fiber_sleep_type, None);
 
         // __builtin_fiber_park() -> void
         let fiber_park_type = void_type.fn_type(&[], false);
-        self.module.add_function("__builtin_fiber_park", fiber_park_type, None);
+        self.module
+            .add_function("__builtin_fiber_park", fiber_park_type, None);
 
         // __builtin_fiber_unpark(fiber_id: i64) -> void
         let fiber_unpark_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_unpark", fiber_unpark_type, None);
+        self.module
+            .add_function("__builtin_fiber_unpark", fiber_unpark_type, None);
 
         // __builtin_fiber_is_finished(fiber_id: i64) -> i1
         let fiber_is_finished_type = bool_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_is_finished", fiber_is_finished_type, None);
+        self.module
+            .add_function("__builtin_fiber_is_finished", fiber_is_finished_type, None);
 
         // __builtin_fiber_cancel(fiber_id: i64) -> void
         let fiber_cancel_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_cancel", fiber_cancel_type, None);
+        self.module
+            .add_function("__builtin_fiber_cancel", fiber_cancel_type, None);
 
         // __builtin_fiber_race(handles_ptr: i64, count: i64) -> i64
         let fiber_race_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        self.module.add_function("__builtin_fiber_race", fiber_race_type, None);
+        self.module
+            .add_function("__builtin_fiber_race", fiber_race_type, None);
 
         // __builtin_scheduler_init(num_workers: i64) -> void
         let scheduler_init_builtin_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__builtin_scheduler_init", scheduler_init_builtin_type, None);
+        self.module.add_function(
+            "__builtin_scheduler_init",
+            scheduler_init_builtin_type,
+            None,
+        );
 
         // __builtin_scheduler_shutdown() -> void
         let scheduler_shutdown_builtin_type = void_type.fn_type(&[], false);
-        self.module.add_function("__builtin_scheduler_shutdown", scheduler_shutdown_builtin_type, None);
+        self.module.add_function(
+            "__builtin_scheduler_shutdown",
+            scheduler_shutdown_builtin_type,
+            None,
+        );
 
         // __builtin_safepoint_check() -> void (INFRA-02 Phase 4)
         let safepoint_check_type = void_type.fn_type(&[], false);
-        self.module.add_function("__builtin_safepoint_check", safepoint_check_type, None);
+        self.module
+            .add_function("__builtin_safepoint_check", safepoint_check_type, None);
 
         // __builtin_safepoint_request() -> void
-        self.module.add_function("__builtin_safepoint_request", safepoint_check_type, None);
+        self.module
+            .add_function("__builtin_safepoint_request", safepoint_check_type, None);
 
         // __builtin_safepoint_clear() -> void
-        self.module.add_function("__builtin_safepoint_clear", safepoint_check_type, None);
+        self.module
+            .add_function("__builtin_safepoint_clear", safepoint_check_type, None);
 
         // === Runtime Lifecycle ===
 
         // blood_runtime_init() -> i32
         let init_type = i32_type.fn_type(&[], false);
-        self.module.add_function("blood_runtime_init", init_type, None);
+        self.module
+            .add_function("blood_runtime_init", init_type, None);
 
         // blood_runtime_shutdown() -> void
         let shutdown_type = void_type.fn_type(&[], false);
-        self.module.add_function("blood_runtime_shutdown", shutdown_type, None);
+        self.module
+            .add_function("blood_runtime_shutdown", shutdown_type, None);
 
         // === Vec<T> Runtime Functions ===
 
@@ -4390,8 +5025,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("vec_new", vec_new_type, None);
 
         // vec_with_capacity(elem_size: i64, capacity: i64, out: *void) -> void - writes Vec struct to output buffer
-        let vec_with_capacity_type = void_type.fn_type(&[i64_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("vec_with_capacity", vec_with_capacity_type, None);
+        let vec_with_capacity_type = void_type.fn_type(
+            &[i64_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("vec_with_capacity", vec_with_capacity_type, None);
 
         // vec_len(vec: *void) -> i64
         let vec_len_type = i64_type.fn_type(&[i8_ptr_type.into()], false);
@@ -4399,35 +5038,60 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // vec_is_empty(vec: *void) -> i32
         let vec_is_empty_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("vec_is_empty", vec_is_empty_type, None);
+        self.module
+            .add_function("vec_is_empty", vec_is_empty_type, None);
 
         // vec_capacity(vec: *void) -> i64
         let vec_capacity_type = i64_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("vec_capacity", vec_capacity_type, None);
+        self.module
+            .add_function("vec_capacity", vec_capacity_type, None);
 
         // vec_push(vec: *void, elem: *void, elem_size: i64) -> void
-        let vec_push_type = void_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into(), i64_type.into()], false);
+        let vec_push_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i8_ptr_type.into(), i64_type.into()],
+            false,
+        );
         self.module.add_function("vec_push", vec_push_type, None);
 
         // vec_pop(vec: *void, elem_size: i64, out: *void) -> i32
-        let vec_pop_type = i32_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
+        let vec_pop_type = i32_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
         self.module.add_function("vec_pop", vec_pop_type, None);
 
         // vec_get(vec: *void, index: i64, elem_size: i64, out: *void) -> i32
-        let vec_get_type = i32_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i64_type.into(), i8_ptr_type.into()], false);
+        let vec_get_type = i32_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
         self.module.add_function("vec_get", vec_get_type, None);
 
         // vec_get_ptr(vec: *void, index: i64, elem_size: i64) -> *void
-        let vec_get_ptr_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i64_type.into()], false);
-        self.module.add_function("vec_get_ptr", vec_get_ptr_type, None);
+        let vec_get_ptr_type = i8_ptr_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i64_type.into()],
+            false,
+        );
+        self.module
+            .add_function("vec_get_ptr", vec_get_ptr_type, None);
 
         // vec_contains(vec: *void, elem: *void, elem_size: i64) -> i32
-        let vec_contains_type = i32_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("vec_contains", vec_contains_type, None);
+        let vec_contains_type = i32_type.fn_type(
+            &[i8_ptr_type.into(), i8_ptr_type.into(), i64_type.into()],
+            false,
+        );
+        self.module
+            .add_function("vec_contains", vec_contains_type, None);
 
         // vec_reverse(vec: *void, elem_size: i64) -> void
         let vec_reverse_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into()], false);
-        self.module.add_function("vec_reverse", vec_reverse_type, None);
+        self.module
+            .add_function("vec_reverse", vec_reverse_type, None);
 
         // vec_clear(vec: *void) -> void
         let vec_clear_type = void_type.fn_type(&[i8_ptr_type.into()], false);
@@ -4435,12 +5099,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // vec_first(vec: *void, elem_size: i64, out: *void) -> void
         // Returns Option<T> in out (None if empty)
-        let vec_first_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
+        let vec_first_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
         self.module.add_function("vec_first", vec_first_type, None);
 
         // vec_last(vec: *void, elem_size: i64, out: *void) -> void
         // Returns Option<T> in out (None if empty)
-        let vec_last_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
+        let vec_last_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
         self.module.add_function("vec_last", vec_last_type, None);
 
         // vec_free(vec: *void, elem_size: i64) -> void
@@ -4455,27 +5125,35 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // box_as_ref(boxed: *void) -> *void
         let box_as_ref_type = i8_ptr_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("box_as_ref", box_as_ref_type, None);
+        self.module
+            .add_function("box_as_ref", box_as_ref_type, None);
 
         // box_as_mut(boxed: *void) -> *void
         let box_as_mut_type = i8_ptr_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("box_as_mut", box_as_mut_type, None);
+        self.module
+            .add_function("box_as_mut", box_as_mut_type, None);
 
         // box_free(boxed: *void, size: i64) -> void
         let box_free_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into()], false);
         self.module.add_function("box_free", box_free_type, None);
 
         // box_into_inner(boxed: *void, size: i64, out: *void) -> void
-        let box_into_inner_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("box_into_inner", box_into_inner_type, None);
+        let box_into_inner_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("box_into_inner", box_into_inner_type, None);
 
         // box_into_raw(boxed: *void) -> *void
         let box_into_raw_type = i8_ptr_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("box_into_raw", box_into_raw_type, None);
+        self.module
+            .add_function("box_into_raw", box_into_raw_type, None);
 
         // box_from_raw(ptr: *void) -> *void
         let box_from_raw_type = i8_ptr_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("box_from_raw", box_from_raw_type, None);
+        self.module
+            .add_function("box_from_raw", box_from_raw_type, None);
 
         // box_leak(boxed: *void) -> *void
         let box_leak_type = i8_ptr_type.fn_type(&[i8_ptr_type.into()], false);
@@ -4486,93 +5164,150 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // option_is_some(opt: *void) -> i32
         let option_is_some_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("option_is_some", option_is_some_type, None);
+        self.module
+            .add_function("option_is_some", option_is_some_type, None);
 
         // option_is_none(opt: *void) -> i32
         let option_is_none_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("option_is_none", option_is_none_type, None);
+        self.module
+            .add_function("option_is_none", option_is_none_type, None);
 
         // option_unwrap(opt: *void, payload_size: i64, out: *void) -> void
         // Copies the payload to out. Panics if None.
-        let option_unwrap_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("option_unwrap", option_unwrap_type, None);
+        let option_unwrap_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("option_unwrap", option_unwrap_type, None);
 
         // option_try(opt: *void, payload_size: i64, out: *void) -> i32
         // Returns tag (0=None, 1=Some). If Some, copies payload to out.
-        let option_try_type = i32_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("option_try", option_try_type, None);
+        let option_try_type = i32_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("option_try", option_try_type, None);
 
         // option_expect(opt: *void, payload_size: i64, msg: *i8, msg_len: i64, out: *void) -> void
         // Unwrap with custom panic message
-        let option_expect_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_expect", option_expect_type, None);
+        let option_expect_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_expect", option_expect_type, None);
 
         // option_unwrap_or(opt: *void, payload_size: i64, default: *void, out: *void) -> void
         // Unwrap or return default value
-        let option_unwrap_or_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_unwrap_or", option_unwrap_or_type, None);
+        let option_unwrap_or_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_unwrap_or", option_unwrap_or_type, None);
 
         // option_ok_or(opt: *void, t_size: i64, err: *void, e_size: i64, out: *void) -> void
         // Convert Option<T> to Result<T, E>
-        let option_ok_or_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_ok_or", option_ok_or_type, None);
+        let option_ok_or_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_ok_or", option_ok_or_type, None);
 
         // option_and(opt: *void, other: *void, other_size: i64, out: *void) -> void
-        let option_and_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_and", option_and_type, None);
+        let option_and_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_and", option_and_type, None);
 
         // option_or(opt: *void, other: *void, option_size: i64, out: *void) -> void
-        let option_or_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
+        let option_or_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
         self.module.add_function("option_or", option_or_type, None);
 
         // option_xor(opt: *void, other: *void, option_size: i64, out: *void) -> void
-        let option_xor_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_xor", option_xor_type, None);
+        let option_xor_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_xor", option_xor_type, None);
 
         // option_as_ref(opt: *void, payload_size: i64, out: *void) -> void
-        let option_as_ref_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_as_ref", option_as_ref_type, None);
+        let option_as_ref_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("option_as_ref", option_as_ref_type, None);
 
         // option_as_mut(opt: *void, payload_size: i64, out: *void) -> void
-        let option_as_mut_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_as_mut", option_as_mut_type, None);
+        let option_as_mut_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("option_as_mut", option_as_mut_type, None);
 
         // option_take(opt: *void, payload_size: i64, out: *void) -> void
-        let option_take_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_take", option_take_type, None);
+        let option_take_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("option_take", option_take_type, None);
 
         // option_replace(opt: *void, value: *void, payload_size: i64, out: *void) -> void
-        let option_replace_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("option_replace", option_replace_type, None);
+        let option_replace_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("option_replace", option_replace_type, None);
 
         // === Result<T, E> Runtime Functions ===
         // Result<T, E> is { tag: i32, payload: union { T, E } }
@@ -4580,96 +5315,158 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // result_is_ok(res: *void) -> i32
         let result_is_ok_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("result_is_ok", result_is_ok_type, None);
+        self.module
+            .add_function("result_is_ok", result_is_ok_type, None);
 
         // result_is_err(res: *void) -> i32
         let result_is_err_type = i32_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("result_is_err", result_is_err_type, None);
+        self.module
+            .add_function("result_is_err", result_is_err_type, None);
 
         // result_unwrap(res: *void, ok_size: i64, out: *void) -> void
         // Copies the Ok payload to out. Panics if Err.
-        let result_unwrap_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("result_unwrap", result_unwrap_type, None);
+        let result_unwrap_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("result_unwrap", result_unwrap_type, None);
 
         // result_unwrap_err(res: *void, err_size: i64, out: *void) -> void
         // Copies the Err payload to out. Panics if Ok.
-        let result_unwrap_err_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("result_unwrap_err", result_unwrap_err_type, None);
+        let result_unwrap_err_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("result_unwrap_err", result_unwrap_err_type, None);
 
         // result_try(res: *void, ok_size: i64, out: *void) -> i32
         // Returns tag (0=Ok, 1=Err). If Ok, copies payload to out.
-        let result_try_type = i32_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("result_try", result_try_type, None);
+        let result_try_type = i32_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("result_try", result_try_type, None);
 
         // result_ok(res: *void, ok_size: i64, out: *void) -> void
         // Converts Result<T, E> to Option<T>
-        let result_ok_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
+        let result_ok_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
         self.module.add_function("result_ok", result_ok_type, None);
 
         // result_err(res: *void, err_size: i64, out: *void) -> void
         // Converts Result<T, E> to Option<E>
-        let result_err_type = void_type.fn_type(&[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()], false);
-        self.module.add_function("result_err", result_err_type, None);
+        let result_err_type = void_type.fn_type(
+            &[i8_ptr_type.into(), i64_type.into(), i8_ptr_type.into()],
+            false,
+        );
+        self.module
+            .add_function("result_err", result_err_type, None);
 
         // result_expect(res: *void, ok_size: i64, msg: *i8, msg_len: i64, out: *void) -> void
         // Unwrap with custom panic message
-        let result_expect_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_expect", result_expect_type, None);
+        let result_expect_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_expect", result_expect_type, None);
 
         // result_expect_err(res: *void, err_size: i64, msg: *i8, msg_len: i64, out: *void) -> void
         // Unwrap error with custom panic message
-        let result_expect_err_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_expect_err", result_expect_err_type, None);
+        let result_expect_err_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_expect_err", result_expect_err_type, None);
 
         // result_unwrap_or(res: *void, ok_size: i64, default: *void, out: *void) -> void
         // Unwrap or return default value
-        let result_unwrap_or_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i8_ptr_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_unwrap_or", result_unwrap_or_type, None);
+        let result_unwrap_or_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_unwrap_or", result_unwrap_or_type, None);
 
         // result_and(res: *void, other: *void, other_size: i64, err_size: i64, out: *void) -> void
         // If Ok, returns other. If Err, returns the error from self.
-        let result_and_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_and", result_and_type, None);
+        let result_and_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_and", result_and_type, None);
 
         // result_or(res: *void, other: *void, ok_size: i64, other_size: i64, out: *void) -> void
         // If Ok, returns self. If Err, returns other.
-        let result_or_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i8_ptr_type.into(),
-            i64_type.into(), i64_type.into(),
-            i8_ptr_type.into()
-        ], false);
+        let result_or_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
         self.module.add_function("result_or", result_or_type, None);
 
         // result_as_ref(res: *void, ok_size: i64, err_size: i64, out: *void) -> void
         // Converts &Result<T, E> to Result<&T, &E>
-        let result_as_ref_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_as_ref", result_as_ref_type, None);
+        let result_as_ref_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_as_ref", result_as_ref_type, None);
 
         // result_as_mut(res: *void, ok_size: i64, err_size: i64, out: *void) -> void
         // Converts &mut Result<T, E> to Result<&mut T, &mut E>
-        let result_as_mut_type = void_type.fn_type(&[
-            i8_ptr_type.into(), i64_type.into(),
-            i64_type.into(), i8_ptr_type.into()
-        ], false);
-        self.module.add_function("result_as_mut", result_as_mut_type, None);
+        let result_as_mut_type = void_type.fn_type(
+            &[
+                i8_ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+                i8_ptr_type.into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("result_as_mut", result_as_mut_type, None);
 
         // === File I/O Functions ===
 
@@ -4678,32 +5475,42 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // file_exists(path: {*i8, i64}) -> i1 (bool)
         // Check if a file exists at the given path
         let file_exists_type = bool_type.fn_type(&[str_slice_type.into()], false);
-        self.module.add_function("file_exists", file_exists_type, None);
+        self.module
+            .add_function("file_exists", file_exists_type, None);
 
         // file_size(path: {*i8, i64}) -> i64
         // Get the size of a file in bytes (-1 on error)
-        let file_size_type = self.context.i64_type().fn_type(&[str_slice_type.into()], false);
+        let file_size_type = self
+            .context
+            .i64_type()
+            .fn_type(&[str_slice_type.into()], false);
         self.module.add_function("file_size", file_size_type, None);
 
         // file_write_string(path: {*i8, i64}, content: {*i8, i64}) -> i1 (bool: true = success)
         // Write string content to a file
-        let file_write_string_type = bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
-        self.module.add_function("file_write_string", file_write_string_type, None);
+        let file_write_string_type =
+            bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
+        self.module
+            .add_function("file_write_string", file_write_string_type, None);
 
         // file_read_to_string(path: {*i8, i64}) -> {*i8, i64} (String as str slice)
         // Read file contents as String
         let file_read_to_string_type = str_slice_type.fn_type(&[str_slice_type.into()], false);
-        self.module.add_function("file_read_to_string", file_read_to_string_type, None);
+        self.module
+            .add_function("file_read_to_string", file_read_to_string_type, None);
 
         // file_delete(path: {*i8, i64}) -> i1 (bool: true = success)
         // Delete a file at the given path
         let file_delete_type = bool_type.fn_type(&[str_slice_type.into()], false);
-        self.module.add_function("file_delete", file_delete_type, None);
+        self.module
+            .add_function("file_delete", file_delete_type, None);
 
         // file_append_string(path: {*i8, i64}, content: {*i8, i64}) -> i1 (bool: true = success)
         // Append string content to a file (creates if needed)
-        let file_append_string_type = bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
-        self.module.add_function("file_append_string", file_append_string_type, None);
+        let file_append_string_type =
+            bool_type.fn_type(&[str_slice_type.into(), str_slice_type.into()], false);
+        self.module
+            .add_function("file_append_string", file_append_string_type, None);
 
         // system(cmd: {*i8, i64}) -> i32 (exit code)
         // Execute a shell command and return its exit code
@@ -4719,25 +5526,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // blood_clock_millis() -> i64
         let clock_millis_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_clock_millis", clock_millis_type, None);
+        self.module
+            .add_function("blood_clock_millis", clock_millis_type, None);
 
         // blood_clock_nanos() -> i64
         let clock_nanos_type = i64_type.fn_type(&[], false);
-        self.module.add_function("blood_clock_nanos", clock_nanos_type, None);
+        self.module
+            .add_function("blood_clock_nanos", clock_nanos_type, None);
 
         // === Bit Reinterpretation ===
 
         // blood_float64_to_bits(f64) -> i64
         let f64_type = self.context.f64_type();
         let float_to_bits_type = i64_type.fn_type(&[f64_type.into()], false);
-        self.module.add_function("blood_float64_to_bits", float_to_bits_type, None);
+        self.module
+            .add_function("blood_float64_to_bits", float_to_bits_type, None);
 
         // === Command-Line Arguments ===
 
         // args_count() -> i32
         // Get the number of command-line arguments
         let args_count_type = i32_type.fn_type(&[], false);
-        self.module.add_function("args_count", args_count_type, None);
+        self.module
+            .add_function("args_count", args_count_type, None);
 
         // args_get(index: i32) -> {*i8, i64} (String as str slice)
         // Get command-line argument at index

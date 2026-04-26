@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type, FnSig, TyVarId};
-use super::dispatch::{MethodCandidate, TypeParam, Constraint, EffectRow};
+use super::dispatch::{Constraint, EffectRow, MethodCandidate, TypeParam};
+use crate::hir::{DefId, FnSig, TyVarId, Type};
 
 /// A method family is a collection of methods with the same name.
 #[derive(Debug, Clone, Default)]
@@ -311,7 +311,11 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     for i in 1..=a_len {
         for j in 1..=b_len {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
             matrix[i][j] = std::cmp::min(
                 std::cmp::min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1),
                 matrix[i - 1][j - 1] + cost,

@@ -11,8 +11,8 @@ use std::fmt;
 use crate::hir::{Type, TypeKind};
 use crate::typeck::unify::Unifier;
 
-use super::types::MethodCandidate;
 use super::resolver::DispatchResolver;
+use super::types::MethodCandidate;
 
 /// Error indicating type instability in a method family.
 ///
@@ -238,24 +238,42 @@ impl<'a> TypeStabilityChecker<'a> {
 
             // Same ADT
             (
-                TypeKind::Adt { def_id: d1, args: a1 },
-                TypeKind::Adt { def_id: d2, args: a2 },
+                TypeKind::Adt {
+                    def_id: d1,
+                    args: a1,
+                },
+                TypeKind::Adt {
+                    def_id: d2,
+                    args: a2,
+                },
             ) => {
                 d1 == d2
                     && a1.len() == a2.len()
-                    && a1.iter().zip(a2).all(|(x, y)| self.types_could_overlap(x, y))
+                    && a1
+                        .iter()
+                        .zip(a2)
+                        .all(|(x, y)| self.types_could_overlap(x, y))
             }
 
             // Tuples of same length
             (TypeKind::Tuple(ts1), TypeKind::Tuple(ts2)) => {
                 ts1.len() == ts2.len()
-                    && ts1.iter().zip(ts2).all(|(x, y)| self.types_could_overlap(x, y))
+                    && ts1
+                        .iter()
+                        .zip(ts2)
+                        .all(|(x, y)| self.types_could_overlap(x, y))
             }
 
             // Arrays of same length
             (
-                TypeKind::Array { element: e1, size: s1 },
-                TypeKind::Array { element: e2, size: s2 },
+                TypeKind::Array {
+                    element: e1,
+                    size: s1,
+                },
+                TypeKind::Array {
+                    element: e2,
+                    size: s2,
+                },
             ) => s1 == s2 && self.types_could_overlap(e1, e2),
 
             // Slices
@@ -265,17 +283,34 @@ impl<'a> TypeStabilityChecker<'a> {
 
             // References with same mutability
             (
-                TypeKind::Ref { inner: i1, mutable: m1 },
-                TypeKind::Ref { inner: i2, mutable: m2 },
+                TypeKind::Ref {
+                    inner: i1,
+                    mutable: m1,
+                },
+                TypeKind::Ref {
+                    inner: i2,
+                    mutable: m2,
+                },
             ) => m1 == m2 && self.types_could_overlap(i1, i2),
 
             // Function types
             (
-                TypeKind::Fn { params: p1, ret: r1, .. },
-                TypeKind::Fn { params: p2, ret: r2, .. },
+                TypeKind::Fn {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
             ) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2).all(|(x, y)| self.types_could_overlap(x, y))
+                    && p1
+                        .iter()
+                        .zip(p2)
+                        .all(|(x, y)| self.types_could_overlap(x, y))
                     && self.types_could_overlap(r1, r2)
             }
 
@@ -321,24 +356,42 @@ impl<'a> TypeStabilityChecker<'a> {
         match (a.kind.as_ref(), b.kind.as_ref()) {
             (TypeKind::Primitive(pa), TypeKind::Primitive(pb)) => pa == pb,
             (TypeKind::Tuple(as_), TypeKind::Tuple(bs)) => {
-                as_.len() == bs.len()
-                    && as_.iter().zip(bs).all(|(a, b)| self.types_equal(a, b))
+                as_.len() == bs.len() && as_.iter().zip(bs).all(|(a, b)| self.types_equal(a, b))
             }
             (
-                TypeKind::Array { element: a_elem, size: a_len },
-                TypeKind::Array { element: b_elem, size: b_len },
+                TypeKind::Array {
+                    element: a_elem,
+                    size: a_len,
+                },
+                TypeKind::Array {
+                    element: b_elem,
+                    size: b_len,
+                },
             ) => a_len == b_len && self.types_equal(a_elem, b_elem),
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
+                self.types_equal(a_elem, b_elem)
+            }
             (
-                TypeKind::Slice { element: a_elem },
-                TypeKind::Slice { element: b_elem },
-            ) => self.types_equal(a_elem, b_elem),
-            (
-                TypeKind::Ref { inner: a_inner, mutable: a_mut },
-                TypeKind::Ref { inner: b_inner, mutable: b_mut },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: a_mut,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: b_mut,
+                },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, .. },
+                TypeKind::Fn {
+                    params: a_params,
+                    ret: a_ret,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: b_params,
+                    ret: b_ret,
+                    ..
+                },
             ) => {
                 a_params.len() == b_params.len()
                     && a_params
@@ -348,12 +401,21 @@ impl<'a> TypeStabilityChecker<'a> {
                     && self.types_equal(a_ret, b_ret)
             }
             (
-                TypeKind::Adt { def_id: a_def, args: a_args },
-                TypeKind::Adt { def_id: b_def, args: b_args },
+                TypeKind::Adt {
+                    def_id: a_def,
+                    args: a_args,
+                },
+                TypeKind::Adt {
+                    def_id: b_def,
+                    args: b_args,
+                },
             ) => {
                 a_def == b_def
                     && a_args.len() == b_args.len()
-                    && a_args.iter().zip(b_args).all(|(a, b)| self.types_equal(a, b))
+                    && a_args
+                        .iter()
+                        .zip(b_args)
+                        .all(|(a, b)| self.types_equal(a, b))
             }
             (TypeKind::Infer(a_var), TypeKind::Infer(b_var)) => a_var == b_var,
             (TypeKind::Param(a_var), TypeKind::Param(b_var)) => a_var == b_var,
@@ -432,9 +494,8 @@ impl<'a> TypeStabilityChecker<'a> {
         m1: &MethodCandidate,
         m2: &MethodCandidate,
     ) -> Option<Vec<Type>> {
-        let is_type_var = |t: &Type| {
-            matches!(t.kind.as_ref(), TypeKind::Infer(_) | TypeKind::Param(_))
-        };
+        let is_type_var =
+            |t: &Type| matches!(t.kind.as_ref(), TypeKind::Infer(_) | TypeKind::Param(_));
 
         let types: Vec<Type> = m1
             .param_types

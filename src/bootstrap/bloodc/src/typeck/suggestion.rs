@@ -117,12 +117,11 @@ where
         .collect();
 
     // Sort by distance (closest first), then alphabetically for determinism
-    candidates.sort_by(|a, b| {
-        a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0))
-    });
+    candidates.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     // Return at most 3 suggestions
-    candidates.into_iter()
+    candidates
+        .into_iter()
         .take(3)
         .map(|(name, _)| name)
         .collect()
@@ -181,11 +180,7 @@ pub fn format_suggestions(suggestions: &[String]) -> Option<String> {
                 .iter()
                 .map(|s| format!("`{}`", s))
                 .collect();
-            Some(format!(
-                "did you mean {}, or `{}`?",
-                rest.join(", "),
-                last
-            ))
+            Some(format!("did you mean {}, or `{}`?", rest.join(", "), last))
         }
     }
 }

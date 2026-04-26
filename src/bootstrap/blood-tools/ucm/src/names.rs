@@ -159,7 +159,8 @@ impl Namespace {
 
         if rest.is_empty() {
             // Terminal segment - check if there's an existing namespace
-            let existing_ns = if let Some(NamespaceEntry::Namespace(ns)) = self.children.get(first) {
+            let existing_ns = if let Some(NamespaceEntry::Namespace(ns)) = self.children.get(first)
+            {
                 Some(ns.clone())
             } else {
                 None
@@ -167,10 +168,8 @@ impl Namespace {
 
             if let Some(ns) = existing_ns {
                 // Convert namespace to Both (has both definition and children)
-                self.children.insert(
-                    first.clone(),
-                    NamespaceEntry::Both(hash, ns),
-                );
+                self.children
+                    .insert(first.clone(), NamespaceEntry::Both(hash, ns));
             } else {
                 // Just a definition
                 self.children

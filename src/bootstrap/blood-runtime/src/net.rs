@@ -781,7 +781,9 @@ impl UdpSocket {
 
     /// Set the write timeout.
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<()> {
-        self.inner.set_write_timeout(timeout).map_err(NetError::from)
+        self.inner
+            .set_write_timeout(timeout)
+            .map_err(NetError::from)
     }
 
     /// Set the broadcast flag.
@@ -922,12 +924,14 @@ pub fn is_multicast(addr: &std::net::IpAddr) -> bool {
 
 /// Parse an IP address from a string.
 pub fn parse_ip(s: &str) -> Result<std::net::IpAddr> {
-    s.parse().map_err(|_| NetError::InvalidAddress(s.to_string()))
+    s.parse()
+        .map_err(|_| NetError::InvalidAddress(s.to_string()))
 }
 
 /// Parse a socket address from a string.
 pub fn parse_socket_addr(s: &str) -> Result<SocketAddr> {
-    s.parse().map_err(|_| NetError::InvalidAddress(s.to_string()))
+    s.parse()
+        .map_err(|_| NetError::InvalidAddress(s.to_string()))
 }
 
 // ============================================================================

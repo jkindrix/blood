@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{BinOp, UnaryOp, LiteralKind};
-use crate::span::Span;
 use super::{DefId, LocalId, Type};
+use crate::ast::{BinOp, LiteralKind, UnaryOp};
+use crate::span::Span;
 
 /// A unique identifier for a function/closure body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,16 +129,10 @@ pub enum ExprKind {
     },
 
     /// Unary operation: `-x`, `!x`, `*x`, `&x`
-    Unary {
-        op: UnaryOp,
-        operand: Box<Expr>,
-    },
+    Unary { op: UnaryOp, operand: Box<Expr> },
 
     /// Function call: `f(x, y)`
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
 
     /// Method call: `x.method(y)`
     /// Note: In HIR, this is resolved to a function call with receiver.
@@ -149,16 +143,10 @@ pub enum ExprKind {
     },
 
     /// Field access: `x.field`
-    Field {
-        base: Box<Expr>,
-        field_idx: u32,
-    },
+    Field { base: Box<Expr>, field_idx: u32 },
 
     /// Array/slice indexing: `x[i]`
-    Index {
-        base: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { base: Box<Expr>, index: Box<Expr> },
 
     /// Tuple expression: `(a, b, c)`
     Tuple(Vec<Expr>),
@@ -167,10 +155,7 @@ pub enum ExprKind {
     Array(Vec<Expr>),
 
     /// Array repeat: `[x; N]`
-    Repeat {
-        value: Box<Expr>,
-        count: u64,
-    },
+    Repeat { value: Box<Expr>, count: u64 },
 
     /// Struct construction: `Point { x: 1, y: 2 }`
     Struct {
@@ -180,9 +165,7 @@ pub enum ExprKind {
     },
 
     /// Anonymous record construction: `{ x: 1, y: 2 }`
-    Record {
-        fields: Vec<RecordFieldExpr>,
-    },
+    Record { fields: Vec<RecordFieldExpr> },
 
     /// Enum variant construction: `Some(x)`
     Variant {
@@ -192,16 +175,10 @@ pub enum ExprKind {
     },
 
     /// Type cast: `x as T`
-    Cast {
-        expr: Box<Expr>,
-        target_ty: Type,
-    },
+    Cast { expr: Box<Expr>, target_ty: Type },
 
     /// Assignment: `x = y`
-    Assign {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
+    Assign { target: Box<Expr>, value: Box<Expr> },
 
     /// Block: `{ stmts; expr }`
     Block {
@@ -247,9 +224,7 @@ pub enum ExprKind {
     },
 
     /// Continue: `continue`
-    Continue {
-        label: Option<LoopId>,
-    },
+    Continue { label: Option<LoopId> },
 
     /// Closure: `|x| x + 1`
     Closure {
@@ -258,25 +233,16 @@ pub enum ExprKind {
     },
 
     /// Borrow: `&x` or `&mut x`
-    Borrow {
-        expr: Box<Expr>,
-        mutable: bool,
-    },
+    Borrow { expr: Box<Expr>, mutable: bool },
 
     /// Dereference: `*x`
     Deref(Box<Expr>),
 
     /// Address of: for raw pointers
-    AddrOf {
-        expr: Box<Expr>,
-        mutable: bool,
-    },
+    AddrOf { expr: Box<Expr>, mutable: bool },
 
     /// Let binding within an expression (let-else)
-    Let {
-        pattern: Pattern,
-        init: Box<Expr>,
-    },
+    Let { pattern: Pattern, init: Box<Expr> },
 
     /// Unsafe block: `unsafe { ... }`
     Unsafe(Box<Expr>),
@@ -373,7 +339,6 @@ pub enum ExprKind {
     // =========================================================================
     // Macro Expansion Results
     // =========================================================================
-
     /// Expanded format macro (format!, println!, print!, etc.)
     MacroExpansion {
         macro_name: String,
@@ -387,10 +352,7 @@ pub enum ExprKind {
     VecLiteral(Vec<Expr>),
 
     /// Vec repeat: `vec![0; 10]`
-    VecRepeat {
-        value: Box<Expr>,
-        count: Box<Expr>,
-    },
+    VecRepeat { value: Box<Expr>, count: Box<Expr> },
 
     /// Assert expression: `assert!(cond)` or `assert!(cond, msg)`
     Assert {
@@ -585,10 +547,7 @@ pub enum PatternKind {
     /// Or pattern: `A | B`
     Or(Vec<Pattern>),
     /// Reference: `&x`
-    Ref {
-        mutable: bool,
-        inner: Box<Pattern>,
-    },
+    Ref { mutable: bool, inner: Box<Pattern> },
     /// Range: `0..10`, `'a'..='z'`
     Range {
         start: Option<Box<Pattern>>,

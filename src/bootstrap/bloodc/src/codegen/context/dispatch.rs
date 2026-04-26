@@ -5,12 +5,12 @@
 //! - VTable dispatch for trait objects
 //! - VTable generation for trait implementations
 
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::types::BasicType;
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 
-use crate::hir::{self, Type, TypeKind, DefId};
 use crate::diagnostics::Diagnostic;
+use crate::hir::{self, DefId, Type, TypeKind};
 use crate::span::Span;
 
 use super::CodegenContext;
@@ -34,18 +34,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Get the blood_get_type_tag runtime function
-        let get_type_tag_fn = self.module.get_function("blood_get_type_tag")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_get_type_tag not found",
-                receiver.span,
-            )])?;
+        let get_type_tag_fn = self
+            .module
+            .get_function("blood_get_type_tag")
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Runtime function blood_get_type_tag not found",
+                    receiver.span,
+                )]
+            })?;
 
         // Get the blood_dispatch_lookup runtime function
-        let dispatch_lookup_fn = self.module.get_function("blood_dispatch_lookup")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_dispatch_lookup not found",
-                receiver.span,
-            )])?;
+        let dispatch_lookup_fn = self
+            .module
+            .get_function("blood_dispatch_lookup")
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Runtime function blood_dispatch_lookup not found",
+                    receiver.span,
+                )]
+            })?;
 
         // Cast receiver to void* for the type tag lookup
         let receiver_ptr = match receiver_val {
@@ -53,40 +61,74 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             _ => {
                 // For non-pointer types, we need to allocate and store
                 // This shouldn't normally happen for method receivers
-                let alloca = self.builder
+                let alloca = self
+                    .builder
                     .build_alloca(receiver_val.get_type(), "receiver_tmp")
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            receiver.span,
+                        )]
+                    })?;
                 self.builder
                     .build_store(alloca, *receiver_val)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            receiver.span,
+                        )]
+                    })?;
                 alloca
             }
         };
 
-        let receiver_void_ptr = self.builder
+        let receiver_void_ptr = self
+            .builder
             .build_pointer_cast(receiver_ptr, ptr_type, "receiver_void")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?;
 
         // Get the type tag: blood_get_type_tag(receiver)
-        let type_tag = self.builder
+        let type_tag = self
+            .builder
             .build_call(get_type_tag_fn, &[receiver_void_ptr.into()], "type_tag")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?
             .try_as_basic_value()
             .basic()
             .ok_or_else(|| vec![Diagnostic::error("Expected type tag result", receiver.span)])?;
 
         // Look up the implementation: blood_dispatch_lookup(method_slot, type_tag)
         let method_slot_val = i64_type.const_int(method_slot, false);
-        let impl_ptr = self.builder
+        let impl_ptr = self
+            .builder
             .build_call(
                 dispatch_lookup_fn,
                 &[method_slot_val.into(), type_tag.into()],
                 "impl_ptr",
             )
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?
             .try_as_basic_value()
             .basic()
-            .ok_or_else(|| vec![Diagnostic::error("Expected implementation pointer", receiver.span)])?;
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Expected implementation pointer",
+                    receiver.span,
+                )]
+            })?;
 
         // Build the function type for the indirect call
         // Extract parameter types from the BasicMetadataValueEnum values
@@ -95,13 +137,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .filter_map(|arg| {
                 // Convert BasicMetadataValueEnum to its type
                 match arg {
-                    inkwell::values::BasicMetadataValueEnum::ArrayValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::IntValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::FloatValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::PointerValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::StructValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::VectorValue(v) => Some(v.get_type().into()),
-                    inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => Some(v.get_type().into()),
+                    inkwell::values::BasicMetadataValueEnum::ArrayValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::IntValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::FloatValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::PointerValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::StructValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::VectorValue(v) => {
+                        Some(v.get_type().into())
+                    }
+                    inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => {
+                        Some(v.get_type().into())
+                    }
                     inkwell::values::BasicMetadataValueEnum::MetadataValue(_) => None,
                 }
             })
@@ -121,14 +177,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // In inkwell 0.8 with opaque pointers, no pointer cast is needed —
         // use build_indirect_call with the function type directly
         let impl_ptr_val = impl_ptr.into_pointer_value();
-        let call_site = self.builder
-            .build_indirect_call(
-                fn_type,
-                impl_ptr_val,
-                compiled_args,
-                "dispatch_call",
-            )
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+        let call_site = self
+            .builder
+            .build_indirect_call(fn_type, impl_ptr_val, compiled_args, "dispatch_call")
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?;
 
         Ok(call_site.try_as_basic_value().basic())
     }
@@ -150,33 +207,52 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
 
         // Compile the receiver - this should be a fat pointer { data_ptr, vtable_ptr }
-        let fat_ptr = self.compile_expr(receiver)?
-            .ok_or_else(|| vec![Diagnostic::error(
+        let fat_ptr = self.compile_expr(receiver)?.ok_or_else(|| {
+            vec![Diagnostic::error(
                 "Expected fat pointer for dyn Trait receiver",
                 receiver.span,
-            )])?;
+            )]
+        })?;
 
         let fat_ptr_struct = fat_ptr.into_struct_value();
 
         // Extract data pointer (index 0)
-        let data_ptr = self.builder
+        let data_ptr = self
+            .builder
             .build_extract_value(fat_ptr_struct, 0, "data_ptr")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?
             .into_pointer_value();
 
         // Extract vtable pointer (index 1)
-        let vtable_ptr = self.builder
+        let vtable_ptr = self
+            .builder
             .build_extract_value(fat_ptr_struct, 1, "vtable_ptr")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?
             .into_pointer_value();
 
         // Get the method name from the method_id to look up its slot
         // For now, we'll use the method_id to look up in the trait's method list
-        let method_slot = self.get_vtable_slot_for_method(trait_id, method_id)
-            .ok_or_else(|| vec![Diagnostic::error(
-                format!("Method {:?} not found in vtable for trait {:?}", method_id, trait_id),
-                receiver.span,
-            )])?;
+        let method_slot = self
+            .get_vtable_slot_for_method(trait_id, method_id)
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    format!(
+                        "Method {:?} not found in vtable for trait {:?}",
+                        method_id, trait_id
+                    ),
+                    receiver.span,
+                )]
+            })?;
 
         // Calculate pointer to the method slot in the vtable
         // With opaque pointers, vtable is just a pointer to an array of pointers
@@ -191,12 +267,24 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 &[i32_ty.const_int(method_slot as u64, false)],
                 "slot_ptr",
             )
-        }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+        }
+        .map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM error: {}", e),
+                receiver.span,
+            )]
+        })?;
 
         // Load the function pointer from the slot
-        let fn_ptr = self.builder
+        let fn_ptr = self
+            .builder
             .build_load(ptr_ty, slot_ptr, "fn_ptr")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?
             .into_pointer_value();
 
         // Compile remaining arguments with data_ptr as first argument
@@ -214,10 +302,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 inkwell::values::BasicMetadataValueEnum::ArrayValue(v) => Some(v.get_type().into()),
                 inkwell::values::BasicMetadataValueEnum::IntValue(v) => Some(v.get_type().into()),
                 inkwell::values::BasicMetadataValueEnum::FloatValue(v) => Some(v.get_type().into()),
-                inkwell::values::BasicMetadataValueEnum::PointerValue(v) => Some(v.get_type().into()),
-                inkwell::values::BasicMetadataValueEnum::StructValue(v) => Some(v.get_type().into()),
-                inkwell::values::BasicMetadataValueEnum::VectorValue(v) => Some(v.get_type().into()),
-                inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => Some(v.get_type().into()),
+                inkwell::values::BasicMetadataValueEnum::PointerValue(v) => {
+                    Some(v.get_type().into())
+                }
+                inkwell::values::BasicMetadataValueEnum::StructValue(v) => {
+                    Some(v.get_type().into())
+                }
+                inkwell::values::BasicMetadataValueEnum::VectorValue(v) => {
+                    Some(v.get_type().into())
+                }
+                inkwell::values::BasicMetadataValueEnum::ScalableVectorValue(v) => {
+                    Some(v.get_type().into())
+                }
                 inkwell::values::BasicMetadataValueEnum::MetadataValue(_) => None,
             })
             .collect();
@@ -231,14 +327,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Call through function pointer using indirect call
         // With opaque pointers, no pointer cast is needed — pass fn_type directly
-        let call_site = self.builder
-            .build_indirect_call(
-                fn_type,
-                fn_ptr,
-                &compiled_args,
-                "vtable_call",
-            )
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), receiver.span)])?;
+        let call_site = self
+            .builder
+            .build_indirect_call(fn_type, fn_ptr, &compiled_args, "vtable_call")
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    receiver.span,
+                )]
+            })?;
 
         Ok(call_site.try_as_basic_value().basic())
     }
@@ -250,8 +347,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     fn get_vtable_slot_for_method(&self, trait_id: DefId, method_id: DefId) -> Option<usize> {
         if let Some(layout) = self.vtable_layouts.get(&trait_id) {
             // Look up the method name from the method_id
-            let method_name = self.def_paths.get(&method_id)
-                .map(|s| s.as_str());
+            let method_name = self.def_paths.get(&method_id).map(|s| s.as_str());
 
             // Search by method name if available
             if let Some(name) = method_name {
@@ -300,17 +396,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let i64_type = self.context.i64_type();
         let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
 
-        let dispatch_register_fn = self.module.get_function("blood_dispatch_register")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_dispatch_register not found",
-                span,
-            )])?;
+        let dispatch_register_fn = self
+            .module
+            .get_function("blood_dispatch_register")
+            .ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "Runtime function blood_dispatch_register not found",
+                    span,
+                )]
+            })?;
 
         let method_slot_val = i64_type.const_int(method_slot, false);
         let type_tag_val = i64_type.const_int(type_tag, false);
 
         // Cast function to void*
-        let impl_ptr = self.builder
+        let impl_ptr = self
+            .builder
             .build_pointer_cast(
                 impl_fn.as_global_value().as_pointer_value(),
                 i8_ptr_type,
@@ -369,10 +470,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     if let hir::TraitItemKind::Fn(_, _) = &trait_item.kind {
                         slots.push((trait_item.name.clone(), idx));
                         // Map abstract trait method DefId -> (trait_id, method_name)
-                        self.trait_method_info.insert(
-                            trait_item.def_id,
-                            (*def_id, trait_item.name.clone()),
-                        );
+                        self.trait_method_info
+                            .insert(trait_item.def_id, (*def_id, trait_item.name.clone()));
                     }
                 }
 
@@ -413,7 +512,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let vtable_type = ptr_type.array_type(vtable_len as u32);
 
         // Create a unique name for this vtable
-        let trait_path = self.def_paths.get(&trait_id)
+        let trait_path = self
+            .def_paths
+            .get(&trait_id)
             .cloned()
             .unwrap_or_else(|| format!("{}", trait_id.index()));
         let vtable_name = format!(
@@ -439,7 +540,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         for (method_name, _slot_idx) in &layout {
             // Look up the impl method by name from TraitImplInfo.methods
-            let impl_fn = impl_info.methods.iter()
+            let impl_fn = impl_info
+                .methods
+                .iter()
                 .find(|(name, _)| name == method_name)
                 .and_then(|(_, def_id)| self.functions.get(def_id).copied());
 
@@ -467,7 +570,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if let Some(type_def_id) = self.type_to_def_id(&impl_info.self_ty) {
             self.vtables.insert((trait_id, type_def_id), vtable_global);
         } else {
-            debug_assert!(false, "ICE: vtable generated for non-ADT type: {:?}", impl_info.self_ty);
+            debug_assert!(
+                false,
+                "ICE: vtable generated for non-ADT type: {:?}",
+                impl_info.self_ty
+            );
         }
 
         Ok(())
@@ -477,29 +584,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     fn type_to_vtable_name(&self, ty: &Type) -> String {
         match ty.kind() {
             TypeKind::Primitive(prim) => format!("{:?}", prim).to_lowercase(),
-            TypeKind::Adt { def_id, .. } => {
-                self.def_paths.get(def_id)
-                    .map(|p| format!("adt_{}", p))
-                    .unwrap_or_else(|| format!("adt{}", def_id.index()))
-            }
+            TypeKind::Adt { def_id, .. } => self
+                .def_paths
+                .get(def_id)
+                .map(|p| format!("adt_{}", p))
+                .unwrap_or_else(|| format!("adt{}", def_id.index())),
             TypeKind::Ref { mutable, inner } => {
                 let m = if *mutable { "mut_" } else { "" };
                 format!("{}ref_{}", m, self.type_to_vtable_name(inner))
             }
             TypeKind::Tuple(elems) => {
-                let parts: Vec<_> = elems.iter()
-                    .map(|e| self.type_to_vtable_name(e))
-                    .collect();
+                let parts: Vec<_> = elems.iter().map(|e| self.type_to_vtable_name(e)).collect();
                 format!("tuple_{}", parts.join("_"))
             }
             TypeKind::Fn { params, ret, .. } => {
-                let parts: Vec<_> = params.iter()
-                    .map(|p| self.type_to_vtable_name(p))
-                    .collect();
+                let parts: Vec<_> = params.iter().map(|p| self.type_to_vtable_name(p)).collect();
                 format!("fn_{}_{}", parts.join("_"), self.type_to_vtable_name(ret))
             }
             TypeKind::Closure { def_id, .. } => format!("closure{}", def_id.index()),
-            TypeKind::Array { element, .. } => format!("array_{}", self.type_to_vtable_name(element)),
+            TypeKind::Array { element, .. } => {
+                format!("array_{}", self.type_to_vtable_name(element))
+            }
             TypeKind::Slice { element } => format!("slice_{}", self.type_to_vtable_name(element)),
             TypeKind::Ptr { inner, mutable } => {
                 let m = if *mutable { "mut_" } else { "const_" };
@@ -510,13 +615,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let kind = if *inclusive { "rangeinc" } else { "range" };
                 format!("{}_{}", kind, self.type_to_vtable_name(element))
             }
-            TypeKind::DynTrait { trait_id, .. } => {
-                self.def_paths.get(trait_id)
-                    .map(|p| format!("dyn_{}", p))
-                    .unwrap_or_else(|| format!("dyn{}", trait_id.index()))
-            }
+            TypeKind::DynTrait { trait_id, .. } => self
+                .def_paths
+                .get(trait_id)
+                .map(|p| format!("dyn_{}", p))
+                .unwrap_or_else(|| format!("dyn{}", trait_id.index())),
             TypeKind::Record { fields, .. } => {
-                let parts: Vec<_> = fields.iter()
+                let parts: Vec<_> = fields
+                    .iter()
                     .map(|f| format!("{:?}_{}", f.name, self.type_to_vtable_name(&f.ty)))
                     .collect();
                 format!("record_{}", parts.join("_"))
@@ -525,7 +631,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             TypeKind::Ownership { inner, .. } => self.type_to_vtable_name(inner),
             // ICE: these types should not appear in vtable contexts
             TypeKind::Infer(_) | TypeKind::Param(_) | TypeKind::Error => {
-                debug_assert!(false, "ICE: unexpected type in vtable naming: {:?}", ty.kind());
+                debug_assert!(
+                    false,
+                    "ICE: unexpected type in vtable naming: {:?}",
+                    ty.kind()
+                );
                 "error".to_string()
             }
         }
@@ -572,47 +682,42 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let source_ty = &expr.ty;
 
         // Compile the source expression
-        let val = self.compile_expr(expr)?
-            .ok_or_else(|| vec![Diagnostic::error(
+        let val = self.compile_expr(expr)?.ok_or_else(|| {
+            vec![Diagnostic::error(
                 "Expected value for trait object coercion",
                 expr.span,
-            )])?;
+            )]
+        })?;
 
         // Get data pointer - if not already a pointer, allocate and store
         let data_ptr = match val {
-            BasicValueEnum::PointerValue(ptr) => {
-                self.builder.build_pointer_cast(ptr, ptr_ty, "data_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), expr.span
-                    )])?
-            }
+            BasicValueEnum::PointerValue(ptr) => self
+                .builder
+                .build_pointer_cast(ptr, ptr_ty, "data_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])?,
             _ => {
                 // Allocate temporary storage for the value
-                let alloca = self.builder
+                let alloca = self
+                    .builder
                     .build_alloca(val.get_type(), "trait_obj_data")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), expr.span
-                    )])?;
+                    .map_err(|e| {
+                        vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)]
+                    })?;
+                self.builder.build_store(alloca, val).map_err(|e| {
+                    vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)]
+                })?;
                 self.builder
-                    .build_store(alloca, val)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), expr.span
-                    )])?;
-                self.builder.build_pointer_cast(alloca, ptr_ty, "data_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), expr.span
-                    )])?
+                    .build_pointer_cast(alloca, ptr_ty, "data_ptr")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])?
             }
         };
 
         // Get vtable pointer for (trait_id, source_type)
         let vtable_ptr = match self.get_vtable(trait_id, source_ty) {
-            Some(vtable) => {
-                self.builder.build_pointer_cast(vtable, ptr_ty, "vtable_ptr")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM error: {}", e), expr.span
-                    )])?
-            }
+            Some(vtable) => self
+                .builder
+                .build_pointer_cast(vtable, ptr_ty, "vtable_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])?,
             None => {
                 // No vtable found - use null (will cause runtime error if called)
                 // This might happen if the impl block wasn't processed yet
@@ -628,13 +733,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Create fat pointer struct { data_ptr, vtable_ptr }
-        let fat_ptr_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fat_ptr_ty = self
+            .context
+            .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
         let mut fat_ptr = fat_ptr_ty.get_undef();
-        fat_ptr = self.builder
+        fat_ptr = self
+            .builder
             .build_insert_value(fat_ptr, data_ptr, 0, "fat_ptr.data")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])?
             .into_struct_value();
-        fat_ptr = self.builder
+        fat_ptr = self
+            .builder
             .build_insert_value(fat_ptr, vtable_ptr, 1, "fat_ptr.vtable")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), expr.span)])?
             .into_struct_value();

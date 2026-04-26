@@ -59,12 +59,26 @@ fn test_algebraic_effects_declarations() {
         .expect("Failed to read algebraic_effects.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse algebraic_effects.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse algebraic_effects.blood");
 
     // Count different declaration types
-    let effect_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Effect(_))).count();
-    let handler_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Handler(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let effect_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Effect(_)))
+        .count();
+    let handler_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Handler(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have a comprehensive example
     assert!(
@@ -81,18 +95,26 @@ fn test_algebraic_effects_declarations() {
     );
 
     // Check for deep handlers
-    let deep_handler_count = program.declarations.iter().filter(|d| {
-        matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Deep)
-    }).count();
+    let deep_handler_count = program
+        .declarations
+        .iter()
+        .filter(
+            |d| matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Deep),
+        )
+        .count();
     assert!(
         deep_handler_count >= 7,
         "Expected at least 7 deep handlers, found {deep_handler_count}"
     );
 
     // Check for shallow handlers
-    let shallow_handler_count = program.declarations.iter().filter(|d| {
-        matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Shallow)
-    }).count();
+    let shallow_handler_count = program
+        .declarations
+        .iter()
+        .filter(
+            |d| matches!(d, Declaration::Handler(h) if h.kind == bloodc::ast::HandlerKind::Shallow),
+        )
+        .count();
     assert!(
         shallow_handler_count >= 3,
         "Expected at least 3 shallow handlers, found {shallow_handler_count}"
@@ -128,21 +150,21 @@ fn test_parse_all_examples() {
     //   - `with Effect` should be `/ Effect` (Blood effect syntax)
     //   - `fn` in effect declarations (should be `op`)
     let skip_files = [
-        "json_parser.blood",        // Uses matches! macro
-        "blood_parser.blood",       // Uses format! macro, `with` effect syntax
-        "blood_typeck.blood",       // Uses format! macro, `with` effect syntax
-        "blood_lexer.blood",        // Uses `fn` in effect (should be `op`), format! macro
-        "markdown_parser.blood",    // Uses `fn` in effect (should be `op`), format! macro
-        "sqlite_driver.blood",      // Uses format! macro
-        "config_parser.blood",      // Uses matches! macro, `with` effect syntax
-        "gzip_compression.blood",   // Uses `fn` in effect (should be `op`)
-        "http_server.blood",        // Uses format! macro
-        "http_client.blood",        // Uses format! macro
-        "argparse.blood",           // Uses format! macro
-        "web_scraper.blood",        // Uses format! macro
-        "order_book.blood",         // Uses `with` effect syntax
-        "gpio_driver.blood",        // Uses bitfield syntax
-        "state_machine.blood",      // Uses `with` effect syntax
+        "json_parser.blood",      // Uses matches! macro
+        "blood_parser.blood",     // Uses format! macro, `with` effect syntax
+        "blood_typeck.blood",     // Uses format! macro, `with` effect syntax
+        "blood_lexer.blood",      // Uses `fn` in effect (should be `op`), format! macro
+        "markdown_parser.blood",  // Uses `fn` in effect (should be `op`), format! macro
+        "sqlite_driver.blood",    // Uses format! macro
+        "config_parser.blood",    // Uses matches! macro, `with` effect syntax
+        "gzip_compression.blood", // Uses `fn` in effect (should be `op`)
+        "http_server.blood",      // Uses format! macro
+        "http_client.blood",      // Uses format! macro
+        "argparse.blood",         // Uses format! macro
+        "web_scraper.blood",      // Uses format! macro
+        "order_book.blood",       // Uses `with` effect syntax
+        "gpio_driver.blood",      // Uses bitfield syntax
+        "state_machine.blood",    // Uses `with` effect syntax
     ];
 
     for entry in entries {
@@ -201,8 +223,7 @@ fn test_parse_all_examples() {
 fn test_parse_performance_sanity() {
     use std::time::Instant;
 
-    let source = fs::read_to_string("../examples/hello.blood")
-        .expect("Failed to read hello.blood");
+    let source = fs::read_to_string("../examples/hello.blood").expect("Failed to read hello.blood");
 
     let start = Instant::now();
     for _ in 0..100 {
@@ -288,7 +309,10 @@ fn test_error_invalid_import() {
 fn test_error_incomplete_match_arm() {
     // Missing arrow and body in match arm
     let errors = parse_expect_error("fn foo() { match x { 1 } }");
-    assert!(!errors.is_empty(), "Should report error for incomplete match arm");
+    assert!(
+        !errors.is_empty(),
+        "Should report error for incomplete match arm"
+    );
 }
 
 #[test]
@@ -312,13 +336,19 @@ fn test_error_recovery_continues_parsing() {
 #[test]
 fn test_error_duplicate_comma() {
     let errors = parse_expect_error("fn foo(a: i32,, b: i32) {}");
-    assert!(!errors.is_empty(), "Should report error for duplicate comma");
+    assert!(
+        !errors.is_empty(),
+        "Should report error for duplicate comma"
+    );
 }
 
 #[test]
 fn test_error_trailing_operator() {
     let errors = parse_expect_error("fn foo() { 1 + }");
-    assert!(!errors.is_empty(), "Should report error for trailing operator");
+    assert!(
+        !errors.is_empty(),
+        "Should report error for trailing operator"
+    );
 }
 
 #[test]
@@ -355,11 +385,21 @@ fn test_generational_memory_declarations() {
         .expect("Failed to read generational_memory.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse generational_memory.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse generational_memory.blood");
 
     // Count different declaration types
-    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let struct_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Struct(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have the expected structs:
     // DataBlock, Point, RefHolder, SlotState, RegionStats
@@ -405,11 +445,21 @@ fn test_multiple_dispatch_declarations() {
         .expect("Failed to read multiple_dispatch.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse multiple_dispatch.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse multiple_dispatch.blood");
 
     // Count different declaration types
-    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let struct_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Struct(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have the expected structs:
     // Rectangle, Circle, Triangle, Point2D, Point3D, Animal, Dog, Cat
@@ -453,11 +503,21 @@ fn test_content_addressing_declarations() {
         .expect("Failed to read content_addressing.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse content_addressing.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse content_addressing.blood");
 
     // Count different declaration types
-    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let struct_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Struct(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have the expected structs:
     // BuildStats, DependencyInfo, DefinitionRecord
@@ -505,11 +565,21 @@ fn test_ffi_interop_declarations() {
         .expect("Failed to read ffi_interop.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse ffi_interop.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse ffi_interop.blood");
 
     // Count different declaration types
-    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let struct_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Struct(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have the expected structs:
     // CPoint, CRect, CSize, BufferDesc, RawPointer, FfiResult, CString, IoError, OwnedBuffer
@@ -552,13 +622,31 @@ fn test_concurrent_fibers_declarations() {
         .expect("Failed to read concurrent_fibers.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse concurrent_fibers.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse concurrent_fibers.blood");
 
     // Count different declaration types
-    let effect_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Effect(_))).count();
-    let handler_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Handler(_))).count();
-    let struct_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Struct(_))).count();
-    let fn_count = program.declarations.iter().filter(|d| matches!(d, Declaration::Function(_))).count();
+    let effect_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Effect(_)))
+        .count();
+    let handler_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Handler(_)))
+        .count();
+    let struct_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Struct(_)))
+        .count();
+    let fn_count = program
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, Declaration::Function(_)))
+        .count();
 
     // Verify we have the expected effects:
     // Fiber, Channel<T>, FiberSync, Cancel
@@ -607,14 +695,14 @@ fn test_concurrent_fibers_declarations() {
 /// This catches regressions like the O(n²) line_col bug.
 #[test]
 fn test_parse_complexity_is_linear() {
-    use std::time::Instant;
     use std::fs;
+    use std::time::Instant;
 
     // Test files of increasing size (use files >200 lines to reduce overhead impact)
     let files = [
-        "sorting.blood",            // ~230 lines
-        "algebraic_effects.blood",  // ~476 lines
-        "data_structures.blood",    // ~681 lines
+        "sorting.blood",           // ~230 lines
+        "algebraic_effects.blood", // ~476 lines
+        "data_structures.blood",   // ~681 lines
     ];
 
     let mut times_per_line = Vec::new();

@@ -78,10 +78,7 @@ pub enum FetchResult {
     /// Found in local cache.
     LocalHit(Vec<u8>),
     /// Found in remote cache (downloaded and stored locally).
-    RemoteHit {
-        data: Vec<u8>,
-        source: String,
-    },
+    RemoteHit { data: Vec<u8>, source: String },
     /// Not found anywhere.
     NotFound,
     /// Error during fetch.
@@ -204,13 +201,22 @@ impl DistributedCache {
     }
 
     /// Fetch from a specific remote endpoint.
-    fn fetch_from_remote(&mut self, hash: &ContentHash, config: &RemoteCacheConfig) -> Option<Vec<u8>> {
+    fn fetch_from_remote(
+        &mut self,
+        hash: &ContentHash,
+        config: &RemoteCacheConfig,
+    ) -> Option<Vec<u8>> {
         // Mark as in-flight
         self.in_flight.insert(*hash, ());
 
         // Construct the URL for this hash
         let hash_str = format!("{}", hash.full_display());
-        let url = format!("{}/objects/{}/{}", config.url, &hash_str[..2], &hash_str[2..]);
+        let url = format!(
+            "{}/objects/{}/{}",
+            config.url,
+            &hash_str[..2],
+            &hash_str[2..]
+        );
 
         // Attempt HTTP GET request
         let result = self.http_get(&url, config);
@@ -229,8 +235,7 @@ impl DistributedCache {
 
     /// Perform an HTTP GET request using ureq.
     fn http_get(&self, url: &str, config: &RemoteCacheConfig) -> Result<Vec<u8>, CacheError> {
-        let mut request = ureq::get(url)
-            .timeout(config.timeout);
+        let mut request = ureq::get(url).timeout(config.timeout);
 
         // Add auth header if configured
         if let Some(ref token) = config.auth_token {
@@ -238,9 +243,7 @@ impl DistributedCache {
         }
 
         let response = request.call().map_err(|e| {
-            CacheError::Io(std::io::Error::other(
-                format!("HTTP GET failed: {}", e),
-            ))
+            CacheError::Io(std::io::Error::other(format!("HTTP GET failed: {}", e)))
         })?;
 
         // Check status code
@@ -252,17 +255,19 @@ impl DistributedCache {
         }
 
         if response.status() >= 400 {
-            return Err(CacheError::Io(std::io::Error::other(
-                format!("HTTP error: status {}", response.status()),
-            )));
+            return Err(CacheError::Io(std::io::Error::other(format!(
+                "HTTP error: status {}",
+                response.status()
+            ))));
         }
 
         // Read response body
         let mut data = Vec::new();
         response.into_reader().read_to_end(&mut data).map_err(|e| {
-            CacheError::Io(std::io::Error::other(
-                format!("Failed to read response body: {}", e),
-            ))
+            CacheError::Io(std::io::Error::other(format!(
+                "Failed to read response body: {}",
+                e
+            )))
         })?;
 
         Ok(data)
@@ -300,13 +305,23 @@ impl DistributedCache {
         config: &RemoteCacheConfig,
     ) -> Result<(), CacheError> {
         let hash_str = format!("{}", hash.full_display());
-        let url = format!("{}/objects/{}/{}", config.url, &hash_str[..2], &hash_str[2..]);
+        let url = format!(
+            "{}/objects/{}/{}",
+            config.url,
+            &hash_str[..2],
+            &hash_str[2..]
+        );
 
         self.http_put(&url, data, config)
     }
 
     /// Perform an HTTP PUT request using ureq.
-    fn http_put(&self, url: &str, data: &[u8], config: &RemoteCacheConfig) -> Result<(), CacheError> {
+    fn http_put(
+        &self,
+        url: &str,
+        data: &[u8],
+        config: &RemoteCacheConfig,
+    ) -> Result<(), CacheError> {
         let mut request = ureq::put(url)
             .timeout(config.timeout)
             .set("Content-Type", "application/octet-stream");
@@ -317,16 +332,15 @@ impl DistributedCache {
         }
 
         let response = request.send_bytes(data).map_err(|e| {
-            CacheError::Io(std::io::Error::other(
-                format!("HTTP PUT failed: {}", e),
-            ))
+            CacheError::Io(std::io::Error::other(format!("HTTP PUT failed: {}", e)))
         })?;
 
         // Check status code
         if response.status() >= 400 {
-            return Err(CacheError::Io(std::io::Error::other(
-                format!("HTTP PUT error: status {}", response.status()),
-            )));
+            return Err(CacheError::Io(std::io::Error::other(format!(
+                "HTTP PUT error: status {}",
+                response.status()
+            ))));
         }
 
         Ok(())
@@ -345,7 +359,12 @@ impl DistributedCache {
     }
 
     /// Store an object in local cache and optionally publish to remotes.
-    pub fn store(&mut self, hash: ContentHash, data: &[u8], publish: bool) -> Result<(), CacheError> {
+    pub fn store(
+        &mut self,
+        hash: ContentHash,
+        data: &[u8],
+        publish: bool,
+    ) -> Result<(), CacheError> {
         // Store locally
         self.local.store_object(hash, data)?;
 

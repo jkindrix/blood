@@ -396,7 +396,10 @@ mod tests {
         let mut ns = Namespace::new("std");
         {
             let io = ns.get_or_create_child("io");
-            io.bind("println", NameBinding::value(ContentHash::compute(b"println")));
+            io.bind(
+                "println",
+                NameBinding::value(ContentHash::compute(b"println")),
+            );
         }
 
         let io = ns.get_child("io").unwrap();
@@ -408,7 +411,10 @@ mod tests {
         let mut ns = Namespace::new("std");
         {
             let io = ns.get_or_create_child("io");
-            io.bind("println", NameBinding::value(ContentHash::compute(b"println")));
+            io.bind(
+                "println",
+                NameBinding::value(ContentHash::compute(b"println")),
+            );
         }
 
         assert!(ns.lookup_qualified("io.println").is_some());
@@ -419,15 +425,16 @@ mod tests {
         let mut registry = NameRegistry::new();
         let hash = ContentHash::compute(b"main");
 
-        registry.current_mut().bind("main", NameBinding::value(hash));
+        registry
+            .current_mut()
+            .bind("main", NameBinding::value(hash));
 
         assert!(registry.lookup("main").is_some());
     }
 
     #[test]
     fn test_binding_with_doc() {
-        let binding = NameBinding::value(ContentHash::ZERO)
-            .with_doc("Adds two numbers".into());
+        let binding = NameBinding::value(ContentHash::ZERO).with_doc("Adds two numbers".into());
 
         assert_eq!(binding.doc.as_deref(), Some("Adds two numbers"));
     }

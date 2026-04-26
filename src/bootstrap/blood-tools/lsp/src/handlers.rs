@@ -29,7 +29,8 @@ impl InlayHintProvider {
 
         // Try to get inferred types from type checking
         let analysis = self.analyzer.analyze(doc);
-        let inferred_types = analysis.as_ref()
+        let inferred_types = analysis
+            .as_ref()
             .map(|a| &a.inferred_types)
             .cloned()
             .unwrap_or_default();
@@ -43,17 +44,23 @@ impl InlayHintProvider {
             }
 
             // Look for let bindings without type annotations
-            if let Some(hint) = self.check_let_binding_with_types(line, line_num, &text, &inferred_types) {
+            if let Some(hint) =
+                self.check_let_binding_with_types(line, line_num, &text, &inferred_types)
+            {
                 hints.push(hint);
             }
 
             // Look for function parameters that could use type hints
-            if let Some(mut param_hints) = self.check_function_params_with_analysis(line, line_num, analysis.as_ref()) {
+            if let Some(mut param_hints) =
+                self.check_function_params_with_analysis(line, line_num, analysis.as_ref())
+            {
                 hints.append(&mut param_hints);
             }
 
             // Look for effect annotations
-            if let Some(effect_hint) = self.check_effect_annotation_with_analysis(line, line_num, analysis.as_ref()) {
+            if let Some(effect_hint) =
+                self.check_effect_annotation_with_analysis(line, line_num, analysis.as_ref())
+            {
                 hints.push(effect_hint);
             }
         }
@@ -100,7 +107,8 @@ impl InlayHintProvider {
                 let var_start = line_offset + line.find(var_name).unwrap_or(0);
 
                 // Try to get the inferred type from type checking
-                let type_str = inferred_types.get(&var_start)
+                let type_str = inferred_types
+                    .get(&var_start)
                     .map(|t| format!(": {}", t))
                     .unwrap_or_else(|| ": <inferred>".to_string());
 
@@ -205,14 +213,17 @@ impl InlayHintProvider {
                                     hints.push(InlayHint {
                                         position: Position {
                                             line: line_num,
-                                            character: (current_pos + arg.len() - arg.trim_start().len()) as u32,
+                                            character: (current_pos + arg.len()
+                                                - arg.trim_start().len())
+                                                as u32,
                                         },
                                         label: InlayHintLabel::String(format!("{}: ", param_name)),
                                         kind: Some(InlayHintKind::PARAMETER),
                                         text_edits: None,
-                                        tooltip: Some(InlayHintTooltip::String(
-                                            format!("Parameter name: {}", param_name),
-                                        )),
+                                        tooltip: Some(InlayHintTooltip::String(format!(
+                                            "Parameter name: {}",
+                                            param_name
+                                        ))),
                                         padding_left: Some(false),
                                         padding_right: Some(false),
                                         data: None,
@@ -307,7 +318,9 @@ impl InlayHintProvider {
             // Extract function name
             let fn_start = if trimmed.starts_with("pub fn ") { 7 } else { 3 };
             let after_fn = &trimmed[fn_start..];
-            let name_end = after_fn.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(after_fn.len());
+            let name_end = after_fn
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(after_fn.len());
             let fn_name = &after_fn[..name_end];
 
             // Try to find the function's effect annotation from analysis
@@ -366,14 +379,14 @@ impl InlayHintProvider {
         // Parse: "fn name(...) -> Type / Effects"
         if let Some(slash_pos) = description.rfind(" / ") {
             let effect = description[slash_pos + 3..].trim();
-            if !effect.is_empty() && !effect.contains('(') { // Avoid picking up return type
+            if !effect.is_empty() && !effect.contains('(') {
+                // Avoid picking up return type
                 return Some(effect.to_string());
             }
         }
         // If no explicit effect annotation, function is implicitly pure
         None
     }
-
 }
 
 impl Default for InlayHintProvider {

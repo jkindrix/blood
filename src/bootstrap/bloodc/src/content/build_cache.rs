@@ -91,7 +91,11 @@ impl std::fmt::Display for CacheError {
             Self::Io(e) => write!(f, "cache IO error: {}", e),
             Self::Corrupted(msg) => write!(f, "cache corrupted: {}", msg),
             Self::VersionMismatch { expected, found } => {
-                write!(f, "cache version mismatch: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "cache version mismatch: expected {}, found {}",
+                    expected, found
+                )
             }
             Self::Json(msg) => write!(f, "cache JSON error: {}", msg),
         }
@@ -195,9 +199,7 @@ impl BuildCache {
     fn version_dir(&self) -> PathBuf {
         self.cache_dir.join(format!(
             "v{}_abi{}_{}",
-            CACHE_VERSION,
-            CODEGEN_ABI_VERSION,
-            CODEGEN_HASH
+            CACHE_VERSION, CODEGEN_ABI_VERSION, CODEGEN_HASH
         ))
     }
 
@@ -309,7 +311,10 @@ impl BuildCache {
     }
 
     /// Invalidate all dependents of a changed hash.
-    pub fn invalidate(&mut self, changed_hash: &ContentHash) -> Result<Vec<ContentHash>, CacheError> {
+    pub fn invalidate(
+        &mut self,
+        changed_hash: &ContentHash,
+    ) -> Result<Vec<ContentHash>, CacheError> {
         if !self.enabled {
             return Ok(Vec::new());
         }
@@ -319,7 +324,8 @@ impl BuildCache {
 
         while let Some(hash) = to_check.pop() {
             // Find all hashes that depend on this one
-            let dependents: Vec<_> = self.dependencies
+            let dependents: Vec<_> = self
+                .dependencies
                 .iter()
                 .filter(|(_, deps)| deps.contains(&hash))
                 .map(|(h, _)| *h)
@@ -552,7 +558,11 @@ fn hash_item_kind(
                 hash_body(body, items, hasher);
             }
         }
-        hir::ItemKind::Static { ty, mutable, body_id } => {
+        hir::ItemKind::Static {
+            ty,
+            mutable,
+            body_id,
+        } => {
             hasher.update_u8(0x06);
             hash_type(ty, items, hasher);
             hasher.update_u8(if *mutable { 1 } else { 0 });
@@ -560,7 +570,10 @@ fn hash_item_kind(
                 hash_body(body, items, hasher);
             }
         }
-        hir::ItemKind::Trait { generics, items: trait_items } => {
+        hir::ItemKind::Trait {
+            generics,
+            items: trait_items,
+        } => {
             hasher.update_u8(0x07);
             hash_generics(generics, hasher);
             hasher.update_u32(trait_items.len() as u32);
@@ -568,7 +581,12 @@ fn hash_item_kind(
                 hasher.update_str(&item.name);
             }
         }
-        hir::ItemKind::Impl { generics, trait_ref, self_ty, items: impl_items } => {
+        hir::ItemKind::Impl {
+            generics,
+            trait_ref,
+            self_ty,
+            items: impl_items,
+        } => {
             hasher.update_u8(0x08);
             hash_generics(generics, hasher);
             if let Some(tr) = trait_ref {
@@ -585,7 +603,10 @@ fn hash_item_kind(
             hash_type(self_ty, items, hasher);
             hasher.update_u32(impl_items.len() as u32);
         }
-        hir::ItemKind::Effect { generics, operations } => {
+        hir::ItemKind::Effect {
+            generics,
+            operations,
+        } => {
             hasher.update_u8(0x09);
             hash_generics(generics, hasher);
             hasher.update_u32(operations.len() as u32);
@@ -597,7 +618,15 @@ fn hash_item_kind(
                 hash_type(&op.output, items, hasher);
             }
         }
-        hir::ItemKind::Handler { generics, kind, effect, state, operations, return_clause, finally_clause } => {
+        hir::ItemKind::Handler {
+            generics,
+            kind,
+            effect,
+            state,
+            operations,
+            return_clause,
+            finally_clause,
+        } => {
             hasher.update_u8(0x0A);
             hash_generics(generics, hasher);
             // Hash handler kind: 0 = Deep, 1 = Shallow
@@ -680,7 +709,11 @@ fn hash_generics(generics: &hir::Generics, hasher: &mut ContentHasher) {
 }
 
 /// Hash a struct kind.
-fn hash_struct_kind(kind: &hir::StructKind, items: &HashMap<DefId, hir::Item>, hasher: &mut ContentHasher) {
+fn hash_struct_kind(
+    kind: &hir::StructKind,
+    items: &HashMap<DefId, hir::Item>,
+    hasher: &mut ContentHasher,
+) {
     match kind {
         hir::StructKind::Record(fields) => {
             hasher.update_u8(0);
@@ -784,9 +817,13 @@ fn hash_type(ty: &hir::Type, items: &HashMap<DefId, hir::Item>, hasher: &mut Con
             }
             hash_type(ret, items, hasher);
         }
-        hir::TypeKind::Closure { def_id, params, ret } => {
+        hir::TypeKind::Closure {
+            def_id,
+            params,
+            ret,
+        } => {
             hasher.update_u8(0x17); // Distinct from Fn
-            // Hash closure name if available
+                                    // Hash closure name if available
             if let Some(item) = items.get(def_id) {
                 hasher.update_str(&item.name);
             } else {
@@ -817,9 +854,12 @@ fn hash_type(ty: &hir::Type, items: &HashMap<DefId, hir::Item>, hasher: &mut Con
             hasher.update_u8(if *inclusive { 1 } else { 0 });
             hash_type(element, items, hasher);
         }
-        hir::TypeKind::DynTrait { trait_id, auto_traits } => {
+        hir::TypeKind::DynTrait {
+            trait_id,
+            auto_traits,
+        } => {
             hasher.update_u8(0x0B); // DynTrait type
-            // Hash trait name instead of index
+                                    // Hash trait name instead of index
             if let Some(item) = items.get(trait_id) {
                 hasher.update_str(&item.name);
             } else {
@@ -859,7 +899,7 @@ fn hash_type(ty: &hir::Type, items: &HashMap<DefId, hir::Item>, hasher: &mut Con
         }
         hir::TypeKind::Ownership { qualifier, inner } => {
             hasher.update_u8(0x0E); // Ownership type
-            // Hash qualifier: 0 = Linear, 1 = Affine
+                                    // Hash qualifier: 0 = Linear, 1 = Affine
             hasher.update_u8(match qualifier {
                 hir::ty::OwnershipQualifier::Linear => 0,
                 hir::ty::OwnershipQualifier::Affine => 1,
@@ -954,7 +994,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hash_expr(arg, items, hasher);
             }
         }
-        hir::ExprKind::MethodCall { receiver, method, args } => {
+        hir::ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             hasher.update_u8(0x05);
             hash_expr(receiver, items, hasher);
             // Hash method name if available
@@ -979,8 +1023,7 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hasher.update_u8(*op as u8);
             hash_expr(operand, items, hasher);
         }
-        hir::ExprKind::Block { stmts, expr }
-        | hir::ExprKind::Region { stmts, expr, .. } => {
+        hir::ExprKind::Block { stmts, expr } | hir::ExprKind::Region { stmts, expr, .. } => {
             hasher.update_u8(0x08);
             hasher.update_u32(stmts.len() as u32);
             for stmt in stmts {
@@ -993,7 +1036,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hasher.update_u8(0);
             }
         }
-        hir::ExprKind::If { condition, then_branch, else_branch } => {
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             hasher.update_u8(0x09);
             hash_expr(condition, items, hasher);
             hash_expr(then_branch, items, hasher);
@@ -1008,7 +1055,9 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hasher.update_u8(0x0A);
             hash_expr(body, items, hasher);
         }
-        hir::ExprKind::While { condition, body, .. } => {
+        hir::ExprKind::While {
+            condition, body, ..
+        } => {
             hasher.update_u8(0x0B);
             hash_expr(condition, items, hasher);
             hash_expr(body, items, hasher);
@@ -1078,7 +1127,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hash_expr(base, items, hasher);
             hasher.update_u32(*field_idx);
         }
-        hir::ExprKind::Struct { def_id, fields, base } => {
+        hir::ExprKind::Struct {
+            def_id,
+            fields,
+            base,
+        } => {
             hasher.update_u8(0x15);
             // Hash struct name instead of index
             if let Some(item) = items.get(def_id) {
@@ -1098,7 +1151,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hasher.update_u8(0);
             }
         }
-        hir::ExprKind::Variant { def_id, variant_idx, fields } => {
+        hir::ExprKind::Variant {
+            def_id,
+            variant_idx,
+            fields,
+        } => {
             hasher.update_u8(0x16);
             // Hash enum name instead of index
             if let Some(item) = items.get(def_id) {
@@ -1146,9 +1203,7 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hash_pattern(pattern, items, hasher);
             hash_expr(init, items, hasher);
         }
-        hir::ExprKind::Unsafe(inner)
-        | hir::ExprKind::Heap(inner)
-        | hir::ExprKind::Stack(inner) => {
+        hir::ExprKind::Unsafe(inner) | hir::ExprKind::Heap(inner) | hir::ExprKind::Stack(inner) => {
             hasher.update_u8(0x1E);
             hash_expr(inner, items, hasher);
         }
@@ -1156,7 +1211,12 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hasher.update_u8(0x3A);
             hash_expr(body, items, hasher);
         }
-        hir::ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {
+        hir::ExprKind::Perform {
+            effect_id,
+            op_index,
+            args,
+            type_args: _,
+        } => {
             hasher.update_u8(0x1F);
             // Hash effect name instead of index
             if let Some(item) = items.get(effect_id) {
@@ -1179,7 +1239,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hasher.update_u8(0);
             }
         }
-        hir::ExprKind::Handle { body, handler_id, handler_instance } => {
+        hir::ExprKind::Handle {
+            body,
+            handler_id,
+            handler_instance,
+        } => {
             hasher.update_u8(0x21);
             hash_expr(body, items, hasher);
             // CRITICAL: Hash handler NAME instead of index for cache-friendly compilation
@@ -1203,7 +1267,11 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
                 hash_expr(&handler.body, items, hasher);
             }
         }
-        hir::ExprKind::Range { start, end, inclusive } => {
+        hir::ExprKind::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             hasher.update_u8(0x22);
             hasher.update_u8(if *inclusive { 1 } else { 0 });
             if let Some(s) = start {
@@ -1245,7 +1313,12 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
         hir::ExprKind::Default => {
             hasher.update_u8(0x25);
         }
-        hir::ExprKind::MacroExpansion { macro_name, format_str, args, named_args } => {
+        hir::ExprKind::MacroExpansion {
+            macro_name,
+            format_str,
+            args,
+            named_args,
+        } => {
             hasher.update_u8(0x26);
             hasher.update_str(macro_name);
             hasher.update_str(format_str);
@@ -1375,12 +1448,21 @@ fn hash_stmt(stmt: &hir::Stmt, items: &HashMap<DefId, hir::Item>, hasher: &mut C
 /// Hash a pattern.
 ///
 /// Uses item names instead of DefId indices to prevent cache contamination.
-fn hash_pattern(pattern: &hir::Pattern, items: &HashMap<DefId, hir::Item>, hasher: &mut ContentHasher) {
+fn hash_pattern(
+    pattern: &hir::Pattern,
+    items: &HashMap<DefId, hir::Item>,
+    hasher: &mut ContentHasher,
+) {
     match &pattern.kind {
         hir::PatternKind::Wildcard => {
             hasher.update_u8(0x01);
         }
-        hir::PatternKind::Binding { local_id, mutable, by_ref, subpattern } => {
+        hir::PatternKind::Binding {
+            local_id,
+            mutable,
+            by_ref,
+            subpattern,
+        } => {
             hasher.update_u8(0x02);
             hasher.update_u32(local_id.index);
             hasher.update_u8(if *mutable { 1 } else { 0 });
@@ -1417,7 +1499,11 @@ fn hash_pattern(pattern: &hir::Pattern, items: &HashMap<DefId, hir::Item>, hashe
                 hash_pattern(&field.pattern, items, hasher);
             }
         }
-        hir::PatternKind::Variant { def_id, variant_idx, fields } => {
+        hir::PatternKind::Variant {
+            def_id,
+            variant_idx,
+            fields,
+        } => {
             hasher.update_u8(0x06);
             // Hash enum name instead of index
             if let Some(item) = items.get(def_id) {
@@ -1438,7 +1524,11 @@ fn hash_pattern(pattern: &hir::Pattern, items: &HashMap<DefId, hir::Item>, hashe
                 hash_pattern(pat, items, hasher);
             }
         }
-        hir::PatternKind::Slice { prefix, slice, suffix } => {
+        hir::PatternKind::Slice {
+            prefix,
+            slice,
+            suffix,
+        } => {
             hasher.update_u8(0x08);
             hasher.update_u32(prefix.len() as u32);
             for pat in prefix {
@@ -1460,7 +1550,11 @@ fn hash_pattern(pattern: &hir::Pattern, items: &HashMap<DefId, hir::Item>, hashe
             hasher.update_u8(if *mutable { 1 } else { 0 });
             hash_pattern(inner, items, hasher);
         }
-        hir::PatternKind::Range { start, end, inclusive } => {
+        hir::PatternKind::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             hasher.update_u8(0x0A);
             if let Some(s) = start {
                 hasher.update_u8(1);
@@ -1549,7 +1643,12 @@ fn extract_item_deps(
                 }
             }
         }
-        hir::ItemKind::Impl { trait_ref, self_ty, items, .. } => {
+        hir::ItemKind::Impl {
+            trait_ref,
+            self_ty,
+            items,
+            ..
+        } => {
             if let Some(tr) = trait_ref {
                 deps.insert(tr.def_id);
             }
@@ -1574,7 +1673,9 @@ fn extract_item_deps(
                 extract_type_deps(&op.output, deps);
             }
         }
-        hir::ItemKind::Handler { effect, operations, .. } => {
+        hir::ItemKind::Handler {
+            effect, operations, ..
+        } => {
             extract_type_deps(effect, deps);
             for op in operations {
                 // body_id is BodyId, not Option<BodyId>
@@ -1674,14 +1775,21 @@ fn extract_type_deps(ty: &hir::Type, deps: &mut HashSet<DefId>) {
             }
             extract_type_deps(ret, deps);
         }
-        hir::TypeKind::Closure { def_id, params, ret } => {
+        hir::TypeKind::Closure {
+            def_id,
+            params,
+            ret,
+        } => {
             deps.insert(*def_id);
             for param in params {
                 extract_type_deps(param, deps);
             }
             extract_type_deps(ret, deps);
         }
-        hir::TypeKind::DynTrait { trait_id, auto_traits } => {
+        hir::TypeKind::DynTrait {
+            trait_id,
+            auto_traits,
+        } => {
             deps.insert(*trait_id);
             for auto_trait in auto_traits {
                 deps.insert(*auto_trait);
@@ -1734,14 +1842,22 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
                 extract_expr_deps(arg, deps);
             }
         }
-        hir::ExprKind::MethodCall { receiver, method, args } => {
+        hir::ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             deps.insert(*method);
             extract_expr_deps(receiver, deps);
             for arg in args {
                 extract_expr_deps(arg, deps);
             }
         }
-        hir::ExprKind::Struct { def_id, fields, base } => {
+        hir::ExprKind::Struct {
+            def_id,
+            fields,
+            base,
+        } => {
             deps.insert(*def_id);
             for field in fields {
                 extract_expr_deps(&field.value, deps);
@@ -1763,8 +1879,7 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         hir::ExprKind::Unary { operand, .. } => {
             extract_expr_deps(operand, deps);
         }
-        hir::ExprKind::Block { stmts, expr }
-        | hir::ExprKind::Region { stmts, expr, .. } => {
+        hir::ExprKind::Block { stmts, expr } | hir::ExprKind::Region { stmts, expr, .. } => {
             for stmt in stmts {
                 extract_stmt_deps(stmt, deps);
             }
@@ -1772,7 +1887,11 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
                 extract_expr_deps(e, deps);
             }
         }
-        hir::ExprKind::If { condition, then_branch, else_branch } => {
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             extract_expr_deps(condition, deps);
             extract_expr_deps(then_branch, deps);
             if let Some(e) = else_branch {
@@ -1782,7 +1901,9 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         hir::ExprKind::Loop { body, .. } => {
             extract_expr_deps(body, deps);
         }
-        hir::ExprKind::While { condition, body, .. } => {
+        hir::ExprKind::While {
+            condition, body, ..
+        } => {
             extract_expr_deps(condition, deps);
             extract_expr_deps(body, deps);
         }
@@ -1828,7 +1949,8 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
             extract_expr_deps(target, deps);
             extract_expr_deps(value, deps);
         }
-        hir::ExprKind::Deref(inner) | hir::ExprKind::Borrow { expr: inner, .. }
+        hir::ExprKind::Deref(inner)
+        | hir::ExprKind::Borrow { expr: inner, .. }
         | hir::ExprKind::AddrOf { expr: inner, .. } => {
             extract_expr_deps(inner, deps);
         }
@@ -1837,7 +1959,9 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
             // when the closure body is analyzed
             let _ = body_id;
         }
-        hir::ExprKind::Perform { effect_id, args, .. } => {
+        hir::ExprKind::Perform {
+            effect_id, args, ..
+        } => {
             deps.insert(*effect_id);
             for arg in args {
                 extract_expr_deps(arg, deps);
@@ -1848,7 +1972,11 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
                 extract_expr_deps(v, deps);
             }
         }
-        hir::ExprKind::Handle { body, handler_id, handler_instance } => {
+        hir::ExprKind::Handle {
+            body,
+            handler_id,
+            handler_instance,
+        } => {
             deps.insert(*handler_id);
             extract_expr_deps(body, deps);
             // handler_instance is Box<Expr>, not Option
@@ -1872,9 +2000,7 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         hir::ExprKind::Let { init, .. } => {
             extract_expr_deps(init, deps);
         }
-        hir::ExprKind::Unsafe(inner)
-        | hir::ExprKind::Heap(inner)
-        | hir::ExprKind::Stack(inner) => {
+        hir::ExprKind::Unsafe(inner) | hir::ExprKind::Heap(inner) | hir::ExprKind::Stack(inner) => {
             extract_expr_deps(inner, deps);
         }
         hir::ExprKind::Unchecked { body, .. } => {
@@ -1892,7 +2018,9 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
             }
         }
         // Macro expansion nodes - extract dependencies from subexpressions
-        hir::ExprKind::MacroExpansion { args, named_args, .. } => {
+        hir::ExprKind::MacroExpansion {
+            args, named_args, ..
+        } => {
             for arg in args {
                 extract_expr_deps(arg, deps);
             }
@@ -2214,7 +2342,10 @@ mod tests {
 
             // Invalidate old add - this should invalidate compute too
             let invalidated = cache.invalidate(&hash_add).unwrap();
-            assert!(invalidated.contains(&hash_compute), "compute should be invalidated");
+            assert!(
+                invalidated.contains(&hash_compute),
+                "compute should be invalidated"
+            );
 
             // mul is not affected
             assert!(cache.has_object(&hash_mul));
@@ -2251,7 +2382,10 @@ mod tests {
         // Path should contain the hash
         let path_str = path.unwrap().to_string_lossy().to_string();
         let hash_str = format!("{}", hash.full_display());
-        assert!(path_str.contains(&hash_str[2..]), "path should contain hash suffix");
+        assert!(
+            path_str.contains(&hash_str[2..]),
+            "path should contain hash suffix"
+        );
 
         // Disabled cache should return None
         let disabled = BuildCache::disabled();

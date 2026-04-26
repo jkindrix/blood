@@ -24,16 +24,24 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{LifetimeId, DefId};
+use crate::hir::{DefId, LifetimeId};
 use crate::span::Span;
 
 /// A lifetime constraint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifetimeConstraint {
     /// `'a: 'b` - lifetime 'a outlives lifetime 'b
-    Outlives { longer: LifetimeId, shorter: LifetimeId, span: Span },
+    Outlives {
+        longer: LifetimeId,
+        shorter: LifetimeId,
+        span: Span,
+    },
     /// `'a == 'b` - lifetimes must be the same
-    Equal { left: LifetimeId, right: LifetimeId, span: Span },
+    Equal {
+        left: LifetimeId,
+        right: LifetimeId,
+        span: Span,
+    },
     /// `'a: 'static` - lifetime must be static
     Static { lifetime: LifetimeId, span: Span },
 }
@@ -61,7 +69,11 @@ pub enum LifetimeOrigin {
     /// Inferred from a reference type
     Reference { span: Span },
     /// From a function parameter
-    Parameter { fn_def: DefId, param_index: usize, span: Span },
+    Parameter {
+        fn_def: DefId,
+        param_index: usize,
+        span: Span,
+    },
     /// From a function return type
     Return { fn_def: DefId, span: Span },
     /// The static lifetime
@@ -91,9 +103,12 @@ impl LifetimeInference {
         };
 
         // Register 'static lifetime
-        ctx.origins.insert(LifetimeId::STATIC, LifetimeOrigin::Static);
-        ctx.named_lifetimes.insert("'static".to_string(), LifetimeId::STATIC);
-        ctx.solutions.insert(LifetimeId::STATIC, LifetimeSolution::Static);
+        ctx.origins
+            .insert(LifetimeId::STATIC, LifetimeOrigin::Static);
+        ctx.named_lifetimes
+            .insert("'static".to_string(), LifetimeId::STATIC);
+        ctx.solutions
+            .insert(LifetimeId::STATIC, LifetimeSolution::Static);
 
         ctx
     }
@@ -128,7 +143,11 @@ impl LifetimeInference {
         }
         // Everything outlives 'static... wait, that's backwards
         // Actually: 'a: 'static means 'a must be 'static
-        self.constraints.push(LifetimeConstraint::Outlives { longer, shorter, span });
+        self.constraints.push(LifetimeConstraint::Outlives {
+            longer,
+            shorter,
+            span,
+        });
     }
 
     /// Add an equality constraint: 'a == 'b
@@ -136,7 +155,8 @@ impl LifetimeInference {
         if left == right {
             return;
         }
-        self.constraints.push(LifetimeConstraint::Equal { left, right, span });
+        self.constraints
+            .push(LifetimeConstraint::Equal { left, right, span });
     }
 
     /// Add a static constraint: 'a must be 'static
@@ -144,7 +164,8 @@ impl LifetimeInference {
         if lifetime == LifetimeId::STATIC {
             return;
         }
-        self.constraints.push(LifetimeConstraint::Static { lifetime, span });
+        self.constraints
+            .push(LifetimeConstraint::Static { lifetime, span });
     }
 
     /// Solve the lifetime constraints.
@@ -194,7 +215,7 @@ impl LifetimeInference {
                                 changed = true;
                             }
                             (Some(_), Some(_)) => {} // Both have solutions: already propagated
-                            (None, None) => {} // Neither has a solution yet
+                            (None, None) => {}       // Neither has a solution yet
                         }
                     }
                     LifetimeConstraint::Static { lifetime, .. } => {
@@ -204,7 +225,9 @@ impl LifetimeInference {
                             changed = true;
                         }
                     }
-                    LifetimeConstraint::Outlives { longer, shorter, .. } => {
+                    LifetimeConstraint::Outlives {
+                        longer, shorter, ..
+                    } => {
                         // If shorter is static, longer must be static
                         if let Some(LifetimeSolution::Static) = self.solutions.get(&shorter) {
                             if self.solutions.insert(longer, LifetimeSolution::Static)
@@ -245,7 +268,9 @@ impl LifetimeInference {
                         return false;
                     }
                 }
-                LifetimeConstraint::Outlives { longer, shorter, .. } => {
+                LifetimeConstraint::Outlives {
+                    longer, shorter, ..
+                } => {
                     let longer_sol = self.solutions.get(longer);
                     let shorter_sol = self.solutions.get(shorter);
 
@@ -277,7 +302,9 @@ impl LifetimeInference {
 
     /// Check if lifetime constraints were fully solved (no unknowns).
     pub fn is_fully_solved(&self) -> bool {
-        self.solutions.values().all(|s| !matches!(s, LifetimeSolution::Unknown))
+        self.solutions
+            .values()
+            .all(|s| !matches!(s, LifetimeSolution::Unknown))
     }
 
     /// Clear the inference context for a new function.
@@ -294,10 +321,13 @@ impl LifetimeInference {
         if let Some(origin) = static_origin {
             self.origins.insert(LifetimeId::STATIC, origin);
         } else {
-            self.origins.insert(LifetimeId::STATIC, LifetimeOrigin::Static);
+            self.origins
+                .insert(LifetimeId::STATIC, LifetimeOrigin::Static);
         }
-        self.named_lifetimes.insert("'static".to_string(), LifetimeId::STATIC);
-        self.solutions.insert(LifetimeId::STATIC, LifetimeSolution::Static);
+        self.named_lifetimes
+            .insert("'static".to_string(), LifetimeId::STATIC);
+        self.solutions
+            .insert(LifetimeId::STATIC, LifetimeSolution::Static);
     }
 }
 
@@ -332,9 +362,7 @@ pub mod elision {
         let input_ids: Vec<LifetimeId> = input_lifetimes
             .iter()
             .map(|opt_lt| {
-                opt_lt.unwrap_or_else(|| {
-                    ctx.fresh_lifetime(LifetimeOrigin::Reference { span })
-                })
+                opt_lt.unwrap_or_else(|| ctx.fresh_lifetime(LifetimeOrigin::Reference { span }))
             })
             .collect();
 
@@ -357,9 +385,7 @@ pub mod elision {
         explicit_lifetime: Option<LifetimeId>,
         span: Span,
     ) -> LifetimeId {
-        explicit_lifetime.unwrap_or_else(|| {
-            ctx.fresh_lifetime(LifetimeOrigin::Reference { span })
-        })
+        explicit_lifetime.unwrap_or_else(|| ctx.fresh_lifetime(LifetimeOrigin::Reference { span }))
     }
 }
 
@@ -377,16 +403,24 @@ mod tests {
     #[test]
     fn test_fresh_lifetime() {
         let mut ctx = LifetimeInference::new();
-        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference { span: Span::default() });
-        let lt2 = ctx.fresh_lifetime(LifetimeOrigin::Reference { span: Span::default() });
+        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference {
+            span: Span::default(),
+        });
+        let lt2 = ctx.fresh_lifetime(LifetimeOrigin::Reference {
+            span: Span::default(),
+        });
         assert_ne!(lt1, lt2);
     }
 
     #[test]
     fn test_equality_constraint() {
         let mut ctx = LifetimeInference::new();
-        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference { span: Span::default() });
-        let lt2 = ctx.fresh_lifetime(LifetimeOrigin::Reference { span: Span::default() });
+        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference {
+            span: Span::default(),
+        });
+        let lt2 = ctx.fresh_lifetime(LifetimeOrigin::Reference {
+            span: Span::default(),
+        });
 
         ctx.add_equal(lt1, LifetimeId::STATIC, Span::default());
         ctx.add_equal(lt1, lt2, Span::default());
@@ -399,7 +433,9 @@ mod tests {
     #[test]
     fn test_outlives_constraint() {
         let mut ctx = LifetimeInference::new();
-        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference { span: Span::default() });
+        let lt1 = ctx.fresh_lifetime(LifetimeOrigin::Reference {
+            span: Span::default(),
+        });
 
         // lt1: 'static means lt1 must outlive static, which means lt1 must be static
         ctx.add_outlives(lt1, LifetimeId::STATIC, Span::default());

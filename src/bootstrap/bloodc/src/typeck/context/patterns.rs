@@ -7,19 +7,27 @@ use std::collections::HashSet;
 use string_interner::Symbol as _;
 
 use crate::ast;
-use crate::hir::{self, DefId, LocalId, Type, TypeKind};
 use crate::hir::ty::TyVarId;
+use crate::hir::{self, DefId, LocalId, Type, TypeKind};
 
-use super::TypeContext;
 use super::super::error::{TypeError, TypeErrorKind};
 use super::super::resolve::Binding;
-
+use super::TypeContext;
 
 impl<'a> TypeContext<'a> {
     /// Define a pattern, returning the local ID for simple patterns.
-    pub(crate) fn define_pattern(&mut self, pattern: &ast::Pattern, ty: Type) -> Result<LocalId, Box<TypeError>> {
+    pub(crate) fn define_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        ty: Type,
+    ) -> Result<LocalId, Box<TypeError>> {
         match &pattern.kind {
-            ast::PatternKind::Ident { name, mutable, by_ref, .. } => {
+            ast::PatternKind::Ident {
+                name,
+                mutable,
+                by_ref,
+                ..
+            } => {
                 let name_str = self.symbol_to_string(name.node);
 
                 // If `by_ref` is true (e.g., `ref x` or `ref mut x`), the binding
@@ -114,53 +122,43 @@ impl<'a> TypeContext<'a> {
                 });
 
                 // Record the tuple destructuring info for MIR lowering
-                self.tuple_destructures.insert(tuple_local_id, element_locals);
+                self.tuple_destructures
+                    .insert(tuple_local_id, element_locals);
 
                 Ok(tuple_local_id)
             }
-            ast::PatternKind::Paren(inner) => {
-                self.define_pattern(inner, ty)
-            }
-            ast::PatternKind::Literal(_) => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "literal patterns in let bindings (use match instead)".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
-            ast::PatternKind::Path(_) => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "path patterns in let bindings (use match instead)".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
-            ast::PatternKind::TupleStruct { .. } => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "tuple struct patterns in let bindings (use match instead)".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
-            ast::PatternKind::Rest => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "rest patterns (..) in let bindings".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
-            ast::PatternKind::Ref { .. } => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "reference patterns (&x) in let bindings".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
+            ast::PatternKind::Paren(inner) => self.define_pattern(inner, ty),
+            ast::PatternKind::Literal(_) => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "literal patterns in let bindings (use match instead)".to_string(),
+                },
+                pattern.span,
+            ))),
+            ast::PatternKind::Path(_) => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "path patterns in let bindings (use match instead)".to_string(),
+                },
+                pattern.span,
+            ))),
+            ast::PatternKind::TupleStruct { .. } => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "tuple struct patterns in let bindings (use match instead)"
+                        .to_string(),
+                },
+                pattern.span,
+            ))),
+            ast::PatternKind::Rest => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "rest patterns (..) in let bindings".to_string(),
+                },
+                pattern.span,
+            ))),
+            ast::PatternKind::Ref { .. } => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "reference patterns (&x) in let bindings".to_string(),
+                },
+                pattern.span,
+            ))),
             ast::PatternKind::Struct { path, fields, rest } => {
                 // Struct pattern: let Point { x, y } = point;
                 let struct_name = if path.segments.len() == 1 {
@@ -186,12 +184,18 @@ impl<'a> TypeContext<'a> {
                     }
                 };
 
-                let struct_info = self.struct_defs.get(&struct_def_id).cloned().ok_or_else(|| {
-                    TypeError::new(
-                        TypeErrorKind::TypeNotFound { name: struct_name.clone() },
-                        pattern.span,
-                    )
-                })?;
+                let struct_info =
+                    self.struct_defs
+                        .get(&struct_def_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            TypeError::new(
+                                TypeErrorKind::TypeNotFound {
+                                    name: struct_name.clone(),
+                                },
+                                pattern.span,
+                            )
+                        })?;
 
                 // Create a hidden local for the whole struct value
                 let hidden_name = format!("__struct_{}", pattern.span.start);
@@ -209,7 +213,8 @@ impl<'a> TypeContext<'a> {
                 for field_pattern in fields {
                     let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name) {
+                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name)
+                    {
                         Some(f) => f,
                         None => {
                             let mut err = TypeError::new(
@@ -260,13 +265,20 @@ impl<'a> TypeContext<'a> {
                 // Slice pattern: let [first, second, ..] = arr;
                 let elem_ty = match ty.kind() {
                     TypeKind::Array { element, size } => {
-                        let num_patterns = if rest_pos.is_some() { elements.len() - 1 } else { elements.len() };
+                        let num_patterns = if rest_pos.is_some() {
+                            elements.len() - 1
+                        } else {
+                            elements.len()
+                        };
                         let array_size = size.as_u64().unwrap_or(0);
                         if num_patterns as u64 > array_size {
                             return Err(Box::new(TypeError::new(
                                 TypeErrorKind::PatternMismatch {
                                     expected: ty.clone(),
-                                    pattern: format!("slice pattern with {} elements", num_patterns),
+                                    pattern: format!(
+                                        "slice pattern with {} elements",
+                                        num_patterns
+                                    ),
                                 },
                                 pattern.span,
                             )));
@@ -306,22 +318,18 @@ impl<'a> TypeContext<'a> {
 
                 Ok(hidden_local)
             }
-            ast::PatternKind::Or { .. } => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "or patterns (a | b) in let bindings".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
-            ast::PatternKind::Range { .. } => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::UnsupportedFeature {
-                        feature: "range patterns in let bindings".to_string(),
-                    },
-                    pattern.span,
-                )))
-            }
+            ast::PatternKind::Or { .. } => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "or patterns (a | b) in let bindings".to_string(),
+                },
+                pattern.span,
+            ))),
+            ast::PatternKind::Range { .. } => Err(Box::new(TypeError::new(
+                TypeErrorKind::UnsupportedFeature {
+                    feature: "range patterns in let bindings".to_string(),
+                },
+                pattern.span,
+            ))),
         }
     }
 
@@ -385,11 +393,19 @@ impl<'a> TypeContext<'a> {
     ///     &Variant { field } => { /* field is T */ }
     /// }
     /// ```
-    pub(crate) fn lower_pattern(&mut self, pattern: &ast::Pattern, expected_ty: &Type) -> Result<hir::Pattern, Box<TypeError>> {
+    pub(crate) fn lower_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        expected_ty: &Type,
+    ) -> Result<hir::Pattern, Box<TypeError>> {
         // Match ergonomics: if expected type is a reference but pattern is not a reference pattern,
         // automatically dereference the expected type and wrap result in an implicit Ref pattern.
         // This handles cases like `match &enum_value { Variant { field } => ... }`
-        if let TypeKind::Ref { inner: inner_ty, mutable } = expected_ty.kind() {
+        if let TypeKind::Ref {
+            inner: inner_ty,
+            mutable,
+        } = expected_ty.kind()
+        {
             // Only apply match ergonomics for patterns that need it
             // (not for explicit reference patterns or simple bindings which handle refs themselves)
             let needs_ergonomics = matches!(
@@ -417,7 +433,12 @@ impl<'a> TypeContext<'a> {
 
         let kind = match &pattern.kind {
             ast::PatternKind::Wildcard => hir::PatternKind::Wildcard,
-            ast::PatternKind::Ident { name, mutable, by_ref, .. } => {
+            ast::PatternKind::Ident {
+                name,
+                mutable,
+                by_ref,
+                ..
+            } => {
                 let name_str = self.symbol_to_string(name.node);
 
                 // If `by_ref` is true (e.g., `ref x` or `ref mut x`), the binding
@@ -467,7 +488,8 @@ impl<'a> TypeContext<'a> {
                                         expected: expected_ty.clone(),
                                         pattern: format!(
                                             "tuple pattern requires at least {} elements, found {}",
-                                            min_elems, elem_types.len()
+                                            min_elems,
+                                            elem_types.len()
                                         ),
                                     },
                                     pattern.span,
@@ -500,7 +522,10 @@ impl<'a> TypeContext<'a> {
                                 return Err(Box::new(TypeError::new(
                                     TypeErrorKind::PatternMismatch {
                                         expected: expected_ty.clone(),
-                                        pattern: format!("tuple pattern with {} elements", fields.len()),
+                                        pattern: format!(
+                                            "tuple pattern with {} elements",
+                                            fields.len()
+                                        ),
                                     },
                                     pattern.span,
                                 )));
@@ -514,7 +539,9 @@ impl<'a> TypeContext<'a> {
                     }
                     _ => {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotATuple { ty: expected_ty.clone() },
+                            TypeErrorKind::NotATuple {
+                                ty: expected_ty.clone(),
+                            },
                             pattern.span,
                         )));
                     }
@@ -530,24 +557,36 @@ impl<'a> TypeContext<'a> {
                     // Look up the enum type
                     let def_id = match self.resolver.lookup_type(&enum_name) {
                         Some(def_id) => def_id,
-                        None => return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: enum_name },
-                            pattern.span,
-                        ))),
+                        None => {
+                            return Err(Box::new(TypeError::new(
+                                TypeErrorKind::NotFound { name: enum_name },
+                                pattern.span,
+                            )))
+                        }
                     };
 
-                    let enum_info = self.enum_defs.get(&def_id).cloned().ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: enum_name.clone() },
-                        pattern.span,
-                    )))?;
+                    let enum_info = self.enum_defs.get(&def_id).cloned().ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::NotFound {
+                                name: enum_name.clone(),
+                            },
+                            pattern.span,
+                        ))
+                    })?;
 
-                    let variant = enum_info.variants.iter()
+                    let variant = enum_info
+                        .variants
+                        .iter()
                         .find(|v| v.name == variant_name)
                         .cloned()
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
-                            pattern.span,
-                        )))?;
+                        .ok_or_else(|| {
+                            Box::new(TypeError::new(
+                                TypeErrorKind::NotFound {
+                                    name: format!("{}::{}", enum_name, variant_name),
+                                },
+                                pattern.span,
+                            ))
+                        })?;
 
                     (def_id, variant)
                 } else if path.segments.len() == 1 {
@@ -558,23 +597,41 @@ impl<'a> TypeContext<'a> {
                         Some(Binding::Def(variant_def_id)) => {
                             if let Some(info) = self.resolver.def_info.get(&variant_def_id) {
                                 if info.kind == hir::DefKind::Variant {
-                                    let enum_def_id = info.parent.ok_or_else(|| Box::new(TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("parent of variant {}", path_str) },
-                                        pattern.span,
-                                    )))?;
+                                    let enum_def_id = info.parent.ok_or_else(|| {
+                                        Box::new(TypeError::new(
+                                            TypeErrorKind::NotFound {
+                                                name: format!("parent of variant {}", path_str),
+                                            },
+                                            pattern.span,
+                                        ))
+                                    })?;
 
-                                    let enum_info = self.enum_defs.get(&enum_def_id).cloned().ok_or_else(|| Box::new(TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("enum for variant {}", path_str) },
-                                        pattern.span,
-                                    )))?;
+                                    let enum_info = self
+                                        .enum_defs
+                                        .get(&enum_def_id)
+                                        .cloned()
+                                        .ok_or_else(|| {
+                                            Box::new(TypeError::new(
+                                                TypeErrorKind::NotFound {
+                                                    name: format!("enum for variant {}", path_str),
+                                                },
+                                                pattern.span,
+                                            ))
+                                        })?;
 
-                                    let variant_info = enum_info.variants.iter()
+                                    let variant_info = enum_info
+                                        .variants
+                                        .iter()
                                         .find(|v| v.def_id == variant_def_id)
                                         .cloned()
-                                        .ok_or_else(|| Box::new(TypeError::new(
-                                            TypeErrorKind::NotFound { name: format!("variant {} in enum", path_str) },
-                                            pattern.span,
-                                        )))?;
+                                        .ok_or_else(|| {
+                                            Box::new(TypeError::new(
+                                                TypeErrorKind::NotFound {
+                                                    name: format!("variant {} in enum", path_str),
+                                                },
+                                                pattern.span,
+                                            ))
+                                        })?;
 
                                     (enum_def_id, variant_info)
                                 } else {
@@ -612,10 +669,14 @@ impl<'a> TypeContext<'a> {
                         }
                     }
 
-                    let mod_def_id = module_def_id.ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("module '{}'", module_name) },
-                        pattern.span,
-                    )))?;
+                    let mod_def_id = module_def_id.ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::NotFound {
+                                name: format!("module '{}'", module_name),
+                            },
+                            pattern.span,
+                        ))
+                    })?;
 
                     // Find the enum within the module's items OR reexports
                     let mut found_enum: Option<(DefId, super::EnumInfo)> = None;
@@ -633,7 +694,9 @@ impl<'a> TypeContext<'a> {
                         if found_enum.is_none() {
                             for (reexport_name, reexport_def_id, _vis) in &mod_info.reexports {
                                 if reexport_name == &enum_name {
-                                    if let Some(enum_info) = self.enum_defs.get(reexport_def_id).cloned() {
+                                    if let Some(enum_info) =
+                                        self.enum_defs.get(reexport_def_id).cloned()
+                                    {
                                         found_enum = Some((*reexport_def_id, enum_info));
                                         break;
                                     }
@@ -642,46 +705,70 @@ impl<'a> TypeContext<'a> {
                         }
                     }
 
-                    let (enum_def_id, enum_info) = found_enum.ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}", module_name, enum_name) },
-                        pattern.span,
-                    )))?;
+                    let (enum_def_id, enum_info) = found_enum.ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::NotFound {
+                                name: format!("{}::{}", module_name, enum_name),
+                            },
+                            pattern.span,
+                        ))
+                    })?;
 
                     // Find the variant
-                    let variant = enum_info.variants.iter()
+                    let variant = enum_info
+                        .variants
+                        .iter()
                         .find(|v| v.name == variant_name)
                         .cloned()
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("{}::{}::{}", module_name, enum_name, variant_name) },
-                            pattern.span,
-                        )))?;
+                        .ok_or_else(|| {
+                            Box::new(TypeError::new(
+                                TypeErrorKind::NotFound {
+                                    name: format!(
+                                        "{}::{}::{}",
+                                        module_name, enum_name, variant_name
+                                    ),
+                                },
+                                pattern.span,
+                            ))
+                        })?;
 
                     (enum_def_id, variant)
                 } else {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{path:?}") },
+                        TypeErrorKind::NotFound {
+                            name: format!("{path:?}"),
+                        },
                         pattern.span,
                     )));
                 };
 
                 // Get the enum info to access generics for substitution
-                let enum_info = self.enum_defs.get(&enum_def_id).cloned().ok_or_else(|| Box::new(TypeError::new(
-                    TypeErrorKind::NotFound { name: format!("enum {:?}", enum_def_id) },
-                    pattern.span,
-                )))?;
+                let enum_info = self.enum_defs.get(&enum_def_id).cloned().ok_or_else(|| {
+                    Box::new(TypeError::new(
+                        TypeErrorKind::NotFound {
+                            name: format!("enum {:?}", enum_def_id),
+                        },
+                        pattern.span,
+                    ))
+                })?;
 
                 // Build substitution map from generic params to concrete types from expected_ty
-                let subst: std::collections::HashMap<TyVarId, Type> = if let TypeKind::Adt { args, .. } = expected_ty.kind() {
-                    enum_info.generics.iter()
-                        .zip(args.iter())
-                        .map(|(&tyvar, ty)| (tyvar, ty.clone()))
-                        .collect()
-                } else {
-                    std::collections::HashMap::new()
-                };
+                let subst: std::collections::HashMap<TyVarId, Type> =
+                    if let TypeKind::Adt { args, .. } = expected_ty.kind() {
+                        enum_info
+                            .generics
+                            .iter()
+                            .zip(args.iter())
+                            .map(|(&tyvar, ty)| (tyvar, ty.clone()))
+                            .collect()
+                    } else {
+                        std::collections::HashMap::new()
+                    };
 
                 // Substitute type parameters in field types
-                let variant_field_types: Vec<Type> = variant_info.fields.iter()
+                let variant_field_types: Vec<Type> = variant_info
+                    .fields
+                    .iter()
                     .map(|f| self.substitute_type_vars(&f.ty, &subst))
                     .collect();
 
@@ -712,41 +799,44 @@ impl<'a> TypeContext<'a> {
                 // We lower it to a wildcard pattern in HIR.
                 hir::PatternKind::Wildcard
             }
-            ast::PatternKind::Ref { mutable, inner } => {
-                match expected_ty.kind() {
-                    TypeKind::Ref { inner: inner_ty, mutable: ty_mutable } => {
-                        if *mutable && !ty_mutable {
-                            return Err(Box::new(TypeError::new(
-                                TypeErrorKind::PatternMismatch {
-                                    expected: expected_ty.clone(),
-                                    pattern: "&mut pattern but type is &".to_string(),
-                                },
-                                pattern.span,
-                            )));
-                        }
-                        let inner_pat = self.lower_pattern(inner, inner_ty)?;
-                        hir::PatternKind::Ref {
-                            mutable: *mutable,
-                            inner: Box::new(inner_pat),
-                        }
-                    }
-                    _ => {
+            ast::PatternKind::Ref { mutable, inner } => match expected_ty.kind() {
+                TypeKind::Ref {
+                    inner: inner_ty,
+                    mutable: ty_mutable,
+                } => {
+                    if *mutable && !ty_mutable {
                         return Err(Box::new(TypeError::new(
                             TypeErrorKind::PatternMismatch {
                                 expected: expected_ty.clone(),
-                                pattern: "reference pattern".to_string(),
+                                pattern: "&mut pattern but type is &".to_string(),
                             },
                             pattern.span,
                         )));
                     }
+                    let inner_pat = self.lower_pattern(inner, inner_ty)?;
+                    hir::PatternKind::Ref {
+                        mutable: *mutable,
+                        inner: Box::new(inner_pat),
+                    }
                 }
-            }
+                _ => {
+                    return Err(Box::new(TypeError::new(
+                        TypeErrorKind::PatternMismatch {
+                            expected: expected_ty.clone(),
+                            pattern: "reference pattern".to_string(),
+                        },
+                        pattern.span,
+                    )));
+                }
+            },
             ast::PatternKind::Struct { path, fields, rest } => {
                 let (adt_def_id, type_args) = match expected_ty.kind() {
                     TypeKind::Adt { def_id, args, .. } => (*def_id, args.clone()),
                     _ => {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotAStruct { ty: expected_ty.clone() },
+                            TypeErrorKind::NotAStruct {
+                                ty: expected_ty.clone(),
+                            },
                             pattern.span,
                         )));
                     }
@@ -768,21 +858,31 @@ impl<'a> TypeContext<'a> {
                         self.symbol_to_string(path.segments[0].name.node)
                     } else {
                         return Err(Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("invalid enum variant path: {path:?}") },
+                            TypeErrorKind::NotFound {
+                                name: format!("invalid enum variant path: {path:?}"),
+                            },
                             pattern.span,
                         )));
                     };
 
-                    let variant_info = enum_info.variants.iter()
+                    let variant_info = enum_info
+                        .variants
+                        .iter()
                         .find(|v| v.name == variant_name)
                         .cloned()
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("{}::{}", enum_info.name, variant_name) },
-                            pattern.span,
-                        )))?;
+                        .ok_or_else(|| {
+                            Box::new(TypeError::new(
+                                TypeErrorKind::NotFound {
+                                    name: format!("{}::{}", enum_info.name, variant_name),
+                                },
+                                pattern.span,
+                            ))
+                        })?;
 
                     // Build substitution map from generic params to concrete types
-                    let subst: std::collections::HashMap<TyVarId, Type> = enum_info.generics.iter()
+                    let subst: std::collections::HashMap<TyVarId, Type> = enum_info
+                        .generics
+                        .iter()
                         .zip(type_args.iter())
                         .map(|(&tyvar, ty)| (tyvar, ty.clone()))
                         .collect();
@@ -794,25 +894,26 @@ impl<'a> TypeContext<'a> {
                     for field_pattern in fields {
                         let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                        let field_info = match variant_info.fields.iter().find(|f| f.name == field_name) {
-                            Some(f) => f,
-                            None => {
-                                let mut err = TypeError::new(
-                                    TypeErrorKind::NoField {
-                                        ty: expected_ty.clone(),
-                                        field: field_name.clone(),
-                                    },
-                                    field_pattern.span,
-                                );
-                                if let Some(info) = self.resolver.def_info.get(&adt_def_id) {
-                                    err = err.with_secondary_label(
-                                        info.span,
-                                        format!("enum `{}` defined here", info.name),
+                        let field_info =
+                            match variant_info.fields.iter().find(|f| f.name == field_name) {
+                                Some(f) => f,
+                                None => {
+                                    let mut err = TypeError::new(
+                                        TypeErrorKind::NoField {
+                                            ty: expected_ty.clone(),
+                                            field: field_name.clone(),
+                                        },
+                                        field_pattern.span,
                                     );
+                                    if let Some(info) = self.resolver.def_info.get(&adt_def_id) {
+                                        err = err.with_secondary_label(
+                                            info.span,
+                                            format!("enum `{}` defined here", info.name),
+                                        );
+                                    }
+                                    return Err(Box::new(err));
                                 }
-                                return Err(Box::new(err));
-                            }
-                        };
+                            };
 
                         bound_fields.insert(field_name.clone());
 
@@ -860,14 +961,16 @@ impl<'a> TypeContext<'a> {
                     let mut ordered_fields: Vec<hir::Pattern> = Vec::with_capacity(total_fields);
                     let mut bound_iter = indexed_fields.into_iter().peekable();
                     for field_idx in 0..total_fields {
-                        if bound_iter.peek().map_or(false, |(idx, _)| *idx == field_idx) {
+                        if bound_iter
+                            .peek()
+                            .map_or(false, |(idx, _)| *idx == field_idx)
+                        {
                             let (_, pat) = bound_iter.next().unwrap();
                             ordered_fields.push(pat);
                         } else {
                             // Unbound field — insert wildcard with the field's type
-                            let field_ty = self.substitute_type_vars(
-                                &variant_info.fields[field_idx].ty, &subst
-                            );
+                            let field_ty = self
+                                .substitute_type_vars(&variant_info.fields[field_idx].ty, &subst);
                             ordered_fields.push(hir::Pattern {
                                 kind: hir::PatternKind::Wildcard,
                                 ty: field_ty,
@@ -894,12 +997,18 @@ impl<'a> TypeContext<'a> {
                     let _path_name = self.symbol_to_string(path.segments[0].name.node);
                 }
 
-                let struct_info = self.struct_defs.get(&struct_def_id).cloned().ok_or_else(|| {
-                    TypeError::new(
-                        TypeErrorKind::TypeNotFound { name: format!("struct {:?}", struct_def_id) },
-                        pattern.span,
-                    )
-                })?;
+                let struct_info =
+                    self.struct_defs
+                        .get(&struct_def_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            TypeError::new(
+                                TypeErrorKind::TypeNotFound {
+                                    name: format!("struct {:?}", struct_def_id),
+                                },
+                                pattern.span,
+                            )
+                        })?;
 
                 let mut hir_fields = Vec::new();
                 let mut bound_fields = HashSet::new();
@@ -907,7 +1016,8 @@ impl<'a> TypeContext<'a> {
                 for field_pattern in fields {
                     let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name) {
+                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name)
+                    {
                         Some(f) => f,
                         None => {
                             let mut err = TypeError::new(
@@ -1022,7 +1132,13 @@ impl<'a> TypeContext<'a> {
 
                     // Extract the binding information from the ident @ .. pattern
                     let binding_pat = &elements[bind_idx];
-                    let rest_pat = if let ast::PatternKind::Ident { name, mutable, by_ref, .. } = &binding_pat.kind {
+                    let rest_pat = if let ast::PatternKind::Ident {
+                        name,
+                        mutable,
+                        by_ref,
+                        ..
+                    } = &binding_pat.kind
+                    {
                         // Create a binding pattern for the rest slice
                         // The base type is a slice of the element type
                         let base_slice_ty = Type::slice(elem_ty.clone());
@@ -1110,11 +1226,16 @@ impl<'a> TypeContext<'a> {
                                 .unwrap_or_else(|| ast::Symbol::try_from_usize(0).unwrap());
                             self.symbol_to_string(sym)
                         };
-                        let missing: Vec<_> = first_bindings.difference(&alt_bindings)
-                            .map(resolve).collect();
-                        let extra: Vec<_> = alt_bindings.difference(&first_bindings)
-                            .map(resolve).collect();
-                        let mut msg = format!("or-pattern alternative {} binds different variables", i + 1);
+                        let missing: Vec<_> = first_bindings
+                            .difference(&alt_bindings)
+                            .map(resolve)
+                            .collect();
+                        let extra: Vec<_> = alt_bindings
+                            .difference(&first_bindings)
+                            .map(resolve)
+                            .collect();
+                        let mut msg =
+                            format!("or-pattern alternative {} binds different variables", i + 1);
                         if !missing.is_empty() {
                             msg.push_str(&format!("; missing: {}", missing.join(", ")));
                         }
@@ -1138,16 +1259,23 @@ impl<'a> TypeContext<'a> {
 
                 hir::PatternKind::Or(hir_alternatives)
             }
-            ast::PatternKind::Range { start, end, inclusive } => {
+            ast::PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 use crate::hir::ty::PrimitiveTy;
 
                 match expected_ty.kind() {
-                    TypeKind::Primitive(PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Char) => {}
+                    TypeKind::Primitive(
+                        PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Char,
+                    ) => {}
                     _ => {
                         return Err(Box::new(TypeError::new(
                             TypeErrorKind::PatternMismatch {
                                 expected: expected_ty.clone(),
-                                pattern: "range pattern (requires integer or char type)".to_string(),
+                                pattern: "range pattern (requires integer or char type)"
+                                    .to_string(),
                             },
                             pattern.span,
                         )));
@@ -1184,7 +1312,9 @@ impl<'a> TypeContext<'a> {
                         Some(Binding::Def(def_id)) => {
                             // Find the enum info and variant
                             if let Some(enum_info) = self.enum_defs.get(&def_id) {
-                                if let Some(variant) = enum_info.variants.iter().find(|v| v.name == variant_name) {
+                                if let Some(variant) =
+                                    enum_info.variants.iter().find(|v| v.name == variant_name)
+                                {
                                     hir::PatternKind::Variant {
                                         def_id: variant.def_id,
                                         variant_idx: variant.index,
@@ -1192,7 +1322,9 @@ impl<'a> TypeContext<'a> {
                                     }
                                 } else {
                                     return Err(Box::new(TypeError::new(
-                                        TypeErrorKind::NotFound { name: format!("{}::{}", enum_name, variant_name) },
+                                        TypeErrorKind::NotFound {
+                                            name: format!("{}::{}", enum_name, variant_name),
+                                        },
                                         pattern.span,
                                     )));
                                 }
@@ -1221,7 +1353,9 @@ impl<'a> TypeContext<'a> {
                                     // Find the variant info to get the correct index
                                     let variant_idx = if let Some(parent_id) = info.parent {
                                         if let Some(enum_info) = self.enum_defs.get(&parent_id) {
-                                            enum_info.variants.iter()
+                                            enum_info
+                                                .variants
+                                                .iter()
                                                 .find(|v| v.def_id == def_id)
                                                 .map(|v| v.index)
                                                 .unwrap_or(0)
@@ -1272,10 +1406,14 @@ impl<'a> TypeContext<'a> {
                         }
                     }
 
-                    let mod_def_id = module_def_id.ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("module '{}'", module_name) },
-                        pattern.span,
-                    )))?;
+                    let mod_def_id = module_def_id.ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::NotFound {
+                                name: format!("module '{}'", module_name),
+                            },
+                            pattern.span,
+                        ))
+                    })?;
 
                     // Find the enum within the module's items OR reexports
                     let mut found_enum: Option<(DefId, super::EnumInfo)> = None;
@@ -1293,7 +1431,9 @@ impl<'a> TypeContext<'a> {
                         if found_enum.is_none() {
                             for (reexport_name, reexport_def_id, _vis) in &mod_info.reexports {
                                 if reexport_name == &enum_name {
-                                    if let Some(enum_info) = self.enum_defs.get(reexport_def_id).cloned() {
+                                    if let Some(enum_info) =
+                                        self.enum_defs.get(reexport_def_id).cloned()
+                                    {
                                         found_enum = Some((*reexport_def_id, enum_info));
                                         break;
                                     }
@@ -1302,18 +1442,31 @@ impl<'a> TypeContext<'a> {
                         }
                     }
 
-                    let (_enum_def_id, enum_info) = found_enum.ok_or_else(|| Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{}::{}", module_name, enum_name) },
-                        pattern.span,
-                    )))?;
+                    let (_enum_def_id, enum_info) = found_enum.ok_or_else(|| {
+                        Box::new(TypeError::new(
+                            TypeErrorKind::NotFound {
+                                name: format!("{}::{}", module_name, enum_name),
+                            },
+                            pattern.span,
+                        ))
+                    })?;
 
                     // Find the variant
-                    let variant = enum_info.variants.iter()
+                    let variant = enum_info
+                        .variants
+                        .iter()
                         .find(|v| v.name == variant_name)
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NotFound { name: format!("{}::{}::{}", module_name, enum_name, variant_name) },
-                            pattern.span,
-                        )))?;
+                        .ok_or_else(|| {
+                            Box::new(TypeError::new(
+                                TypeErrorKind::NotFound {
+                                    name: format!(
+                                        "{}::{}::{}",
+                                        module_name, enum_name, variant_name
+                                    ),
+                                },
+                                pattern.span,
+                            ))
+                        })?;
 
                     hir::PatternKind::Variant {
                         def_id: variant.def_id,
@@ -1322,7 +1475,9 @@ impl<'a> TypeContext<'a> {
                     }
                 } else {
                     return Err(Box::new(TypeError::new(
-                        TypeErrorKind::NotFound { name: format!("{:?}", path) },
+                        TypeErrorKind::NotFound {
+                            name: format!("{:?}", path),
+                        },
                         pattern.span,
                     )));
                 }
@@ -1381,8 +1536,7 @@ impl<'a> TypeContext<'a> {
                     Self::collect_bindings_recursive(first, names);
                 }
             }
-            ast::PatternKind::Ref { inner, .. }
-            | ast::PatternKind::Paren(inner) => {
+            ast::PatternKind::Ref { inner, .. } | ast::PatternKind::Paren(inner) => {
                 Self::collect_bindings_recursive(inner, names);
             }
             ast::PatternKind::Slice { elements, .. } => {

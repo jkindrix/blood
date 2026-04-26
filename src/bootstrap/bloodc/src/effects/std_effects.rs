@@ -197,7 +197,10 @@ pub enum ExceptionInfo {
     /// Internal system error with name.
     Internal(String),
     /// Pattern matching failure with location.
-    Pattern { location: String, definition: String },
+    Pattern {
+        location: String,
+        definition: String,
+    },
     /// Range/boundary violation.
     Range,
     /// System-level error with errno.
@@ -235,7 +238,10 @@ impl Exception {
     pub fn pattern(location: String, definition: String) -> Self {
         Self::new(
             format!("Pattern match failed at {} in {}", location, definition),
-            ExceptionInfo::Pattern { location, definition },
+            ExceptionInfo::Pattern {
+                location,
+                definition,
+            },
         )
     }
 }
@@ -549,17 +555,32 @@ mod tests {
 
     #[test]
     fn test_effect_name() {
-        assert_eq!(StandardEffects::effect_name(StateEffect::def_id()), Some("State"));
-        assert_eq!(StandardEffects::effect_name(ErrorEffect::def_id()), Some("Error"));
+        assert_eq!(
+            StandardEffects::effect_name(StateEffect::def_id()),
+            Some("State")
+        );
+        assert_eq!(
+            StandardEffects::effect_name(ErrorEffect::def_id()),
+            Some("Error")
+        );
         assert_eq!(StandardEffects::effect_name(IOEffect::def_id()), Some("IO"));
         assert_eq!(StandardEffects::effect_name(DefId::new(999)), None);
     }
 
     #[test]
     fn test_tail_resumptive_by_def_id() {
-        assert_eq!(StandardEffects::is_tail_resumptive(StateEffect::def_id()), Some(true));
-        assert_eq!(StandardEffects::is_tail_resumptive(ErrorEffect::def_id()), Some(false));
-        assert_eq!(StandardEffects::is_tail_resumptive(IOEffect::def_id()), Some(true));
+        assert_eq!(
+            StandardEffects::is_tail_resumptive(StateEffect::def_id()),
+            Some(true)
+        );
+        assert_eq!(
+            StandardEffects::is_tail_resumptive(ErrorEffect::def_id()),
+            Some(false)
+        );
+        assert_eq!(
+            StandardEffects::is_tail_resumptive(IOEffect::def_id()),
+            Some(true)
+        );
     }
 
     #[test]

@@ -45,10 +45,8 @@ mod util;
 
 use std::collections::HashMap;
 
-use crate::hir::{
-    self, Body, Crate as HirCrate, DefId, ItemKind, Type,
-};
 use crate::diagnostics::Diagnostic;
+use crate::hir::{self, Body, Crate as HirCrate, DefId, ItemKind, Type};
 
 use super::body::MirBody;
 use super::types::BasicBlockId;
@@ -99,7 +97,10 @@ pub type InlineHandlerBodies = HashMap<DefId, InlineHandlerBody>;
 
 pub use closure::ClosureLowering;
 pub use function::FunctionLowering;
-pub use util::{convert_binop, convert_unop, lower_literal_to_constant, is_irrefutable_pattern, ExprLowering, LoopContextInfo};
+pub use util::{
+    convert_binop, convert_unop, is_irrefutable_pattern, lower_literal_to_constant, ExprLowering,
+    LoopContextInfo,
+};
 
 // ============================================================================
 // MIR Lowering Pass
@@ -149,7 +150,9 @@ impl<'hir> MirLowering<'hir> {
     /// Returns a tuple of:
     /// - MIR bodies for all functions and closures
     /// - Inline handler bodies for codegen (try/with blocks)
-    pub fn lower_crate(&mut self) -> Result<(HashMap<DefId, MirBody>, InlineHandlerBodies), Vec<Diagnostic>> {
+    pub fn lower_crate(
+        &mut self,
+    ) -> Result<(HashMap<DefId, MirBody>, InlineHandlerBodies), Vec<Diagnostic>> {
         // First pass: lower all top-level functions
         // Sort by DefId for deterministic closure counter assignment.
         // HashMap iteration is non-deterministic; since closures discovered during
@@ -205,7 +208,10 @@ impl<'hir> MirLowering<'hir> {
         }
 
         if self.diagnostics.is_empty() {
-            Ok((std::mem::take(&mut self.bodies), std::mem::take(&mut self.inline_handler_bodies)))
+            Ok((
+                std::mem::take(&mut self.bodies),
+                std::mem::take(&mut self.inline_handler_bodies),
+            ))
         } else {
             Err(std::mem::take(&mut self.diagnostics))
         }
@@ -288,9 +294,9 @@ mod tests {
     fn source_to_mir(source: &str) -> Result<(HirCrate, HashMap<DefId, MirBody>), Vec<Diagnostic>> {
         let mut parser = Parser::new(source);
         let program = parser.parse_program().map_err(|e| {
-            e.into_iter().map(|err| {
-                Diagnostic::error(err.message, crate::span::Span::default())
-            }).collect::<Vec<_>>()
+            e.into_iter()
+                .map(|err| Diagnostic::error(err.message, crate::span::Span::default()))
+                .collect::<Vec<_>>()
         })?;
 
         let interner = parser.take_interner();
@@ -310,7 +316,8 @@ mod tests {
                 panic!(
                     "Expected MIR lowering to succeed, but got {} error(s):\n{}",
                     errors.len(),
-                    errors.iter()
+                    errors
+                        .iter()
                         .map(|e| format!("  - {}", e.message))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -381,7 +388,8 @@ mod tests {
 
     #[test]
     fn test_lower_nested_if() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 if true {
                     if false { 1 } else { 2 }
@@ -389,24 +397,28 @@ mod tests {
                     3
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_while_loop() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() {
                 let mut x = 0;
                 while x < 10 {
                     x = x + 1;
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_loop() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 let mut x = 0;
                 loop {
@@ -414,21 +426,25 @@ mod tests {
                     if x >= 10 { break x; }
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_loop_break() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() {
                 loop { break; }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_loop_continue() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() {
                 let mut x = 0;
                 loop {
@@ -437,7 +453,8 @@ mod tests {
                     if x >= 10 { break; }
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -446,7 +463,8 @@ mod tests {
 
     #[test]
     fn test_lower_match_literal() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 let x = 1;
                 match x {
@@ -455,31 +473,36 @@ mod tests {
                     _ => 2,
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_match_binding() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 let x = 42;
                 match x {
                     n => n + 1,
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_match_tuple() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 let t = (1, 2);
                 match t {
                     (a, b) => a + b,
                 }
             }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -488,20 +511,24 @@ mod tests {
 
     #[test]
     fn test_lower_function_call() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn add(a: i32, b: i32) -> i32 { a + b }
             fn main() -> i32 { add(1, 2) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_recursive_function() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn factorial(n: i32) -> i32 {
                 if n <= 1 { 1 } else { n * factorial(n - 1) }
             }
             fn main() -> i32 { factorial(5) }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -510,21 +537,25 @@ mod tests {
 
     #[test]
     fn test_lower_struct_construction() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             struct Point { x: i32, y: i32 }
             fn main() { let p = Point { x: 10, y: 20 }; }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_struct_field_access() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             struct Point { x: i32, y: i32 }
             fn main() -> i32 {
                 let p = Point { x: 10, y: 20 };
                 p.x + p.y
             }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -533,18 +564,22 @@ mod tests {
 
     #[test]
     fn test_lower_enum_unit_variant() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             enum Color { Red, Green, Blue }
             fn main() { let c = Color.Red; }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_lower_enum_tuple_variant() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             enum MyOption { Some(i32), None }
             fn main() { let x = MyOption.Some(42); }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -596,13 +631,15 @@ mod tests {
 
     #[test]
     fn test_lower_dereference() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() -> i32 {
                 let x = 42;
                 let r = &x;
                 *r
             }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -616,12 +653,14 @@ mod tests {
 
     #[test]
     fn test_lower_closure_with_capture() {
-        assert_lowers(r#"
+        assert_lowers(
+            r#"
             fn main() {
                 let y = 10;
                 let f = |x| x + y;
             }
-        "#);
+        "#,
+        );
     }
 
     // ============================================================
@@ -633,7 +672,10 @@ mod tests {
         let body = get_main_mir("fn main() {}");
         // Check that there's at least one block with Return terminator
         let has_return = body.basic_blocks.iter().any(|bb| {
-            bb.terminator.as_ref().map(|t| t.kind.is_return()).unwrap_or(false)
+            bb.terminator
+                .as_ref()
+                .map(|t| t.kind.is_return())
+                .unwrap_or(false)
         });
         assert!(has_return, "MIR should have a Return terminator");
     }
@@ -648,26 +690,37 @@ mod tests {
     fn test_mir_has_locals() {
         let body = get_main_mir("fn main() { let x = 42; let y = x + 1; }");
         // Should have return place + temporaries + user variables
-        assert!(body.locals.len() >= 3, "MIR should have locals for variables");
+        assert!(
+            body.locals.len() >= 3,
+            "MIR should have locals for variables"
+        );
     }
 
     #[test]
     fn test_mir_if_creates_multiple_blocks() {
         let body = get_main_mir("fn main() -> i32 { if true { 1 } else { 2 } }");
         // if-else should create at least 3 blocks: entry, then, else (plus join)
-        assert!(body.basic_blocks.len() >= 3, "if-else should create multiple blocks");
+        assert!(
+            body.basic_blocks.len() >= 3,
+            "if-else should create multiple blocks"
+        );
     }
 
     #[test]
     fn test_mir_loop_creates_cycle() {
-        let body = get_main_mir(r#"
+        let body = get_main_mir(
+            r#"
             fn main() {
                 let mut i = 0;
                 while i < 10 { i = i + 1; }
             }
-        "#);
+        "#,
+        );
         // A loop should have at least 3 blocks: before, body, after
-        assert!(body.basic_blocks.len() >= 3, "while loop should create multiple blocks");
+        assert!(
+            body.basic_blocks.len() >= 3,
+            "while loop should create multiple blocks"
+        );
     }
 
     #[test]
@@ -675,7 +728,10 @@ mod tests {
         let body = get_main_mir("fn main() {}");
         // Entry block should always be bb0
         assert_eq!(BasicBlockId::ENTRY.0, 0);
-        assert!(!body.basic_blocks.is_empty(), "Should have at least entry block");
+        assert!(
+            !body.basic_blocks.is_empty(),
+            "Should have at least entry block"
+        );
     }
 
     #[test]
@@ -687,7 +743,9 @@ mod tests {
 
     #[test]
     fn test_mir_params_follow_return_place() {
-        let (hir, bodies) = source_to_mir("fn foo(x: i32, y: i32) -> i32 { x + y } fn main() { foo(1, 2); }").unwrap();
+        let (hir, bodies) =
+            source_to_mir("fn foo(x: i32, y: i32) -> i32 { x + y } fn main() { foo(1, 2); }")
+                .unwrap();
         // Find foo function
         for (def_id, item) in &hir.items {
             if matches!(item.kind, hir::ItemKind::Fn(_)) && item.name == "foo" {
@@ -709,21 +767,30 @@ mod tests {
         // Entry block should be reachable
         assert!(body.is_reachable(BasicBlockId::ENTRY));
         // Most blocks should be reachable in simple if-else without early returns
-        let reachable_count = body.block_ids()
+        let reachable_count = body
+            .block_ids()
             .filter(|&bb_id| body.is_reachable(bb_id))
             .count();
-        assert!(reachable_count >= 3, "At least 3 blocks should be reachable in if-else");
+        assert!(
+            reachable_count >= 3,
+            "At least 3 blocks should be reachable in if-else"
+        );
     }
 
     #[test]
     fn test_mir_predecessors_consistency() {
-        let body = get_main_mir(r#"
+        let body = get_main_mir(
+            r#"
             fn main() -> i32 {
                 if true { 1 } else { 2 }
             }
-        "#);
+        "#,
+        );
         let preds = body.predecessors();
         // Entry block should have no predecessors
-        assert!(preds.get(&BasicBlockId::ENTRY).map(|v| v.is_empty()).unwrap_or(true));
+        assert!(preds
+            .get(&BasicBlockId::ENTRY)
+            .map(|v| v.is_empty())
+            .unwrap_or(true));
     }
 }

@@ -71,7 +71,8 @@ static LAST_SIGNAL: AtomicU8 = AtomicU8::new(0);
 static SIGNAL_COUNT: AtomicU8 = AtomicU8::new(0);
 
 /// Shutdown notification channel.
-static SHUTDOWN_NOTIFY: std::sync::OnceLock<Arc<(Mutex<bool>, Condvar)>> = std::sync::OnceLock::new();
+static SHUTDOWN_NOTIFY: std::sync::OnceLock<Arc<(Mutex<bool>, Condvar)>> =
+    std::sync::OnceLock::new();
 
 /// Get or initialize the shutdown notification channel.
 fn get_shutdown_notify() -> &'static Arc<(Mutex<bool>, Condvar)> {

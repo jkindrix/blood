@@ -7,18 +7,19 @@
 //!
 //! Uses `insta` for snapshot testing.
 
+use crate::diagnostics::Diagnostic;
 use crate::parser::Parser;
 use crate::typeck::check_program;
-use crate::diagnostics::Diagnostic;
 
 /// Helper to parse and type-check source, collecting diagnostics.
 fn get_diagnostics(source: &str) -> Vec<Diagnostic> {
     let mut parser = Parser::new(source);
     match parser.parse_program() {
         Err(errors) => {
-            return errors.into_iter().map(|e| {
-                Diagnostic::error(e.message, crate::span::Span::default())
-            }).collect();
+            return errors
+                .into_iter()
+                .map(|e| Diagnostic::error(e.message, crate::span::Span::default()))
+                .collect();
         }
         Ok(program) => {
             let interner = parser.take_interner();
@@ -36,26 +37,31 @@ fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
         return "No errors".to_string();
     }
 
-    diagnostics.iter().enumerate().map(|(i, d)| {
-        let mut output = format!("Error {}: {}", i + 1, d.message);
-        if let Some(code) = &d.code {
-            output = format!("[{}] {}", code, output);
-        }
-        let secondary: Vec<_> = d.labels.iter().filter(|l| !l.primary).collect();
-        if !secondary.is_empty() {
-            output.push_str("\n  Labels:");
-            for l in &secondary {
-                output.push_str(&format!("\n    - {}", l.message));
+    diagnostics
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let mut output = format!("Error {}: {}", i + 1, d.message);
+            if let Some(code) = &d.code {
+                output = format!("[{}] {}", code, output);
             }
-        }
-        if !d.suggestions.is_empty() {
-            output.push_str("\n  Suggestions:");
-            for s in &d.suggestions {
-                output.push_str(&format!("\n    - {}", s));
+            let secondary: Vec<_> = d.labels.iter().filter(|l| !l.primary).collect();
+            if !secondary.is_empty() {
+                output.push_str("\n  Labels:");
+                for l in &secondary {
+                    output.push_str(&format!("\n    - {}", l.message));
+                }
             }
-        }
-        output
-    }).collect::<Vec<_>>().join("\n\n")
+            if !d.suggestions.is_empty() {
+                output.push_str("\n  Suggestions:");
+                for s in &d.suggestions {
+                    output.push_str(&format!("\n    - {}", s));
+                }
+            }
+            output
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 // ============================================================

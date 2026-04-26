@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{Type, TypeKind, PrimitiveTy, TyVarId};
+use crate::hir::{PrimitiveTy, TyVarId, Type, TypeKind};
 
-use super::types::{TypeParam, Constraint, ConstraintError};
+use super::types::{Constraint, ConstraintError, TypeParam};
 
 /// A function that checks if a type satisfies a named trait constraint.
 ///
@@ -186,7 +186,7 @@ impl<'a> ConstraintChecker<'a> {
             TypeKind::Closure { .. } => false,
             TypeKind::Adt { .. } => false, // Requires explicit impl
             TypeKind::DynTrait { .. } => false, // Unsized
-            TypeKind::Error => true, // Be permissive for error recovery
+            TypeKind::Error => true,       // Be permissive for error recovery
             TypeKind::Infer(_) | TypeKind::Param(_) => false,
             TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_copy(&f.ty)),
             TypeKind::Ownership { inner, .. } => self.type_is_copy(inner),
@@ -217,7 +217,7 @@ impl<'a> ConstraintChecker<'a> {
     /// Check if a type implements Sized.
     fn type_is_sized(&self, ty: &Type) -> bool {
         match ty.kind.as_ref() {
-            TypeKind::Slice { .. } => false,   // [T] is !Sized
+            TypeKind::Slice { .. } => false,    // [T] is !Sized
             TypeKind::DynTrait { .. } => false, // dyn Trait is !Sized
             // str is unsized (it's a string slice type)
             TypeKind::Primitive(PrimitiveTy::Str) => false,
@@ -278,7 +278,11 @@ impl<'a> ConstraintChecker<'a> {
     fn type_is_freeze(&self, ty: &Type) -> bool {
         match ty.kind.as_ref() {
             TypeKind::Primitive(_) => true,
-            TypeKind::Ref { mutable: false, inner, .. } => self.type_is_freeze(inner),
+            TypeKind::Ref {
+                mutable: false,
+                inner,
+                ..
+            } => self.type_is_freeze(inner),
             TypeKind::Ref { mutable: true, .. } => false,
             TypeKind::Ptr { .. } => true,
             TypeKind::Fn { .. } => true,
@@ -374,15 +378,15 @@ impl<'a> ConstraintChecker<'a> {
     fn type_is_default(&self, ty: &Type) -> bool {
         match ty.kind.as_ref() {
             TypeKind::Primitive(prim) => match prim {
-                PrimitiveTy::Bool => true, // false
-                PrimitiveTy::Int(_) => true, // 0
-                PrimitiveTy::Uint(_) => true, // 0
+                PrimitiveTy::Bool => true,     // false
+                PrimitiveTy::Int(_) => true,   // 0
+                PrimitiveTy::Uint(_) => true,  // 0
                 PrimitiveTy::Float(_) => true, // 0.0
-                PrimitiveTy::Char => true, // '\0'
-                PrimitiveTy::Unit => true, // ()
-                PrimitiveTy::Str => false, // &str doesn't have Default
-                PrimitiveTy::String => true, // String::new()
-                PrimitiveTy::Never => false, // Never type cannot be constructed
+                PrimitiveTy::Char => true,     // '\0'
+                PrimitiveTy::Unit => true,     // ()
+                PrimitiveTy::Str => false,     // &str doesn't have Default
+                PrimitiveTy::String => true,   // String::new()
+                PrimitiveTy::Never => false,   // Never type cannot be constructed
             },
             TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_default(e)),
             TypeKind::Array { element, .. } => self.type_is_default(element),

@@ -7,7 +7,7 @@
 //!
 //! PERF-001: Benchmark generation check in compiled Blood code
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 /// Simulates the generation check operation inline (for comparison).
 /// This represents the theoretical minimum cost with direct comparison.
@@ -187,13 +187,9 @@ fn bench_slot_registry_scaling(c: &mut Criterion) {
         let test_addr = 0x1000u64 + (*count / 2) as u64 * 16;
         let test_gen = (*count / 2 + 1) as i32;
 
-        group.bench_with_input(
-            BenchmarkId::new("lookup", count),
-            count,
-            |b, _| {
-                b.iter(|| registry.validate_generation(black_box(test_addr), black_box(test_gen)))
-            }
-        );
+        group.bench_with_input(BenchmarkId::new("lookup", count), count, |b, _| {
+            b.iter(|| registry.validate_generation(black_box(test_addr), black_box(test_gen)))
+        });
     }
 
     group.finish();
@@ -274,12 +270,17 @@ struct EvidenceVector {
 
 impl EvidenceVector {
     fn new() -> Self {
-        EvidenceVector { entries: Vec::with_capacity(8) }
+        EvidenceVector {
+            entries: Vec::with_capacity(8),
+        }
     }
 
     #[inline]
     fn push(&mut self, registry_index: u64, state: *mut u8) {
-        self.entries.push(EvidenceEntry { registry_index, state });
+        self.entries.push(EvidenceEntry {
+            registry_index,
+            state,
+        });
     }
 
     #[inline]
@@ -290,7 +291,10 @@ impl EvidenceVector {
     #[inline]
     fn find_handler(&self, effect_id: u64) -> Option<&EvidenceEntry> {
         // Linear search from top of stack (most recent handler first)
-        self.entries.iter().rev().find(|e| e.registry_index == effect_id)
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.registry_index == effect_id)
     }
 
     #[inline]
@@ -314,13 +318,21 @@ struct HandlerRegistry {
 
 impl HandlerRegistry {
     fn new() -> Self {
-        HandlerRegistry { entries: Vec::with_capacity(32) }
+        HandlerRegistry {
+            entries: Vec::with_capacity(32),
+        }
     }
 
     fn register(&mut self, effect_id: i64, op_count: usize) -> usize {
-        let ops: Vec<fn(i64) -> i64> = (0..op_count).map(|_| identity_op as fn(i64) -> i64).collect();
+        let ops: Vec<fn(i64) -> i64> = (0..op_count)
+            .map(|_| identity_op as fn(i64) -> i64)
+            .collect();
         let index = self.entries.len();
-        self.entries.push(HandlerRegistryEntry { effect_id, op_count, ops });
+        self.entries.push(HandlerRegistryEntry {
+            effect_id,
+            op_count,
+            ops,
+        });
         index
     }
 
@@ -336,7 +348,9 @@ impl HandlerRegistry {
 }
 
 /// Identity operation for benchmarking.
-fn identity_op(x: i64) -> i64 { x }
+fn identity_op(x: i64) -> i64 {
+    x
+}
 
 /// Simulated continuation for effect handlers.
 struct SimulatedContinuation {
@@ -379,7 +393,8 @@ impl ContinuationRegistry {
     fn create(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.continuations.insert(id, SimulatedContinuation::new(id));
+        self.continuations
+            .insert(id, SimulatedContinuation::new(id));
         id
     }
 
@@ -393,7 +408,8 @@ impl ContinuationRegistry {
         if self.continuations.contains_key(&id) {
             let new_id = self.next_id;
             self.next_id += 1;
-            self.continuations.insert(new_id, SimulatedContinuation::new(new_id));
+            self.continuations
+                .insert(new_id, SimulatedContinuation::new(new_id));
             Some(new_id)
         } else {
             None
@@ -405,11 +421,7 @@ fn bench_evidence_vector_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("effect_evidence_vector");
 
     // Benchmark evidence vector creation
-    group.bench_function("create", |b| {
-        b.iter(|| {
-            black_box(EvidenceVector::new())
-        })
-    });
+    group.bench_function("create", |b| b.iter(|| black_box(EvidenceVector::new())));
 
     // Benchmark push operation
     group.bench_function("push", |b| {
@@ -433,9 +445,7 @@ fn bench_evidence_vector_operations(c: &mut Criterion) {
                 }
                 ev
             },
-            |mut ev| {
-                black_box(ev.pop())
-            },
+            |mut ev| black_box(ev.pop()),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -446,9 +456,7 @@ fn bench_evidence_vector_operations(c: &mut Criterion) {
         for i in 0..3 {
             ev.push(i, std::ptr::null_mut());
         }
-        b.iter(|| {
-            black_box(ev.find_handler(black_box(1)))
-        })
+        b.iter(|| black_box(ev.find_handler(black_box(1))))
     });
 
     // Benchmark handler lookup (deep stack)
@@ -457,9 +465,7 @@ fn bench_evidence_vector_operations(c: &mut Criterion) {
         for i in 0..10 {
             ev.push(i, std::ptr::null_mut());
         }
-        b.iter(|| {
-            black_box(ev.find_handler(black_box(5)))
-        })
+        b.iter(|| black_box(ev.find_handler(black_box(5))))
     });
 
     group.finish();
@@ -476,16 +482,12 @@ fn bench_handler_registry_operations(c: &mut Criterion) {
 
     // Benchmark handler lookup by effect ID
     group.bench_function("lookup_by_effect", |b| {
-        b.iter(|| {
-            black_box(registry.lookup_by_effect(black_box(10)))
-        })
+        b.iter(|| black_box(registry.lookup_by_effect(black_box(10))))
     });
 
     // Benchmark handler lookup by index (direct)
     group.bench_function("lookup_by_index", |b| {
-        b.iter(|| {
-            black_box(registry.get(black_box(10)))
-        })
+        b.iter(|| black_box(registry.get(black_box(10))))
     });
 
     // Benchmark the full handler dispatch path:
@@ -519,18 +521,14 @@ fn bench_continuation_operations(c: &mut Criterion) {
     // Benchmark continuation creation
     group.bench_function("create", |b| {
         let mut registry = ContinuationRegistry::new();
-        b.iter(|| {
-            black_box(registry.create())
-        })
+        b.iter(|| black_box(registry.create()))
     });
 
     // Benchmark continuation resume (one-shot)
     group.bench_function("resume_oneshot", |b| {
         b.iter_batched(
             || SimulatedContinuation::new(1),
-            |mut cont| {
-                black_box(cont.resume(black_box(42)))
-            },
+            |mut cont| black_box(cont.resume(black_box(42))),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -539,9 +537,7 @@ fn bench_continuation_operations(c: &mut Criterion) {
     group.bench_function("clone_multishot", |b| {
         let mut registry = ContinuationRegistry::new();
         let original_id = registry.create();
-        b.iter(|| {
-            black_box(registry.clone_continuation(black_box(original_id)))
-        })
+        b.iter(|| black_box(registry.clone_continuation(black_box(original_id))))
     });
 
     // Benchmark continuation take from registry
@@ -552,9 +548,7 @@ fn bench_continuation_operations(c: &mut Criterion) {
                 let id = registry.create();
                 (registry, id)
             },
-            |(mut registry, id)| {
-                black_box(registry.take(id))
-            },
+            |(mut registry, id)| black_box(registry.take(id)),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -728,7 +722,11 @@ struct TreeNode128 {
 
 impl TreeNode64 {
     fn new(value: i64) -> Self {
-        TreeNode64 { value, left: None, right: None }
+        TreeNode64 {
+            value,
+            left: None,
+            right: None,
+        }
     }
 
     fn insert(&mut self, value: i64) {
@@ -762,40 +760,28 @@ fn bench_pointer_size_overhead(c: &mut Criterion) {
 
     // Compare memory footprint (measured indirectly via allocation)
     group.bench_function("thin_pointer_64_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<ThinPointer64>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<ThinPointer64>()))
     });
 
     group.bench_function("fat_pointer_128_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<FatPointer128>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<FatPointer128>()))
     });
 
     // Compare node sizes
     group.bench_function("list_node_64_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<ListNode64>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<ListNode64>()))
     });
 
     group.bench_function("list_node_128_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<ListNode128>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<ListNode128>()))
     });
 
     group.bench_function("tree_node_64_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<TreeNode64>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<TreeNode64>()))
     });
 
     group.bench_function("tree_node_128_size", |b| {
-        b.iter(|| {
-            black_box(std::mem::size_of::<TreeNode128>())
-        })
+        b.iter(|| black_box(std::mem::size_of::<TreeNode128>()))
     });
 
     group.finish();
@@ -855,7 +841,7 @@ fn bench_linked_list_traversal(c: &mut Criterion) {
                     }
                     black_box(sum)
                 })
-            }
+            },
         );
     }
 
@@ -879,11 +865,7 @@ fn bench_tree_traversal(c: &mut Criterion) {
         }
 
         let bench_name = format!("sum_64bit_depth_{}", depth);
-        group.bench_function(&bench_name, |b| {
-            b.iter(|| {
-                black_box(root.sum())
-            })
-        });
+        group.bench_function(&bench_name, |b| b.iter(|| black_box(root.sum())));
     }
 
     // Simulate 128-bit pointer tree traversal overhead
@@ -916,7 +898,7 @@ fn bench_tree_traversal(c: &mut Criterion) {
                     }
                     black_box(sum)
                 })
-            }
+            },
         );
     }
 
@@ -946,7 +928,11 @@ fn bench_cache_efficiency(c: &mut Criterion) {
 
     // Array of 128-bit values (4 per cache line)
     let array_128: Vec<FatPointer128> = (0..10000)
-        .map(|i| FatPointer128 { address: i as u64, generation: (i as u32), _metadata: 0 })
+        .map(|i| FatPointer128 {
+            address: i as u64,
+            generation: (i as u32),
+            _metadata: 0,
+        })
         .collect();
 
     group.bench_function("array_128bit_sequential", |b| {
@@ -964,15 +950,11 @@ fn bench_cache_efficiency(c: &mut Criterion) {
     let ptrs_per_line_128 = cache_line_size / std::mem::size_of::<FatPointer128>();
 
     group.bench_function("cache_line_capacity_64bit", |b| {
-        b.iter(|| {
-            black_box(ptrs_per_line_64)
-        })
+        b.iter(|| black_box(ptrs_per_line_64))
     });
 
     group.bench_function("cache_line_capacity_128bit", |b| {
-        b.iter(|| {
-            black_box(ptrs_per_line_128)
-        })
+        b.iter(|| black_box(ptrs_per_line_128))
     });
 
     group.finish();

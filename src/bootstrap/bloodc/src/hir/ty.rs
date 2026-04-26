@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use super::def::{FloatTy, IntTy, UintTy};
 use super::DefId;
-use super::def::{IntTy, UintTy, FloatTy};
 
 /// An effect annotation on a function type.
 ///
@@ -513,7 +513,10 @@ impl Type {
 
     /// Create an array type with a concrete size.
     pub fn array(element: Type, size: u64) -> Self {
-        Self::new(TypeKind::Array { element, size: ConstValue::Uint(size as u128) })
+        Self::new(TypeKind::Array {
+            element,
+            size: ConstValue::Uint(size as u128),
+        })
     }
 
     /// Create an array type with a const value (may be a const param).
@@ -533,17 +536,37 @@ impl Type {
 
     /// Create a function type (without effects or const args).
     pub fn function(params: Vec<Type>, ret: Type) -> Self {
-        Self::new(TypeKind::Fn { params, ret, effects: Vec::new(), const_args: Vec::new() })
+        Self::new(TypeKind::Fn {
+            params,
+            ret,
+            effects: Vec::new(),
+            const_args: Vec::new(),
+        })
     }
 
     /// Create a function type with effect annotations.
     pub fn function_with_effects(params: Vec<Type>, ret: Type, effects: Vec<FnEffect>) -> Self {
-        Self::new(TypeKind::Fn { params, ret, effects, const_args: Vec::new() })
+        Self::new(TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            const_args: Vec::new(),
+        })
     }
 
     /// Create a function type with explicit const generic arguments.
-    pub fn function_with_const_args(params: Vec<Type>, ret: Type, effects: Vec<FnEffect>, const_args: Vec<(ConstParamId, ConstValue)>) -> Self {
-        Self::new(TypeKind::Fn { params, ret, effects, const_args })
+    pub fn function_with_const_args(
+        params: Vec<Type>,
+        ret: Type,
+        effects: Vec<FnEffect>,
+        const_args: Vec<(ConstParamId, ConstValue)>,
+    ) -> Self {
+        Self::new(TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            const_args,
+        })
     }
 
     /// Create an ADT (struct/enum) type.
@@ -553,7 +576,10 @@ impl Type {
 
     /// Create a trait object type: `dyn Trait` or `dyn Trait + Send + Sync`.
     pub fn dyn_trait(trait_id: DefId, auto_traits: Vec<DefId>) -> Self {
-        Self::new(TypeKind::DynTrait { trait_id, auto_traits })
+        Self::new(TypeKind::DynTrait {
+            trait_id,
+            auto_traits,
+        })
     }
 
     /// Create a record type with known fields and optional row variable.
@@ -563,7 +589,10 @@ impl Type {
 
     /// Create a universally quantified (forall) type.
     pub fn forall(params: Vec<TyVarId>, body: Type) -> Self {
-        Self::new(TypeKind::Forall { params, body: Box::new(body) })
+        Self::new(TypeKind::Forall {
+            params,
+            body: Box::new(body),
+        })
     }
 
     /// Create a linear type (must be used exactly once).
@@ -746,11 +775,28 @@ impl fmt::Display for TypeKind {
             }
             TypeKind::Array { element, size } => write!(f, "[{element}; {size}]"),
             TypeKind::Slice { element } => write!(f, "[{element}]"),
-            TypeKind::Ref { inner, mutable: false } => write!(f, "&{inner}"),
-            TypeKind::Ref { inner, mutable: true } => write!(f, "&mut {inner}"),
-            TypeKind::Ptr { inner, mutable: false } => write!(f, "*const {inner}"),
-            TypeKind::Ptr { inner, mutable: true } => write!(f, "*mut {inner}"),
-            TypeKind::Fn { params, ret, effects, .. } => {
+            TypeKind::Ref {
+                inner,
+                mutable: false,
+            } => write!(f, "&{inner}"),
+            TypeKind::Ref {
+                inner,
+                mutable: true,
+            } => write!(f, "&mut {inner}"),
+            TypeKind::Ptr {
+                inner,
+                mutable: false,
+            } => write!(f, "*const {inner}"),
+            TypeKind::Ptr {
+                inner,
+                mutable: true,
+            } => write!(f, "*mut {inner}"),
+            TypeKind::Fn {
+                params,
+                ret,
+                effects,
+                ..
+            } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -781,7 +827,11 @@ impl fmt::Display for TypeKind {
                 }
                 Ok(())
             }
-            TypeKind::Closure { def_id: _, params, ret } => {
+            TypeKind::Closure {
+                def_id: _,
+                params,
+                ret,
+            } => {
                 write!(f, "|")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -807,10 +857,19 @@ impl fmt::Display for TypeKind {
             TypeKind::Infer(id) => write!(f, "?{}", id.0),
             TypeKind::Param(id) => write!(f, "T{}", id.0),
             TypeKind::Never => write!(f, "!"),
-            TypeKind::Range { element, inclusive: false } => write!(f, "Range<{element}>"),
-            TypeKind::Range { element, inclusive: true } => write!(f, "RangeInclusive<{element}>"),
+            TypeKind::Range {
+                element,
+                inclusive: false,
+            } => write!(f, "Range<{element}>"),
+            TypeKind::Range {
+                element,
+                inclusive: true,
+            } => write!(f, "RangeInclusive<{element}>"),
             TypeKind::Error => write!(f, "{{error}}"),
-            TypeKind::DynTrait { trait_id, auto_traits } => {
+            TypeKind::DynTrait {
+                trait_id,
+                auto_traits,
+            } => {
                 write!(f, "dyn {trait_id}")?;
                 for auto_trait in auto_traits {
                     write!(f, " + {auto_trait}")?;
@@ -885,43 +944,81 @@ fn display_type_kind(kind: &TypeKind, names: &HashMap<DefId, String>) -> String 
         TypeKind::Slice { element } => {
             format!("[{}]", display_type(element, names))
         }
-        TypeKind::Ref { inner, mutable: false } => {
+        TypeKind::Ref {
+            inner,
+            mutable: false,
+        } => {
             format!("&{}", display_type(inner, names))
         }
-        TypeKind::Ref { inner, mutable: true } => {
+        TypeKind::Ref {
+            inner,
+            mutable: true,
+        } => {
             format!("&mut {}", display_type(inner, names))
         }
-        TypeKind::Ptr { inner, mutable: false } => {
+        TypeKind::Ptr {
+            inner,
+            mutable: false,
+        } => {
             format!("*const {}", display_type(inner, names))
         }
-        TypeKind::Ptr { inner, mutable: true } => {
+        TypeKind::Ptr {
+            inner,
+            mutable: true,
+        } => {
             format!("*mut {}", display_type(inner, names))
         }
-        TypeKind::Fn { params, ret, effects, .. } => {
+        TypeKind::Fn {
+            params,
+            ret,
+            effects,
+            ..
+        } => {
             let params_str: Vec<_> = params.iter().map(|p| display_type(p, names)).collect();
-            let mut s = format!("fn({}) -> {}", params_str.join(", "), display_type(ret, names));
+            let mut s = format!(
+                "fn({}) -> {}",
+                params_str.join(", "),
+                display_type(ret, names)
+            );
             if !effects.is_empty() {
-                let effs: Vec<_> = effects.iter().map(|eff| {
-                    let name = names.get(&eff.def_id)
-                        .cloned()
-                        .unwrap_or_else(|| format!("E{}", eff.def_id.index()));
-                    if eff.type_args.is_empty() {
-                        name
-                    } else {
-                        let args: Vec<_> = eff.type_args.iter().map(|a| display_type(a, names)).collect();
-                        format!("{name}<{}>", args.join(", "))
-                    }
-                }).collect();
+                let effs: Vec<_> = effects
+                    .iter()
+                    .map(|eff| {
+                        let name = names
+                            .get(&eff.def_id)
+                            .cloned()
+                            .unwrap_or_else(|| format!("E{}", eff.def_id.index()));
+                        if eff.type_args.is_empty() {
+                            name
+                        } else {
+                            let args: Vec<_> = eff
+                                .type_args
+                                .iter()
+                                .map(|a| display_type(a, names))
+                                .collect();
+                            format!("{name}<{}>", args.join(", "))
+                        }
+                    })
+                    .collect();
                 s.push_str(&format!(" / {{{}}}", effs.join(", ")));
             }
             s
         }
-        TypeKind::Closure { def_id: _, params, ret } => {
+        TypeKind::Closure {
+            def_id: _,
+            params,
+            ret,
+        } => {
             let params_str: Vec<_> = params.iter().map(|p| display_type(p, names)).collect();
-            format!("|{}| -> {}", params_str.join(", "), display_type(ret, names))
+            format!(
+                "|{}| -> {}",
+                params_str.join(", "),
+                display_type(ret, names)
+            )
         }
         TypeKind::Adt { def_id, args } => {
-            let name = names.get(def_id)
+            let name = names
+                .get(def_id)
                 .cloned()
                 .unwrap_or_else(|| format!("def{}", def_id.index()));
             if args.is_empty() {
@@ -934,25 +1031,39 @@ fn display_type_kind(kind: &TypeKind, names: &HashMap<DefId, String>) -> String 
         TypeKind::Infer(id) => format!("?{}", id.0),
         TypeKind::Param(id) => format!("T{}", id.0),
         TypeKind::Never => "!".to_string(),
-        TypeKind::Range { element, inclusive: false } => {
+        TypeKind::Range {
+            element,
+            inclusive: false,
+        } => {
             format!("Range<{}>", display_type(element, names))
         }
-        TypeKind::Range { element, inclusive: true } => {
+        TypeKind::Range {
+            element,
+            inclusive: true,
+        } => {
             format!("RangeInclusive<{}>", display_type(element, names))
         }
         TypeKind::Error => "{error}".to_string(),
-        TypeKind::DynTrait { trait_id, auto_traits } => {
-            let name = names.get(trait_id)
+        TypeKind::DynTrait {
+            trait_id,
+            auto_traits,
+        } => {
+            let name = names
+                .get(trait_id)
                 .cloned()
                 .unwrap_or_else(|| format!("def{}", trait_id.index()));
             if auto_traits.is_empty() {
                 format!("dyn {name}")
             } else {
-                let autos: Vec<_> = auto_traits.iter().map(|id| {
-                    names.get(id)
-                        .cloned()
-                        .unwrap_or_else(|| format!("def{}", id.index()))
-                }).collect();
+                let autos: Vec<_> = auto_traits
+                    .iter()
+                    .map(|id| {
+                        names
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| format!("def{}", id.index()))
+                    })
+                    .collect();
                 format!("dyn {name} + {}", autos.join(" + "))
             }
         }
@@ -962,7 +1073,11 @@ fn display_type_kind(kind: &TypeKind, names: &HashMap<DefId, String>) -> String 
                 if i > 0 {
                     s.push_str(", ");
                 }
-                s.push_str(&format!("{:?}: {}", field.name, display_type(&field.ty, names)));
+                s.push_str(&format!(
+                    "{:?}: {}",
+                    field.name,
+                    display_type(&field.ty, names)
+                ));
             }
             if let Some(rv) = row_var {
                 if !fields.is_empty() {
@@ -975,7 +1090,11 @@ fn display_type_kind(kind: &TypeKind, names: &HashMap<DefId, String>) -> String 
         }
         TypeKind::Forall { params, body } => {
             let params_str: Vec<_> = params.iter().map(|p| format!("T{}", p.0)).collect();
-            format!("forall<{}>. {}", params_str.join(", "), display_type(body, names))
+            format!(
+                "forall<{}>. {}",
+                params_str.join(", "),
+                display_type(body, names)
+            )
         }
         TypeKind::Ownership { qualifier, inner } => {
             format!("{qualifier} {}", display_type(inner, names))
@@ -1119,8 +1238,8 @@ impl PrimitiveTy {
             PrimitiveTy::Bool => 1,
             PrimitiveTy::Char => 32,
             PrimitiveTy::Str | PrimitiveTy::String => return None, // Unsized/heap-allocated
-            PrimitiveTy::Unit => 0, // Zero-sized type
-            PrimitiveTy::Never => 0, // Uninhabited type
+            PrimitiveTy::Unit => 0,                                // Zero-sized type
+            PrimitiveTy::Never => 0,                               // Uninhabited type
         })
     }
 }

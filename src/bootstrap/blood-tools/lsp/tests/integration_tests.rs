@@ -99,7 +99,11 @@ fn main() {
             .filter(|s| s.kind == SymbolKind::FUNCTION)
             .collect();
 
-        assert!(fn_symbols.len() >= 2, "Expected at least 2 functions, got {:?}", fn_symbols);
+        assert!(
+            fn_symbols.len() >= 2,
+            "Expected at least 2 functions, got {:?}",
+            fn_symbols
+        );
 
         // Check that 'add' function is found with correct signature
         let add_fn = fn_symbols.iter().find(|s| s.name == "add");
@@ -338,7 +342,10 @@ mod definition {
         };
 
         let location = provider.definition(&doc, position);
-        assert!(location.is_some(), "Expected definition location for struct");
+        assert!(
+            location.is_some(),
+            "Expected definition location for struct"
+        );
 
         let loc = location.unwrap();
         assert_eq!(loc.range.start.line, 0);
@@ -595,9 +602,18 @@ handler StateHandler for State<i32> {
 
         // Should have handler-specific completions
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
-        assert!(labels.contains(&"resume"), "Expected 'resume' keyword in handler context");
-        assert!(labels.contains(&"self"), "Expected 'self' keyword in handler context");
-        assert!(labels.contains(&"fn"), "Expected 'fn' snippet in handler context");
+        assert!(
+            labels.contains(&"resume"),
+            "Expected 'resume' keyword in handler context"
+        );
+        assert!(
+            labels.contains(&"self"),
+            "Expected 'self' keyword in handler context"
+        );
+        assert!(
+            labels.contains(&"fn"),
+            "Expected 'fn' snippet in handler context"
+        );
     }
 
     #[test]
@@ -622,8 +638,10 @@ fn test() / Log {
 
         // Should have effect symbols for perform context
         // Just verify we get completions without panicking
-        assert!(!completions.is_empty() || completions.is_empty(),
-            "Completion should work in perform context");
+        assert!(
+            !completions.is_empty() || completions.is_empty(),
+            "Completion should work in perform context"
+        );
     }
 
     #[test]
@@ -652,8 +670,10 @@ fn test() {
 
         // Should work without panicking
         // The actual handler completions depend on semantic analysis
-        assert!(!completions.is_empty() || completions.is_empty(),
-            "Completion should work in with-handler context");
+        assert!(
+            !completions.is_empty() || completions.is_empty(),
+            "Completion should work in with-handler context"
+        );
     }
 
     #[test]
@@ -672,7 +692,10 @@ fn test() {
 
         // Should have 'pure' for effect context
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
-        assert!(labels.contains(&"pure"), "Expected 'pure' in effect context");
+        assert!(
+            labels.contains(&"pure"),
+            "Expected 'pure' in effect context"
+        );
     }
 
     #[test]
@@ -697,7 +720,10 @@ fn main() {
 
         // Should include the helper function
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
-        assert!(labels.contains(&"helper"), "Expected 'helper' function in completions");
+        assert!(
+            labels.contains(&"helper"),
+            "Expected 'helper' function in completions"
+        );
     }
 
     #[test]

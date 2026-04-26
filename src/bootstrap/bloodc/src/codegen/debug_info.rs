@@ -20,15 +20,15 @@
 use inkwell::context::Context;
 use inkwell::debug_info::{
     AsDIScope, DICompileUnit, DIFile, DIFlags, DIFlagsConstants, DILocalVariable, DILocation,
-    DIScope, DISubprogram, DISubroutineType, DIType, DWARFEmissionKind,
-    DWARFSourceLanguage, DebugInfoBuilder,
+    DIScope, DISubprogram, DISubroutineType, DIType, DWARFEmissionKind, DWARFSourceLanguage,
+    DebugInfoBuilder,
 };
 use inkwell::module::Module;
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::hir::{self, DefId, Type, TypeKind, PrimitiveTy};
+use crate::hir::{self, DefId, PrimitiveTy, Type, TypeKind};
 use crate::span::Span;
 
 /// Debug info builder for a Blood compilation unit.
@@ -95,7 +95,7 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
 
         // Create the debug info builder
         let (builder, compile_unit) = module.create_debug_info_builder(
-            true, // allow_unresolved
+            true,                   // allow_unresolved
             DWARFSourceLanguage::C, // Use C for now (Blood isn't in DWARF standard)
             &filename,
             &directory,
@@ -105,11 +105,11 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
             0,        // runtime_version
             "",       // split_name
             DWARFEmissionKind::Full,
-            0,    // dwo_id
-            true, // split_debug_inlining
+            0,     // dwo_id
+            true,  // split_debug_inlining
             false, // debug_info_for_profiling
-            "",   // sys_root
-            "",   // sdk
+            "",    // sys_root
+            "",    // sdk
         );
 
         // Create the main file
@@ -398,10 +398,16 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
                 // Unknown types - use i8 as placeholder.
                 // If DWARF type creation fails, skip debug info for this type
                 // rather than halting compilation — debug info is best-effort.
-                match self.builder.create_basic_type("unknown", 8, 0x07, DIFlags::ZERO) {
+                match self
+                    .builder
+                    .create_basic_type("unknown", 8, 0x07, DIFlags::ZERO)
+                {
                     Ok(t) => Some(t.as_type()),
                     Err(e) => {
-                        eprintln!("warning: failed to create debug type for unknown type: {}", e);
+                        eprintln!(
+                            "warning: failed to create debug type for unknown type: {}",
+                            e
+                        );
                         None
                     }
                 }
@@ -445,7 +451,10 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
             PrimitiveTy::Char => ("char", 32, 0x08), // DW_ATE_unsigned_char (UTF-32)
             PrimitiveTy::Str => {
                 // String slice - pointer + length
-                return match self.builder.create_basic_type("str", 128, 0x07, DIFlags::ZERO) {
+                return match self
+                    .builder
+                    .create_basic_type("str", 128, 0x07, DIFlags::ZERO)
+                {
                     Ok(t) => Some(t.as_type()),
                     Err(e) => {
                         eprintln!("warning: failed to create debug type for str: {}", e);
@@ -455,7 +464,10 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
             }
             PrimitiveTy::String => {
                 // Owned string - pointer + length + capacity
-                return match self.builder.create_basic_type("String", 192, 0x07, DIFlags::ZERO) {
+                return match self
+                    .builder
+                    .create_basic_type("String", 192, 0x07, DIFlags::ZERO)
+                {
                     Ok(t) => Some(t.as_type()),
                     Err(e) => {
                         eprintln!("warning: failed to create debug type for String: {}", e);
@@ -467,7 +479,10 @@ impl<'ctx> DebugInfoGenerator<'ctx> {
             PrimitiveTy::Never => return None,
         };
 
-        match self.builder.create_basic_type(name, size_bits, encoding, DIFlags::ZERO) {
+        match self
+            .builder
+            .create_basic_type(name, size_bits, encoding, DIFlags::ZERO)
+        {
             Ok(t) => Some(t.as_type()),
             Err(e) => {
                 eprintln!("warning: failed to create debug type for {}: {}", name, e);

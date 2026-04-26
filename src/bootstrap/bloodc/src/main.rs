@@ -33,17 +33,19 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::time::Instant;
 
 use bloodc::attr::{AttrHelper, TestInfo, TestRegistry};
-use bloodc::diagnostics::DiagnosticEmitter;
-use bloodc::{Lexer, TokenKind};
 use bloodc::codegen;
+use bloodc::content::distributed_cache::DistributedCache;
+use bloodc::content::hash::ContentHasher;
+use bloodc::content::namespace::{BindingKind, NameBinding, NameRegistry};
+use bloodc::content::{
+    extract_dependencies, hash_hir_item, BuildCache, ContentHash, VFTEntry, VFT,
+};
+use bloodc::diagnostics::DiagnosticEmitter;
 use bloodc::expand;
 use bloodc::macro_expand;
 use bloodc::mir;
 use bloodc::project::{self, Manifest};
-use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
-use bloodc::content::hash::ContentHasher;
-use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
-use bloodc::content::distributed_cache::DistributedCache;
+use bloodc::{Lexer, TokenKind};
 
 /// The Blood Programming Language Compiler
 ///
@@ -401,10 +403,17 @@ fn cmd_new(args: &NewArgs, verbosity: u8) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    println!("Created Blood project '{}' in {}", args.name, project_dir.display());
+    println!(
+        "Created Blood project '{}' in {}",
+        args.name,
+        project_dir.display()
+    );
     if verbosity > 0 {
         eprintln!("  Blood.toml");
-        eprintln!("  src/{}", if args.lib { "lib.blood" } else { "main.blood" });
+        eprintln!(
+            "  src/{}",
+            if args.lib { "lib.blood" } else { "main.blood" }
+        );
     }
 
     ExitCode::SUCCESS
@@ -429,7 +438,8 @@ fn cmd_init(args: &InitArgs, verbosity: u8) -> ExitCode {
     }
 
     // Use directory name as project name
-    let project_name = cwd.file_name()
+    let project_name = cwd
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("blood_project")
         .to_string();
@@ -482,7 +492,11 @@ fn cmd_init(args: &InitArgs, verbosity: u8) -> ExitCode {
         }
     }
 
-    println!("Initialized Blood project '{}' in {}", project_name, cwd.display());
+    println!(
+        "Initialized Blood project '{}' in {}",
+        project_name,
+        cwd.display()
+    );
     ExitCode::SUCCESS
 }
 
@@ -525,7 +539,10 @@ fn cmd_check_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
             };
 
             if verbosity > 0 {
-                eprintln!("Checking project: {} v{}", manifest.package.name, manifest.package.version);
+                eprintln!(
+                    "Checking project: {} v{}",
+                    manifest.package.name, manifest.package.version
+                );
             }
 
             // Find the entry point to check
@@ -552,7 +569,9 @@ fn cmd_check_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
             cmd_check(&file_args, verbosity)
         }
         None => {
-            eprintln!("Error: no Blood.toml found. Specify a file or run from a project directory.");
+            eprintln!(
+                "Error: no Blood.toml found. Specify a file or run from a project directory."
+            );
             ExitCode::from(1)
         }
     }
@@ -597,7 +616,10 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
             };
 
             if verbosity > 0 {
-                eprintln!("Building project: {} v{}", manifest.package.name, manifest.package.version);
+                eprintln!(
+                    "Building project: {} v{}",
+                    manifest.package.name, manifest.package.version
+                );
                 if args.release {
                     eprintln!("  Mode: release");
                 }
@@ -605,7 +627,11 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
 
             // Resolve build directory: CLI flag > Blood.toml [build] > env > default
             let effective_build_dir = args.build_dir.clone().or_else(|| {
-                manifest.build.build_dir.as_ref().map(|d| project_root.join(d))
+                manifest
+                    .build
+                    .build_dir
+                    .as_ref()
+                    .map(|d| project_root.join(d))
             });
 
             // Build all binary targets
@@ -642,7 +668,9 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
             }
         }
         None => {
-            eprintln!("Error: no Blood.toml found. Specify a file or run from a project directory.");
+            eprintln!(
+                "Error: no Blood.toml found. Specify a file or run from a project directory."
+            );
             ExitCode::from(1)
         }
     }
@@ -683,7 +711,10 @@ fn cmd_lex(args: &FileArgs, verbosity: u8) -> ExitCode {
             }
             TokenKind::Eof => {
                 if args.debug {
-                    println!("{:4}:{:<3} {:?}", token.span.start_line, token.span.start_col, token.kind);
+                    println!(
+                        "{:4}:{:<3} {:?}",
+                        token.span.start_line, token.span.start_col, token.kind
+                    );
                 }
             }
             _ => {
@@ -870,7 +901,10 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
         for error in &linearity_errors {
             emitter.emit(&error.to_diagnostic_with_names(&type_name_map));
         }
-        eprintln!("Type checking failed: {} linearity error(s).", linearity_errors.len());
+        eprintln!(
+            "Type checking failed: {} linearity error(s).",
+            linearity_errors.len()
+        );
         return ExitCode::from(1);
     }
 
@@ -950,8 +984,8 @@ fn find_rust_runtime() -> Option<PathBuf> {
     }
 
     let rust_runtime_names = [
-        "libblood_runtime.a",  // Unix static lib
-        "blood_runtime.lib",   // Windows static lib
+        "libblood_runtime.a", // Unix static lib
+        "blood_runtime.lib",  // Windows static lib
     ];
 
     // Try relative to the executable (works in cargo builds)
@@ -1049,7 +1083,11 @@ fn resolve_build_dir(cli_build_dir: Option<&PathBuf>, source_file: &std::path::P
 
 /// Return the profile subdirectory name based on release mode.
 fn profile_subdir(release: bool) -> &'static str {
-    if release { "release" } else { "debug" }
+    if release {
+        "release"
+    } else {
+        "debug"
+    }
 }
 
 /// Build command - compile to executable
@@ -1101,7 +1139,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     if emit_set.contains(&EmitKind::Ast) {
         println!("{:#?}", program);
         if !emit_set.iter().any(|e| !matches!(e, EmitKind::Ast)) {
-            if timings { print_timings(&phase_timings, build_start.elapsed()); }
+            if timings {
+                print_timings(&phase_timings, build_start.elapsed());
+            }
             return ExitCode::SUCCESS;
         }
     }
@@ -1193,8 +1233,13 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     // Emit HIR if requested
     if emit_set.contains(&EmitKind::Hir) {
         println!("{:#?}", hir_crate);
-        if !emit_set.iter().any(|e| matches!(e, EmitKind::Mir | EmitKind::LlvmIr | EmitKind::LlvmIrUnopt)) {
-            if timings { print_timings(&phase_timings, build_start.elapsed()); }
+        if !emit_set
+            .iter()
+            .any(|e| matches!(e, EmitKind::Mir | EmitKind::LlvmIr | EmitKind::LlvmIrUnopt))
+        {
+            if timings {
+                print_timings(&phase_timings, build_start.elapsed());
+            }
             return ExitCode::SUCCESS;
         }
     }
@@ -1258,7 +1303,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     }
 
     // Compute content hashes for all definitions
-    let mut definition_hashes: std::collections::HashMap<bloodc::hir::DefId, ContentHash> = std::collections::HashMap::new();
+    let mut definition_hashes: std::collections::HashMap<bloodc::hir::DefId, ContentHash> =
+        std::collections::HashMap::new();
     let mut cache_hits = 0usize;
     let mut cache_misses = 0usize;
 
@@ -1267,7 +1313,13 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     }
 
     for (&def_id, item) in &hir_crate.items {
-        let hash = hash_hir_item(def_id, item, &hir_crate.bodies, &hir_crate.items, Some(&args.file));
+        let hash = hash_hir_item(
+            def_id,
+            item,
+            &hir_crate.bodies,
+            &hir_crate.items,
+            Some(&args.file),
+        );
         definition_hashes.insert(def_id, hash);
 
         // Check if we have cached compiled code for this definition (local cache only for stats)
@@ -1280,7 +1332,13 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
 
         if verbosity > 1 {
             let cache_status = if is_cached { "[cached]" } else { "[new]" };
-            eprintln!("  {:?}: {} ({}) {}", def_id, hash.short_display(), item.name, cache_status);
+            eprintln!(
+                "  {:?}: {} ({}) {}",
+                def_id,
+                hash.short_display(),
+                item.name,
+                cache_status
+            );
         }
     }
 
@@ -1303,7 +1361,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 .filter_map(|dep_id| definition_hashes.get(dep_id).copied())
                 .collect();
             if !dep_hashes.is_empty() {
-                distributed_cache.local_mut().record_dependencies(hash, dep_hashes);
+                distributed_cache
+                    .local_mut()
+                    .record_dependencies(hash, dep_hashes);
                 if verbosity > 2 {
                     eprintln!("  {} depends on {} definitions", item.name, deps_set.len());
                 }
@@ -1326,14 +1386,12 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                     bloodc::hir::ItemKind::Trait { .. } => NameBinding::ty(hash),
                     bloodc::hir::ItemKind::Impl { .. } => continue, // Impls don't have names
                     bloodc::hir::ItemKind::Handler { .. } => NameBinding::value(hash),
-                    bloodc::hir::ItemKind::TypeAlias { .. } => {
-                        NameBinding {
-                            hash,
-                            kind: BindingKind::TypeAlias,
-                            is_public: true,
-                            doc: None,
-                        }
-                    }
+                    bloodc::hir::ItemKind::TypeAlias { .. } => NameBinding {
+                        hash,
+                        kind: BindingKind::TypeAlias,
+                        is_public: true,
+                        doc: None,
+                    },
                     bloodc::hir::ItemKind::Const { .. } => NameBinding::value(hash),
                     bloodc::hir::ItemKind::Static { .. } => NameBinding::value(hash),
                     bloodc::hir::ItemKind::ExternFn(_) => NameBinding::value(hash),
@@ -1387,8 +1445,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                     }
                     bloodc::hir::ItemKind::Handler { .. } => {
                         // Handlers are callable - register with effect convention
-                        let entry = VFTEntry::new(hash, 0, 0)
-                            .with_convention(CallingConvention::Effect);
+                        let entry =
+                            VFTEntry::new(hash, 0, 0).with_convention(CallingConvention::Effect);
                         vft.register(entry);
                     }
                     _ => {
@@ -1420,13 +1478,19 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
             phase_timings.push(("Safepoint insertion", t_sp.elapsed()));
             if verbosity > 1 {
-                eprintln!("Safepoint insertion: {} safepoints in {} bodies.",
-                    total_safepoints, mir_bodies.len());
+                eprintln!(
+                    "Safepoint insertion: {} safepoints in {} bodies.",
+                    total_safepoints,
+                    mir_bodies.len()
+                );
             }
 
             if verbosity > 1 {
-                eprintln!("MIR lowering passed. {} function bodies, {} inline handlers.",
-                    mir_bodies.len(), inline_handler_bodies.len());
+                eprintln!(
+                    "MIR lowering passed. {} function bodies, {} inline handlers.",
+                    mir_bodies.len(),
+                    inline_handler_bodies.len()
+                );
             }
 
             // Emit MIR if requested
@@ -1436,8 +1500,13 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                     println!("{:#?}", body);
                     println!();
                 }
-                if !emit_set.iter().any(|e| matches!(e, EmitKind::LlvmIr | EmitKind::LlvmIrUnopt)) {
-                    if timings { print_timings(&phase_timings, build_start.elapsed()); }
+                if !emit_set
+                    .iter()
+                    .any(|e| matches!(e, EmitKind::LlvmIr | EmitKind::LlvmIrUnopt))
+                {
+                    if timings {
+                        print_timings(&phase_timings, build_start.elapsed());
+                    }
                     return ExitCode::SUCCESS;
                 }
             }
@@ -1446,7 +1515,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             // Collect DefIds of generic functions (including trait defaults)
             // so the validator can skip their template bodies — they naturally
             // contain Param types that will be substituted during monomorphization.
-            let mut generic_def_ids: std::collections::HashSet<bloodc::hir::DefId> = std::collections::HashSet::new();
+            let mut generic_def_ids: std::collections::HashSet<bloodc::hir::DefId> =
+                std::collections::HashSet::new();
             for (&def_id, item) in &hir_crate.items {
                 match &item.kind {
                     bloodc::hir::ItemKind::Fn(fn_def) if !fn_def.sig.generics.is_empty() => {
@@ -1484,17 +1554,15 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             let adt_fields = |def_id: bloodc::hir::DefId| -> Option<Vec<bloodc::hir::Type>> {
                 let item = hir_crate.items.get(&def_id)?;
                 match &item.kind {
-                    bloodc::hir::ItemKind::Struct(struct_def) => {
-                        match &struct_def.kind {
-                            bloodc::hir::item::StructKind::Record(fields) => {
-                                Some(fields.iter().map(|f| f.ty.clone()).collect())
-                            }
-                            bloodc::hir::item::StructKind::Tuple(fields) => {
-                                Some(fields.iter().map(|f| f.ty.clone()).collect())
-                            }
-                            bloodc::hir::item::StructKind::Unit => Some(Vec::new()),
+                    bloodc::hir::ItemKind::Struct(struct_def) => match &struct_def.kind {
+                        bloodc::hir::item::StructKind::Record(fields) => {
+                            Some(fields.iter().map(|f| f.ty.clone()).collect())
                         }
-                    }
+                        bloodc::hir::item::StructKind::Tuple(fields) => {
+                            Some(fields.iter().map(|f| f.ty.clone()).collect())
+                        }
+                        bloodc::hir::item::StructKind::Unit => Some(Vec::new()),
+                    },
                     bloodc::hir::ItemKind::Enum(enum_def) => {
                         // An enum is Copy if ALL variant payloads are Copy.
                         // Collect all field types across all variants.
@@ -1516,7 +1584,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 }
             };
 
-            let escape_results: std::collections::HashMap<_, _> = mir_bodies.iter()
+            let escape_results: std::collections::HashMap<_, _> = mir_bodies
+                .iter()
                 .map(|(&def_id, body)| {
                     let mut analyzer = mir::EscapeAnalyzer::new();
                     (def_id, analyzer.analyze_with_adt_lookup(body, &adt_fields))
@@ -1530,16 +1599,23 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
 
             if verbosity > 1 {
-                eprintln!("Escape analysis complete. {}", escape_stats.format_summary());
+                eprintln!(
+                    "Escape analysis complete. {}",
+                    escape_stats.format_summary()
+                );
                 // Report tier recommendations per function
                 for (&def_id, results) in &escape_results {
                     let stack_count = results.stack_promotable.len();
-                    let effect_captured = results.states.values()
+                    let effect_captured = results
+                        .states
+                        .values()
                         .filter(|s| s.is_effect_captured())
                         .count();
                     if verbosity > 2 {
-                        eprintln!("  {:?}: {} stack-promotable, {} effect-captured",
-                            def_id, stack_count, effect_captured);
+                        eprintln!(
+                            "  {:?}: {} stack-promotable, {} effect-captured",
+                            def_id, stack_count, effect_captured
+                        );
                     }
                 }
             }
@@ -1554,13 +1630,17 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             let t = Instant::now();
             let closure_analysis = mir::ClosureAnalyzer::new().analyze_bodies(&mir_bodies);
             if verbosity > 1 {
-                eprintln!("Closure analysis: {} closures, {} inline candidates ({:.0}%)",
+                eprintln!(
+                    "Closure analysis: {} closures, {} inline candidates ({:.0}%)",
                     closure_analysis.stats.total_closures,
                     closure_analysis.stats.inline_eligible,
                     if closure_analysis.stats.total_closures > 0 {
-                        closure_analysis.stats.inline_eligible as f64 /
-                        closure_analysis.stats.total_closures as f64 * 100.0
-                    } else { 0.0 }
+                        closure_analysis.stats.inline_eligible as f64
+                            / closure_analysis.stats.total_closures as f64
+                            * 100.0
+                    } else {
+                        0.0
+                    }
                 );
                 if verbosity > 2 && closure_analysis.stats.total_closures > 0 {
                     eprintln!("{}", closure_analysis.summary());
@@ -1569,7 +1649,12 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             phase_timings.push(("Closure analysis", t.elapsed()));
 
             // Return MIR bodies, escape analysis, inline handler bodies, and closure analysis for codegen
-            Some((mir_bodies, escape_results, inline_handler_bodies, closure_analysis))
+            Some((
+                mir_bodies,
+                escape_results,
+                inline_handler_bodies,
+                closure_analysis,
+            ))
         }
         Err(errors) => {
             // MIR lowering is mandatory - errors are fatal
@@ -1596,14 +1681,21 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     let build_dir = resolve_build_dir(args.build_dir.as_ref(), &args.file);
     let profile_dir = build_dir.join(profile_subdir(args.release));
     if let Err(e) = std::fs::create_dir_all(&profile_dir) {
-        eprintln!("Failed to create build directory {}: {}", profile_dir.display(), e);
+        eprintln!(
+            "Failed to create build directory {}: {}",
+            profile_dir.display(),
+            e
+        );
         return ExitCode::from(1);
     }
     let stem = args.file.file_stem().unwrap_or_default();
-    let output_exe = args.output.clone().unwrap_or_else(|| profile_dir.join(stem));
+    let output_exe = args
+        .output
+        .clone()
+        .unwrap_or_else(|| profile_dir.join(stem));
 
-    let (ref mir_bodies, ref escape_map, ref inline_handler_bodies, ref closure_analysis) = mir_result
-        .expect("MIR result should be present (errors return early)");
+    let (ref mir_bodies, ref escape_map, ref inline_handler_bodies, ref closure_analysis) =
+        mir_result.expect("MIR result should be present (errors return early)");
 
     // Emit LLVM IR if requested (before object code generation)
     if emit_set.contains(&EmitKind::LlvmIr) || emit_set.contains(&EmitKind::LlvmIrUnopt) {
@@ -1623,7 +1715,14 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         };
 
         if emit_set.contains(&EmitKind::LlvmIr) {
-            match codegen::compile_mir_to_ir(&hir_crate, mir_bodies, escape_map, builtin_def_ids, Some(inline_handler_bodies), Some(closure_analysis)) {
+            match codegen::compile_mir_to_ir(
+                &hir_crate,
+                mir_bodies,
+                escape_map,
+                builtin_def_ids,
+                Some(inline_handler_bodies),
+                Some(closure_analysis),
+            ) {
                 Ok(ir) => {
                     if let Err(code) = write_ir(&ir, "optimized LLVM IR") {
                         return code;
@@ -1640,9 +1739,13 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         }
         if emit_set.contains(&EmitKind::LlvmIrUnopt) {
             match codegen::compile_mir_to_ir_with_opt(
-                &hir_crate, mir_bodies, escape_map,
-                codegen::BloodOptLevel::None, builtin_def_ids,
-                Some(inline_handler_bodies), Some(closure_analysis),
+                &hir_crate,
+                mir_bodies,
+                escape_map,
+                codegen::BloodOptLevel::None,
+                builtin_def_ids,
+                Some(inline_handler_bodies),
+                Some(closure_analysis),
             ) {
                 Ok(ir) => {
                     if let Err(code) = write_ir(&ir, "unoptimized LLVM IR") {
@@ -1659,7 +1762,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
         }
         // Don't continue to object generation and linking
-        if timings { print_timings(&phase_timings, build_start.elapsed()); }
+        if timings {
+            print_timings(&phase_timings, build_start.elapsed());
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -1686,7 +1791,15 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         }
 
         let output_obj = obj_dir.join("whole_module.o");
-        match codegen::compile_mir_to_object(&hir_crate, mir_bodies, escape_map, inline_handler_bodies, &output_obj, builtin_def_ids, Some(closure_analysis)) {
+        match codegen::compile_mir_to_object(
+            &hir_crate,
+            mir_bodies,
+            escape_map,
+            inline_handler_bodies,
+            &output_obj,
+            builtin_def_ids,
+            Some(closure_analysis),
+        ) {
             Ok(()) => {
                 object_files.push(output_obj);
                 if verbosity > 0 {
@@ -1746,7 +1859,14 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
 
     // Debug: show LLVM IR if requested
     if args.debug {
-        let ir_result = codegen::compile_mir_to_ir(&hir_crate, mir_bodies, escape_map, builtin_def_ids, Some(inline_handler_bodies), Some(closure_analysis));
+        let ir_result = codegen::compile_mir_to_ir(
+            &hir_crate,
+            mir_bodies,
+            escape_map,
+            builtin_def_ids,
+            Some(inline_handler_bodies),
+            Some(closure_analysis),
+        );
         if let Ok(ir) = ir_result {
             println!("{}", ir);
         }
@@ -1773,7 +1893,10 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     }
 
     if verbosity > 1 && !ffi_link_specs.is_empty() {
-        eprintln!("FFI link specifications: {} libraries", ffi_link_specs.len());
+        eprintln!(
+            "FFI link specifications: {} libraries",
+            ffi_link_specs.len()
+        );
         for spec in &ffi_link_specs {
             eprintln!("  - {} ({:?})", spec.name, spec.kind);
         }
@@ -1857,7 +1980,10 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 {
                     // On non-macOS, frameworks don't exist; warn and skip
                     if verbosity > 0 {
-                        eprintln!("Warning: Framework '{}' ignored on non-macOS platform", link_spec.name);
+                        eprintln!(
+                            "Warning: Framework '{}' ignored on non-macOS platform",
+                            link_spec.name
+                        );
                     }
                 }
             }
@@ -1884,19 +2010,25 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             if verbosity > 0 {
                 eprintln!("Linked executable: {}", output_exe.display());
             }
-            if timings { print_timings(&phase_timings, build_start.elapsed()); }
+            if timings {
+                print_timings(&phase_timings, build_start.elapsed());
+            }
             if verbosity > 0 {
                 eprintln!("Build successful: {}", output_exe.display());
             }
             ExitCode::SUCCESS
         }
         Ok(_) => {
-            if timings { print_timings(&phase_timings, build_start.elapsed()); }
+            if timings {
+                print_timings(&phase_timings, build_start.elapsed());
+            }
             eprintln!("Linking failed.");
             ExitCode::from(1)
         }
         Err(e) => {
-            if timings { print_timings(&phase_timings, build_start.elapsed()); }
+            if timings {
+                print_timings(&phase_timings, build_start.elapsed());
+            }
             eprintln!("Failed to run linker: {}", e);
             ExitCode::from(1)
         }
@@ -1945,8 +2077,7 @@ fn cmd_run(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         eprintln!("Running: {}", output_exe.display());
     }
 
-    let status = std::process::Command::new(&output_exe)
-        .status();
+    let status = std::process::Command::new(&output_exe).status();
 
     match status {
         Ok(s) => {
@@ -2098,7 +2229,9 @@ fn determine_test_files(args: &TestArgs) -> Result<Vec<PathBuf>, ExitCode> {
             }
         }
         None => {
-            eprintln!("Error: no Blood.toml found. Specify a file or run from a project directory.");
+            eprintln!(
+                "Error: no Blood.toml found. Specify a file or run from a project directory."
+            );
             Err(ExitCode::from(1))
         }
     }
@@ -2163,7 +2296,10 @@ fn discover_tests_in_file(
                 emitter.emit(error);
             }
             if verbosity > 0 {
-                eprintln!("Failed to parse '{}' for test discovery.", file_path.display());
+                eprintln!(
+                    "Failed to parse '{}' for test discovery.",
+                    file_path.display()
+                );
             }
             return Err(ExitCode::from(1));
         }
@@ -2194,12 +2330,8 @@ fn discover_tests_in_file(
                     .unwrap_or("<unknown>")
                     .to_string();
 
-                let test_info = TestInfo::new(
-                    fn_name,
-                    module_path.clone(),
-                    test_config,
-                    fn_decl.name.span,
-                );
+                let test_info =
+                    TestInfo::new(fn_name, module_path.clone(), test_config, fn_decl.name.span);
 
                 tests.push(test_info);
             }
@@ -2207,7 +2339,11 @@ fn discover_tests_in_file(
     }
 
     if verbosity > 1 && !tests.is_empty() {
-        eprintln!("  Found {} test(s) in '{}'", tests.len(), file_path.display());
+        eprintln!(
+            "  Found {} test(s) in '{}'",
+            tests.len(),
+            file_path.display()
+        );
     }
 
     Ok(tests)
@@ -2366,8 +2502,7 @@ fn run_single_test(
     }
 
     // Run the test
-    let output = std::process::Command::new(&harness_exe)
-        .output();
+    let output = std::process::Command::new(&harness_exe).output();
 
     // Clean up executable and object directory
     let _ = fs::remove_file(&harness_exe);
@@ -2461,11 +2596,7 @@ fn print_test_summary(results: &TestResults) {
     }
 
     // Print summary line
-    let status = if results.failed > 0 {
-        "FAILED"
-    } else {
-        "ok"
-    };
+    let status = if results.failed > 0 { "FAILED" } else { "ok" };
 
     println!(
         "test result: {}. {} passed; {} failed; {} ignored",

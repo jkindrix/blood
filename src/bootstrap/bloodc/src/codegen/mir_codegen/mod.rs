@@ -54,11 +54,11 @@
 //! 5. On dereference, emits `blood_validate_generation` call for region-allocated values
 //! 6. Branches to panic path on stale reference detection
 
+mod memory;
+mod place;
+mod rvalue;
 mod statement;
 mod terminator;
-mod rvalue;
-mod place;
-mod memory;
 mod types;
 
 #[cfg(test)]
@@ -67,26 +67,26 @@ mod tests;
 use std::collections::HashMap;
 
 use inkwell::basic_block::BasicBlock;
-use inkwell::values::{IntValue, PointerValue};
 use inkwell::types::BasicTypeEnum;
+use inkwell::values::{IntValue, PointerValue};
 use inkwell::AddressSpace;
 
 use crate::diagnostics::Diagnostic;
 use crate::hir::{DefId, LocalId, Type};
+use crate::ice_err;
 use crate::mir::body::MirBody;
 use crate::mir::types::BasicBlockId;
 use crate::mir::{EscapeResults, MemoryTier};
 use crate::span::Span;
-use crate::ice_err;
 
 use super::CodegenContext;
 
 // Re-export extension traits
+pub use memory::MirMemoryCodegen;
+pub use place::MirPlaceCodegen;
+pub use rvalue::MirRvalueCodegen;
 pub use statement::MirStatementCodegen;
 pub use terminator::MirTerminatorCodegen;
-pub use rvalue::MirRvalueCodegen;
-pub use place::MirPlaceCodegen;
-pub use memory::MirMemoryCodegen;
 pub use types::MirTypesCodegen;
 
 /// Extension trait for MIR compilation on CodegenContext.
@@ -116,18 +116,11 @@ pub trait MirCodegen<'ctx, 'a>:
     ) -> Result<(), Vec<Diagnostic>>;
 
     /// Determine the memory tier for a local based on escape analysis.
-    fn get_local_tier(
-        &self,
-        local: LocalId,
-        escape_results: Option<&EscapeResults>,
-    ) -> MemoryTier;
+    fn get_local_tier(&self, local: LocalId, escape_results: Option<&EscapeResults>) -> MemoryTier;
 
     /// Check if generation checks can be skipped for a local.
-    fn should_skip_gen_check(
-        &self,
-        local: LocalId,
-        escape_results: Option<&EscapeResults>,
-    ) -> bool;
+    fn should_skip_gen_check(&self, local: LocalId, escape_results: Option<&EscapeResults>)
+        -> bool;
 
     /// Emit a generation check for a pointer dereference.
     fn emit_generation_check(
@@ -238,9 +231,9 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         }
 
         // Position at entry block
-        let entry_bb = llvm_blocks.get(&BasicBlockId::ENTRY).ok_or_else(|| {
-            vec![Diagnostic::error("MIR body has no entry block", body.span)]
-        })?;
+        let entry_bb = llvm_blocks
+            .get(&BasicBlockId::ENTRY)
+            .ok_or_else(|| vec![Diagnostic::error("MIR body has no entry block", body.span)])?;
         self.builder.position_at_end(*entry_bb);
 
         // Check if this is a closure body (synthetic DefId >= 0xFFFF_0000)
@@ -266,12 +259,18 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             // regardless of its MIR type (which is the actual tuple of captures)
             let llvm_ty = if is_closure_body && local.name.as_deref() == Some("__env") {
                 self.context.ptr_type(AddressSpace::default()).into()
-            } else if let crate::hir::TypeKind::Closure { def_id: closure_def_id, .. } = local.ty.kind() {
+            } else if let crate::hir::TypeKind::Closure {
+                def_id: closure_def_id,
+                ..
+            } = local.ty.kind()
+            {
                 // Check if this closure local should use inline environment layout.
                 // Inline closures store captures directly: { fn_ptr, T0, T1, ... }
                 // instead of via pointer: { fn_ptr, env_ptr }
                 if self.should_inline_closure_env(closure_def_id, Some(local.id)) {
-                    if let Some(info) = self.closure_analysis.as_ref()
+                    if let Some(info) = self
+                        .closure_analysis
+                        .as_ref()
                         .and_then(|ca| ca.get(*closure_def_id))
                     {
                         if info.capture_types.is_empty() {
@@ -302,12 +301,15 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 MemoryTier::Stack => {
                     // Stack allocation - thin pointer, no generation check needed
                     // This is the fast path for non-escaping values
-                    let alloca_ptr = self.builder.build_alloca(
-                        llvm_ty,
-                        &format!("_{}_{}", local.id.index, tier_name(tier))
-                    ).map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM alloca error: {}", e), body.span
-                    )])?;
+                    let alloca_ptr = self
+                        .builder
+                        .build_alloca(llvm_ty, &format!("_{}_{}", local.id.index, tier_name(tier)))
+                        .map_err(|e| {
+                            vec![Diagnostic::error(
+                                format!("LLVM alloca error: {}", e),
+                                body.span,
+                            )]
+                        })?;
                     // Set explicit alignment on alloca to ensure correct ABI handling
                     // for struct returns and complex types
                     let alignment = self.get_type_alignment_for_size(llvm_ty) as u32;
@@ -347,14 +349,18 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         // Store function parameters
         for (i, param_id) in body.param_ids().enumerate() {
             if let Some(&alloca) = self.locals.get(&param_id) {
-                let param_value = fn_value.get_nth_param(i as u32)
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        format!("Parameter {} not found", i), body.span
-                    )])?;
-                let param_store = self.builder.build_store(alloca, param_value)
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM store error: {}", e), body.span
-                    )])?;
+                let param_value = fn_value.get_nth_param(i as u32).ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        format!("Parameter {} not found", i),
+                        body.span,
+                    )]
+                })?;
+                let param_store = self.builder.build_store(alloca, param_value).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM store error: {}", e),
+                        body.span,
+                    )]
+                })?;
                 // Set proper alignment for parameter store
                 let param_alignment = self.get_type_alignment_for_value(param_value);
                 let _ = param_store.set_alignment(param_alignment);
@@ -412,20 +418,18 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             self.compile_mir_terminator(term, body, llvm_blocks, escape_results)?;
         } else {
             // Unterminated block - add unreachable
-            self.builder.build_unreachable()
-                .map_err(|e| vec![Diagnostic::error(
-                    format!("LLVM unreachable error: {}", e), body.span
-                )])?;
+            self.builder.build_unreachable().map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM unreachable error: {}", e),
+                    body.span,
+                )]
+            })?;
         }
 
         Ok(())
     }
 
-    fn get_local_tier(
-        &self,
-        local: LocalId,
-        escape_results: Option<&EscapeResults>,
-    ) -> MemoryTier {
+    fn get_local_tier(&self, local: LocalId, escape_results: Option<&EscapeResults>) -> MemoryTier {
         if let Some(results) = escape_results {
             results.recommended_tier(local)
         } else {

@@ -60,11 +60,7 @@ impl DiagnosticEngine {
     }
 
     /// Convert a bloodc Diagnostic to an LSP Diagnostic.
-    fn bloodc_diagnostic_to_lsp(
-        &self,
-        diag: &bloodc::Diagnostic,
-        text: &str,
-    ) -> Diagnostic {
+    fn bloodc_diagnostic_to_lsp(&self, diag: &bloodc::Diagnostic, text: &str) -> Diagnostic {
         let range = self.span_to_range(&diag.span, text);
 
         let severity = match diag.kind {
@@ -130,7 +126,10 @@ impl DiagnosticEngine {
             current += ch.len_utf8();
         }
 
-        Position { line, character: col }
+        Position {
+            line,
+            character: col,
+        }
     }
 
     /// Performs lint checks.

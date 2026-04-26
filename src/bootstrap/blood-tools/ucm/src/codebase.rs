@@ -172,9 +172,10 @@ impl Codebase {
             DefRef::Name(n) => n.clone(),
             DefRef::Hash(h) => {
                 let names = self.storage.names_for_hash(h)?;
-                names.into_iter().next().ok_or_else(|| {
-                    UcmError::HashNotFound(h.to_string())
-                })?
+                names
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| UcmError::HashNotFound(h.to_string()))?
             }
         };
 
@@ -337,9 +338,13 @@ impl Codebase {
     ///
     /// Returns a list of differences between the two definitions.
     pub fn diff(&self, hash1: &Hash, hash2: &Hash) -> UcmResult<DiffResult> {
-        let def1 = self.storage.get_definition(hash1)?
+        let def1 = self
+            .storage
+            .get_definition(hash1)?
             .ok_or_else(|| UcmError::HashNotFound(hash1.to_string()))?;
-        let def2 = self.storage.get_definition(hash2)?
+        let def2 = self
+            .storage
+            .get_definition(hash2)?
             .ok_or_else(|| UcmError::HashNotFound(hash2.to_string()))?;
 
         let (kind1, source1) = def1;
@@ -467,7 +472,11 @@ pub enum Difference {
     /// A line was removed.
     LineRemoved { line_num: usize, content: String },
     /// A line was changed.
-    LineChanged { line_num: usize, old: String, new: String },
+    LineChanged {
+        line_num: usize,
+        old: String,
+        new: String,
+    },
 }
 
 #[cfg(test)]
@@ -502,9 +511,14 @@ mod tests {
 
         let source = "fn double(x: i32) -> i32 { x * 2 }";
         let hash = codebase.add_term(source).unwrap();
-        codebase.add_name(Name::new("math.double"), hash.clone()).unwrap();
+        codebase
+            .add_name(Name::new("math.double"), hash.clone())
+            .unwrap();
 
-        let info = codebase.find(&DefRef::name("math.double")).unwrap().unwrap();
+        let info = codebase
+            .find(&DefRef::name("math.double"))
+            .unwrap()
+            .unwrap();
         assert_eq!(info.hash, hash);
         assert_eq!(info.kind, DefKind::Term);
     }
@@ -518,12 +532,19 @@ mod tests {
 
         let source = "fn foo() {}";
         let hash = codebase.add_term(source).unwrap();
-        codebase.add_name(Name::new("old.name"), hash.clone()).unwrap();
+        codebase
+            .add_name(Name::new("old.name"), hash.clone())
+            .unwrap();
 
-        codebase.rename(Name::new("old.name"), Name::new("new.name")).unwrap();
+        codebase
+            .rename(Name::new("old.name"), Name::new("new.name"))
+            .unwrap();
 
         assert!(codebase.resolve(&Name::new("old.name")).unwrap().is_none());
-        assert_eq!(codebase.resolve(&Name::new("new.name")).unwrap(), Some(hash));
+        assert_eq!(
+            codebase.resolve(&Name::new("new.name")).unwrap(),
+            Some(hash)
+        );
     }
 
     #[test]
@@ -536,7 +557,9 @@ mod tests {
         // Add a definition
         let source = "fn add(a: i32, b: i32) -> i32 { a + b }";
         let hash = codebase.add_term(source).unwrap();
-        codebase.add_name(Name::new("math.add"), hash.clone()).unwrap();
+        codebase
+            .add_name(Name::new("math.add"), hash.clone())
+            .unwrap();
 
         // Get the first 4 characters of the hash
         let full_hash = hash.to_hex();

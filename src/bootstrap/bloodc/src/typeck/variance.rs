@@ -29,9 +29,9 @@
 //!
 //! The final variance is the "greatest lower bound" of all usages.
 
-use std::collections::HashMap;
-use crate::hir::{DefId, Type, TypeKind, TyVarId};
 use crate::hir::item::{GenericParam, GenericParamKind};
+use crate::hir::{DefId, TyVarId, Type, TypeKind};
+use std::collections::HashMap;
 
 /// Variance of a type parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -207,14 +207,10 @@ impl VarianceInferrer {
     }
 
     /// Infer variance for a struct definition.
-    pub fn infer_struct(
-        &mut self,
-        def_id: DefId,
-        params: &[GenericParam],
-        field_types: &[Type],
-    ) {
+    pub fn infer_struct(&mut self, def_id: DefId, params: &[GenericParam], field_types: &[Type]) {
         // Initialize variance info
-        let param_count = params.iter()
+        let param_count = params
+            .iter()
             .filter(|p| matches!(p.kind, GenericParamKind::Type { .. }))
             .count();
         let mut info = VarianceInfo::new(param_count);
@@ -247,7 +243,8 @@ impl VarianceInferrer {
         variant_field_types: &[Vec<Type>],
     ) {
         // Initialize variance info
-        let param_count = params.iter()
+        let param_count = params
+            .iter()
             .filter(|p| matches!(p.kind, GenericParamKind::Type { .. }))
             .count();
         let mut info = VarianceInfo::new(param_count);
@@ -385,10 +382,7 @@ impl VarianceInferrer {
             }
 
             // Leaf types - no type parameters to analyze
-            TypeKind::Primitive(_)
-            | TypeKind::Never
-            | TypeKind::Error
-            | TypeKind::Infer(_) => {}
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Infer(_) => {}
         }
     }
 }
@@ -419,12 +413,7 @@ impl<'a> VarianceChecker<'a> {
     }
 
     /// Check compatibility at a specific variance.
-    fn check_at_variance(
-        &self,
-        expected: &Type,
-        actual: &Type,
-        variance: Variance,
-    ) -> bool {
+    fn check_at_variance(&self, expected: &Type, actual: &Type, variance: Variance) -> bool {
         // Handle bivariant (unused) positions
         if variance == Variance::Bivariant {
             return true;
@@ -438,8 +427,14 @@ impl<'a> VarianceChecker<'a> {
         match (expected.kind(), actual.kind()) {
             // References
             (
-                TypeKind::Ref { inner: exp_inner, mutable: exp_mut },
-                TypeKind::Ref { inner: act_inner, mutable: act_mut },
+                TypeKind::Ref {
+                    inner: exp_inner,
+                    mutable: exp_mut,
+                },
+                TypeKind::Ref {
+                    inner: act_inner,
+                    mutable: act_mut,
+                },
             ) => {
                 if *exp_mut != *act_mut {
                     // Mutability must match
@@ -455,8 +450,14 @@ impl<'a> VarianceChecker<'a> {
 
             // Pointers
             (
-                TypeKind::Ptr { inner: exp_inner, mutable: exp_mut },
-                TypeKind::Ptr { inner: act_inner, mutable: act_mut },
+                TypeKind::Ptr {
+                    inner: exp_inner,
+                    mutable: exp_mut,
+                },
+                TypeKind::Ptr {
+                    inner: act_inner,
+                    mutable: act_mut,
+                },
             ) => {
                 if *exp_mut != *act_mut {
                     return false;
@@ -471,18 +472,18 @@ impl<'a> VarianceChecker<'a> {
 
             // Arrays
             (
-                TypeKind::Array { element: exp_elem, size: exp_size },
-                TypeKind::Array { element: act_elem, size: act_size },
-            ) => {
-                exp_size == act_size
-                    && self.check_at_variance(exp_elem, act_elem, variance)
-            }
+                TypeKind::Array {
+                    element: exp_elem,
+                    size: exp_size,
+                },
+                TypeKind::Array {
+                    element: act_elem,
+                    size: act_size,
+                },
+            ) => exp_size == act_size && self.check_at_variance(exp_elem, act_elem, variance),
 
             // Slices
-            (
-                TypeKind::Slice { element: exp_elem },
-                TypeKind::Slice { element: act_elem },
-            ) => {
+            (TypeKind::Slice { element: exp_elem }, TypeKind::Slice { element: act_elem }) => {
                 self.check_at_variance(exp_elem, act_elem, variance)
             }
 
@@ -491,23 +492,32 @@ impl<'a> VarianceChecker<'a> {
                 if exp_elems.len() != act_elems.len() {
                     return false;
                 }
-                exp_elems.iter().zip(act_elems.iter())
+                exp_elems
+                    .iter()
+                    .zip(act_elems.iter())
                     .all(|(e, a)| self.check_at_variance(e, a, variance))
             }
 
             // Functions
             (
-                TypeKind::Fn { params: exp_params, ret: exp_ret, .. },
-                TypeKind::Fn { params: act_params, ret: act_ret, .. },
+                TypeKind::Fn {
+                    params: exp_params,
+                    ret: exp_ret,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: act_params,
+                    ret: act_ret,
+                    ..
+                },
             ) => {
                 if exp_params.len() != act_params.len() {
                     return false;
                 }
                 // Parameters are contravariant
-                let param_ok = exp_params.iter().zip(act_params.iter())
-                    .all(|(e, a)| {
-                        self.check_at_variance(e, a, variance.transform(Variance::Contravariant))
-                    });
+                let param_ok = exp_params.iter().zip(act_params.iter()).all(|(e, a)| {
+                    self.check_at_variance(e, a, variance.transform(Variance::Contravariant))
+                });
                 // Return is covariant
                 let ret_ok = self.check_at_variance(exp_ret, act_ret, variance);
                 param_ok && ret_ok
@@ -515,8 +525,14 @@ impl<'a> VarianceChecker<'a> {
 
             // ADTs with generic arguments
             (
-                TypeKind::Adt { def_id: exp_def, args: exp_args },
-                TypeKind::Adt { def_id: act_def, args: act_args },
+                TypeKind::Adt {
+                    def_id: exp_def,
+                    args: exp_args,
+                },
+                TypeKind::Adt {
+                    def_id: act_def,
+                    args: act_args,
+                },
             ) => {
                 if exp_def != act_def || exp_args.len() != act_args.len() {
                     return false;
@@ -524,7 +540,9 @@ impl<'a> VarianceChecker<'a> {
 
                 // Look up variance for this ADT
                 if let Some(info) = self.variance_info.get(exp_def) {
-                    exp_args.iter().zip(act_args.iter())
+                    exp_args
+                        .iter()
+                        .zip(act_args.iter())
                         .enumerate()
                         .all(|(i, (e, a))| {
                             let param_variance = info.get(i).unwrap_or(Variance::Invariant);
@@ -533,7 +551,9 @@ impl<'a> VarianceChecker<'a> {
                         })
                 } else {
                     // No variance info - use invariant (conservative)
-                    exp_args.iter().zip(act_args.iter())
+                    exp_args
+                        .iter()
+                        .zip(act_args.iter())
                         .all(|(e, a)| self.types_equal(e, a))
                 }
             }
@@ -554,46 +574,84 @@ impl<'a> VarianceChecker<'a> {
 
             (TypeKind::Tuple(as_), TypeKind::Tuple(bs)) => {
                 as_.len() == bs.len()
-                    && as_.iter().zip(bs.iter()).all(|(a, b)| self.types_equal(a, b))
+                    && as_
+                        .iter()
+                        .zip(bs.iter())
+                        .all(|(a, b)| self.types_equal(a, b))
             }
 
             (
-                TypeKind::Array { element: a_elem, size: a_size },
-                TypeKind::Array { element: b_elem, size: b_size },
-            ) => {
-                a_size == b_size && self.types_equal(a_elem, b_elem)
+                TypeKind::Array {
+                    element: a_elem,
+                    size: a_size,
+                },
+                TypeKind::Array {
+                    element: b_elem,
+                    size: b_size,
+                },
+            ) => a_size == b_size && self.types_equal(a_elem, b_elem),
+
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
+                self.types_equal(a_elem, b_elem)
             }
 
             (
-                TypeKind::Slice { element: a_elem },
-                TypeKind::Slice { element: b_elem },
-            ) => self.types_equal(a_elem, b_elem),
-
-            (
-                TypeKind::Ref { inner: a_inner, mutable: a_mut },
-                TypeKind::Ref { inner: b_inner, mutable: b_mut },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: a_mut,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: b_mut,
+                },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
 
             (
-                TypeKind::Ptr { inner: a_inner, mutable: a_mut },
-                TypeKind::Ptr { inner: b_inner, mutable: b_mut },
+                TypeKind::Ptr {
+                    inner: a_inner,
+                    mutable: a_mut,
+                },
+                TypeKind::Ptr {
+                    inner: b_inner,
+                    mutable: b_mut,
+                },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
 
             (
-                TypeKind::Adt { def_id: a_def, args: a_args },
-                TypeKind::Adt { def_id: b_def, args: b_args },
+                TypeKind::Adt {
+                    def_id: a_def,
+                    args: a_args,
+                },
+                TypeKind::Adt {
+                    def_id: b_def,
+                    args: b_args,
+                },
             ) => {
                 a_def == b_def
                     && a_args.len() == b_args.len()
-                    && a_args.iter().zip(b_args.iter()).all(|(a, b)| self.types_equal(a, b))
+                    && a_args
+                        .iter()
+                        .zip(b_args.iter())
+                        .all(|(a, b)| self.types_equal(a, b))
             }
 
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, .. },
+                TypeKind::Fn {
+                    params: a_params,
+                    ret: a_ret,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: b_params,
+                    ret: b_ret,
+                    ..
+                },
             ) => {
                 a_params.len() == b_params.len()
-                    && a_params.iter().zip(b_params.iter()).all(|(a, b)| self.types_equal(a, b))
+                    && a_params
+                        .iter()
+                        .zip(b_params.iter())
+                        .all(|(a, b)| self.types_equal(a, b))
                     && self.types_equal(a_ret, b_ret)
             }
 

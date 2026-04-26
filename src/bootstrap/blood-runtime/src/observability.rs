@@ -456,7 +456,9 @@ impl HistogramBuilder {
     /// Build and register the histogram.
     pub fn register(self) -> Arc<Histogram> {
         let histogram = Arc::new(match self.buckets {
-            Some(buckets) => Histogram::with_buckets(self.name, self.description, self.labels, buckets),
+            Some(buckets) => {
+                Histogram::with_buckets(self.name, self.description, self.labels, buckets)
+            }
             None => Histogram::new(self.name, self.description, self.labels),
         });
         METRICS_REGISTRY.register_histogram(histogram.clone());
@@ -852,7 +854,11 @@ impl SpanBuilder {
     }
 
     /// Add an attribute to the span.
-    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<AttributeValue>) -> Self {
+    pub fn with_attribute(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<AttributeValue>,
+    ) -> Self {
         self.attributes.insert(key.into(), value.into());
         self
     }
@@ -1298,7 +1304,10 @@ mod tests {
             span.add_event("event1");
             span.add_event_with_attributes("event2", {
                 let mut attrs = HashMap::new();
-                attrs.insert("attr1".to_string(), AttributeValue::String("value".to_string()));
+                attrs.insert(
+                    "attr1".to_string(),
+                    AttributeValue::String("value".to_string()),
+                );
                 attrs
             });
             span.end();

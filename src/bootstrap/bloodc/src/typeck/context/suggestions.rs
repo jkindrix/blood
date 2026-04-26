@@ -6,9 +6,9 @@
 use crate::hir::Type;
 use crate::span::Span;
 
-use super::TypeContext;
 use super::super::error::{TypeError, TypeErrorKind};
-use super::super::suggestion::{suggest_similar, format_suggestions};
+use super::super::suggestion::{format_suggestions, suggest_similar};
+use super::TypeContext;
 
 impl<'a> TypeContext<'a> {
     /// Create a "name not found" error with suggestions.
@@ -20,7 +20,9 @@ impl<'a> TypeContext<'a> {
         let suggestions = suggest_similar(name, visible_names.iter().map(|s| s.as_str()));
 
         let mut error = TypeError::new(
-            TypeErrorKind::NotFound { name: name.to_string() },
+            TypeErrorKind::NotFound {
+                name: name.to_string(),
+            },
             span,
         );
 
@@ -40,7 +42,9 @@ impl<'a> TypeContext<'a> {
         let suggestions = suggest_similar(name, visible_types.iter().map(|s| s.as_str()));
 
         let mut error = TypeError::new(
-            TypeErrorKind::TypeNotFound { name: name.to_string() },
+            TypeErrorKind::TypeNotFound {
+                name: name.to_string(),
+            },
             span,
         );
 
@@ -71,10 +75,8 @@ impl<'a> TypeContext<'a> {
 
         if let TypeKind::Adt { def_id, .. } = ty.kind() {
             if let Some(info) = self.resolver.def_info.get(def_id) {
-                error = error.with_secondary_label(
-                    info.span,
-                    format!("type `{}` defined here", info.name),
-                );
+                error = error
+                    .with_secondary_label(info.span, format!("type `{}` defined here", info.name));
             }
         }
 
@@ -89,7 +91,12 @@ impl<'a> TypeContext<'a> {
     ///
     /// Searches for similar method names on the type and adds a
     /// "did you mean?" suggestion if close matches are found.
-    pub(crate) fn error_method_not_found(&self, ty: &Type, method: &str, span: Span) -> Box<TypeError> {
+    pub(crate) fn error_method_not_found(
+        &self,
+        ty: &Type,
+        method: &str,
+        span: Span,
+    ) -> Box<TypeError> {
         use crate::hir::TypeKind;
 
         let method_names = self.collect_method_names(ty);
@@ -105,10 +112,8 @@ impl<'a> TypeContext<'a> {
 
         if let TypeKind::Adt { def_id, .. } = ty.kind() {
             if let Some(info) = self.resolver.def_info.get(def_id) {
-                error = error.with_secondary_label(
-                    info.span,
-                    format!("type `{}` defined here", info.name),
-                );
+                error = error
+                    .with_secondary_label(info.span, format!("type `{}` defined here", info.name));
             }
         }
 
@@ -126,9 +131,7 @@ impl<'a> TypeContext<'a> {
         match ty.kind() {
             TypeKind::Adt { def_id, .. } => {
                 if let Some(struct_info) = self.struct_defs.get(def_id) {
-                    struct_info.fields.iter()
-                        .map(|f| f.name.clone())
-                        .collect()
+                    struct_info.fields.iter().map(|f| f.name.clone()).collect()
                 } else {
                     Vec::new()
                 }

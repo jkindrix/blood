@@ -3,8 +3,8 @@
 //! These tests exercise the complete pipeline from parsing through
 //! type checking and HIR generation.
 
-use bloodc::{Parser, Lexer};
 use bloodc::typeck::check_program;
+use bloodc::{Lexer, Parser};
 use std::fs;
 
 /// Test helper to run the full pipeline on source code.
@@ -38,7 +38,10 @@ fn assert_type_checks(source: &str) {
 #[allow(dead_code)] // Test infrastructure — used by future type-checking integration tests
 fn assert_type_error(source: &str, expected: &str) {
     match check_source(source) {
-        Ok(_) => panic!("Expected type error containing '{}', but type checking succeeded", expected),
+        Ok(_) => panic!(
+            "Expected type error containing '{}', but type checking succeeded",
+            expected
+        ),
         Err(errors) => {
             let has_expected = errors.iter().any(|e| e.message.contains(expected));
             if !has_expected {
@@ -67,12 +70,17 @@ fn test_lexer_token_stream() {
     let tokens: Vec<_> = lexer.collect();
 
     // Should have: fn, main, (, ), {, 42, }, EOF
-    assert!(tokens.len() >= 7, "Expected at least 7 tokens, got {}", tokens.len());
+    assert!(
+        tokens.len() >= 7,
+        "Expected at least 7 tokens, got {}",
+        tokens.len()
+    );
 }
 
 #[test]
 fn test_lexer_all_keywords() {
-    let source = "fn struct enum trait impl effect handler perform resume with handle let mut const";
+    let source =
+        "fn struct enum trait impl effect handler perform resume with handle let mut const";
     let lexer = Lexer::new(source);
     let tokens: Vec<_> = lexer.collect();
 
@@ -115,7 +123,11 @@ fn test_parse_function_definitions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 5, "Expected 5 function declarations");
+    assert_eq!(
+        program.declarations.len(),
+        5,
+        "Expected 5 function declarations"
+    );
 }
 
 #[test]
@@ -130,7 +142,11 @@ fn test_parse_struct_definitions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 4, "Expected 4 struct declarations");
+    assert_eq!(
+        program.declarations.len(),
+        4,
+        "Expected 4 struct declarations"
+    );
 }
 
 /// Regression test for nested generics parsing.
@@ -198,7 +214,11 @@ fn test_parse_enum_definitions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 3, "Expected 3 enum declarations");
+    assert_eq!(
+        program.declarations.len(),
+        3,
+        "Expected 3 enum declarations"
+    );
 }
 
 #[test]
@@ -218,7 +238,11 @@ fn test_parse_effect_definitions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 2, "Expected 2 effect declarations");
+    assert_eq!(
+        program.declarations.len(),
+        2,
+        "Expected 2 effect declarations"
+    );
 }
 
 #[test]
@@ -242,7 +266,11 @@ fn test_parse_handler_definitions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 2, "Expected 2 declarations (effect + handler)");
+    assert_eq!(
+        program.declarations.len(),
+        2,
+        "Expected 2 declarations (effect + handler)"
+    );
 }
 
 #[test]
@@ -291,7 +319,11 @@ fn test_parse_expressions() {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().expect("Failed to parse");
 
-    assert_eq!(program.declarations.len(), 1, "Expected 1 function declaration");
+    assert_eq!(
+        program.declarations.len(),
+        1,
+        "Expected 1 function declaration"
+    );
 }
 
 // ============================================================
@@ -330,7 +362,11 @@ fn test_pipeline_with_imports() {
     let program = parser.parse_program().expect("Failed to parse");
 
     assert_eq!(program.imports.len(), 2, "Expected 2 import declarations");
-    assert_eq!(program.declarations.len(), 1, "Expected 1 function declaration");
+    assert_eq!(
+        program.declarations.len(),
+        1,
+        "Expected 1 function declaration"
+    );
 }
 
 // ============================================================
@@ -339,8 +375,7 @@ fn test_pipeline_with_imports() {
 
 #[test]
 fn test_pipeline_hello_blood() {
-    let source = fs::read_to_string("../examples/hello.blood")
-        .expect("Failed to read hello.blood");
+    let source = fs::read_to_string("../examples/hello.blood").expect("Failed to read hello.blood");
 
     let mut parser = Parser::new(&source);
     let program = parser.parse_program().expect("Failed to parse hello.blood");
@@ -352,10 +387,14 @@ fn test_pipeline_hello_blood() {
     );
 
     // Check for function declarations
-    let has_function = program.declarations.iter().any(|d| {
-        matches!(d, bloodc::ast::Declaration::Function(_))
-    });
-    assert!(has_function, "hello.blood should contain function declarations");
+    let has_function = program
+        .declarations
+        .iter()
+        .any(|d| matches!(d, bloodc::ast::Declaration::Function(_)));
+    assert!(
+        has_function,
+        "hello.blood should contain function declarations"
+    );
 }
 
 #[test]
@@ -364,7 +403,9 @@ fn test_pipeline_effects_blood() {
         .expect("Failed to read algebraic_effects.blood");
 
     let mut parser = Parser::new(&source);
-    let program = parser.parse_program().expect("Failed to parse algebraic_effects.blood");
+    let program = parser
+        .parse_program()
+        .expect("Failed to parse algebraic_effects.blood");
 
     // Verify key structures are present
     assert!(
@@ -373,24 +414,34 @@ fn test_pipeline_effects_blood() {
     );
 
     // Check for effect and handler declarations
-    let has_effect = program.declarations.iter().any(|d| {
-        matches!(d, bloodc::ast::Declaration::Effect { .. })
-    });
-    assert!(has_effect, "algebraic_effects.blood should contain effect declarations");
+    let has_effect = program
+        .declarations
+        .iter()
+        .any(|d| matches!(d, bloodc::ast::Declaration::Effect { .. }));
+    assert!(
+        has_effect,
+        "algebraic_effects.blood should contain effect declarations"
+    );
 
-    let has_handler = program.declarations.iter().any(|d| {
-        matches!(d, bloodc::ast::Declaration::Handler { .. })
-    });
-    assert!(has_handler, "algebraic_effects.blood should contain handler declarations");
+    let has_handler = program
+        .declarations
+        .iter()
+        .any(|d| matches!(d, bloodc::ast::Declaration::Handler { .. }));
+    assert!(
+        has_handler,
+        "algebraic_effects.blood should contain handler declarations"
+    );
 }
 
 #[test]
 fn test_pipeline_minimal_blood() {
-    let source = fs::read_to_string("../examples/minimal.blood")
-        .expect("Failed to read minimal.blood");
+    let source =
+        fs::read_to_string("../examples/minimal.blood").expect("Failed to read minimal.blood");
 
     let mut parser = Parser::new(&source);
-    let _program = parser.parse_program().expect("Failed to parse minimal.blood");
+    let _program = parser
+        .parse_program()
+        .expect("Failed to parse minimal.blood");
 }
 
 // ============================================================
@@ -438,8 +489,8 @@ fn test_content_hash_module() {
     use bloodc::content::ContentHash;
 
     let source1 = "fn foo() { 1 }";
-    let source2 = "fn foo() { 1 }";  // Same content
-    let source3 = "fn foo() { 2 }";  // Different content
+    let source2 = "fn foo() { 1 }"; // Same content
+    let source3 = "fn foo() { 2 }"; // Different content
 
     let hash1 = ContentHash::compute(source1.as_bytes());
     let hash2 = ContentHash::compute(source2.as_bytes());
@@ -451,7 +502,7 @@ fn test_content_hash_module() {
 
 #[test]
 fn test_content_codebase() {
-    use bloodc::content::{Codebase, CanonicalAST, DefinitionRecord};
+    use bloodc::content::{CanonicalAST, Codebase, DefinitionRecord};
 
     let mut codebase = Codebase::new();
 
@@ -575,36 +626,58 @@ fn test_lexer_performance_large_file() {
     let parse_time = start.elapsed();
 
     assert!(tokens.len() > 500, "Expected many tokens");
-    assert!(lex_time.as_millis() < 100, "Lexing took too long: {:?}", lex_time);
-    assert!(parse_time.as_millis() < 500, "Parsing took too long: {:?}", parse_time);
+    assert!(
+        lex_time.as_millis() < 100,
+        "Lexing took too long: {:?}",
+        lex_time
+    );
+    assert!(
+        parse_time.as_millis() < 500,
+        "Parsing took too long: {:?}",
+        parse_time
+    );
 }
 
 // ============================================================
 // Full Pipeline: Source → Parse → TypeCheck → HIR → MIR → LLVM
 // ============================================================
 
-use bloodc::mir::MirLowering;
 use bloodc::codegen::{CodegenContext, MirCodegen};
+use bloodc::mir::MirLowering;
 use inkwell::context::Context;
 
 /// Helper: Run full pipeline from source to MIR
-fn compile_to_mir(source: &str) -> Result<std::collections::HashMap<bloodc::hir::DefId, bloodc::mir::MirBody>, String> {
+fn compile_to_mir(
+    source: &str,
+) -> Result<std::collections::HashMap<bloodc::hir::DefId, bloodc::mir::MirBody>, String> {
     // Parse
     let mut parser = Parser::new(source);
     let program = parser.parse_program().map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
 
     // Type check - use parser's interner
     let interner = parser.take_interner();
     let hir_crate = check_program(&program, source, interner).map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
 
     // Lower to MIR
     let mut lowering = MirLowering::new(&hir_crate);
     let (mir_bodies, _inline_handler_bodies) = lowering.lower_crate().map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
     Ok(mir_bodies)
 }
@@ -619,19 +692,31 @@ fn compile_to_llvm_ir(source: &str) -> Result<String, String> {
     // Parse
     let mut parser = Parser::new(source);
     let program = parser.parse_program().map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
 
     // Type check - use parser's interner
     let interner = parser.take_interner();
     let hir_crate = check_program(&program, source, interner).map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
 
     // Lower to MIR
     let mut lowering = MirLowering::new(&hir_crate);
     let (mir_bodies, _inline_handler_bodies) = lowering.lower_crate().map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
+        errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
 
     // Run escape analysis
@@ -649,16 +734,28 @@ fn compile_to_llvm_ir(source: &str) -> Result<String, String> {
 
     let mut codegen = CodegenContext::new(&context, &module, &builder);
     codegen.set_escape_analysis(escape_map.clone());
-    codegen.compile_crate_declarations(&hir_crate).map_err(|errors| {
-        errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
-    })?;
+    codegen
+        .compile_crate_declarations(&hir_crate)
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(|e| e.message.clone())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
 
     // Compile each MIR body
     for (&def_id, mir_body) in &mir_bodies {
         let escape_results = escape_map.get(&def_id);
-        codegen.compile_mir_body(def_id, mir_body, escape_results).map_err(|errors: Vec<bloodc::Diagnostic>| {
-            errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; ")
-        })?;
+        codegen
+            .compile_mir_body(def_id, mir_body, escape_results)
+            .map_err(|errors: Vec<bloodc::Diagnostic>| {
+                errors
+                    .iter()
+                    .map(|e| e.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })?;
     }
 
     Ok(module.print_to_string().to_string())
@@ -692,7 +789,10 @@ fn test_e2e_simple_function_to_llvm() {
 
     let llvm_ir = result.unwrap();
     // Verify the generated IR contains our function
-    assert!(llvm_ir.contains("add"), "LLVM IR should contain 'add' function");
+    assert!(
+        llvm_ir.contains("add"),
+        "LLVM IR should contain 'add' function"
+    );
     assert!(llvm_ir.contains("i32"), "LLVM IR should contain i32 type");
 }
 
@@ -708,10 +808,15 @@ fn test_e2e_if_expression_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("max"), "LLVM IR should contain 'max' function");
+    assert!(
+        llvm_ir.contains("max"),
+        "LLVM IR should contain 'max' function"
+    );
     // Should have branch instructions for if/else
-    assert!(llvm_ir.contains("br") || llvm_ir.contains("select"),
-            "LLVM IR should contain branch or select for if/else");
+    assert!(
+        llvm_ir.contains("br") || llvm_ir.contains("select"),
+        "LLVM IR should contain branch or select for if/else"
+    );
 }
 
 #[test]
@@ -730,9 +835,15 @@ fn test_e2e_while_loop_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("count_to"), "LLVM IR should contain function");
+    assert!(
+        llvm_ir.contains("count_to"),
+        "LLVM IR should contain function"
+    );
     // Loops create multiple basic blocks
-    assert!(llvm_ir.contains("br "), "LLVM IR should contain branch instructions for loop");
+    assert!(
+        llvm_ir.contains("br "),
+        "LLVM IR should contain branch instructions for loop"
+    );
 }
 
 #[test]
@@ -752,7 +863,10 @@ fn test_e2e_struct_creation_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("make_point"), "LLVM IR should contain function");
+    assert!(
+        llvm_ir.contains("make_point"),
+        "LLVM IR should contain function"
+    );
 }
 
 #[test]
@@ -771,7 +885,10 @@ fn test_e2e_match_expression_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("classify"), "LLVM IR should contain function");
+    assert!(
+        llvm_ir.contains("classify"),
+        "LLVM IR should contain function"
+    );
 }
 
 #[test]
@@ -811,11 +928,21 @@ fn test_e2e_nested_functions_to_llvm() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "Nested function LLVM codegen failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Nested function LLVM codegen failed: {:?}",
+        result.err()
+    );
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("outer"), "LLVM IR should contain outer function");
-    assert!(llvm_ir.contains("inner"), "LLVM IR should contain nested inner function");
+    assert!(
+        llvm_ir.contains("outer"),
+        "LLVM IR should contain outer function"
+    );
+    assert!(
+        llvm_ir.contains("inner"),
+        "LLVM IR should contain nested inner function"
+    );
 }
 
 #[test]
@@ -830,8 +957,14 @@ fn test_e2e_recursive_function_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("factorial"), "LLVM IR should contain recursive function");
-    assert!(llvm_ir.contains("call"), "LLVM IR should contain call for recursion");
+    assert!(
+        llvm_ir.contains("factorial"),
+        "LLVM IR should contain recursive function"
+    );
+    assert!(
+        llvm_ir.contains("call"),
+        "LLVM IR should contain call for recursion"
+    );
 }
 
 #[test]
@@ -850,8 +983,10 @@ fn test_e2e_bitwise_operations_to_llvm() {
 
     let llvm_ir = result.unwrap();
     // Check for bitwise operations
-    assert!(llvm_ir.contains("and") || llvm_ir.contains("AND"),
-            "LLVM IR should contain AND operation");
+    assert!(
+        llvm_ir.contains("and") || llvm_ir.contains("AND"),
+        "LLVM IR should contain AND operation"
+    );
 }
 
 #[test]
@@ -866,7 +1001,10 @@ fn test_e2e_comparison_chain_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("in_range"), "LLVM IR should contain function");
+    assert!(
+        llvm_ir.contains("in_range"),
+        "LLVM IR should contain function"
+    );
 }
 
 #[test]
@@ -885,8 +1023,14 @@ fn test_e2e_multiple_functions_to_llvm() {
     assert!(result.is_ok(), "LLVM codegen failed: {:?}", result.err());
 
     let llvm_ir = result.unwrap();
-    assert!(llvm_ir.contains("helper"), "LLVM IR should contain helper function");
-    assert!(llvm_ir.contains("main_func"), "LLVM IR should contain main function");
+    assert!(
+        llvm_ir.contains("helper"),
+        "LLVM IR should contain helper function"
+    );
+    assert!(
+        llvm_ir.contains("main_func"),
+        "LLVM IR should contain main function"
+    );
 }
 
 // ============================================================
@@ -906,7 +1050,10 @@ fn test_e2e_effect_declaration_to_mir() {
     let program = parser.parse_program().expect("Parse failed");
 
     assert_eq!(program.declarations.len(), 1);
-    assert!(matches!(program.declarations[0], bloodc::ast::Declaration::Effect { .. }));
+    assert!(matches!(
+        program.declarations[0],
+        bloodc::ast::Declaration::Effect { .. }
+    ));
 }
 
 #[test]
@@ -971,7 +1118,10 @@ fn test_mir_basic_block_structure() {
 
     // Each body should have basic blocks
     for body in mir_bodies.values() {
-        assert!(!body.basic_blocks.is_empty(), "Function should have basic blocks");
+        assert!(
+            !body.basic_blocks.is_empty(),
+            "Function should have basic blocks"
+        );
     }
 }
 
@@ -991,7 +1141,10 @@ fn test_mir_locals_and_temporaries() {
     let mir_bodies = result.unwrap();
     for body in mir_bodies.values() {
         // Should have locals for parameters, let bindings, and temporaries
-        assert!(body.locals.len() >= 3, "Expected at least 3 locals (return + 2 params)");
+        assert!(
+            body.locals.len() >= 3,
+            "Expected at least 3 locals (return + 2 params)"
+        );
     }
 }
 
@@ -1015,11 +1168,20 @@ fn test_llvm_ir_well_formed() {
     let llvm_ir = result.unwrap();
 
     // Basic structure checks
-    assert!(llvm_ir.contains("define"), "LLVM IR should have function definition");
-    assert!(llvm_ir.contains("ret"), "LLVM IR should have return statement");
+    assert!(
+        llvm_ir.contains("define"),
+        "LLVM IR should have function definition"
+    );
+    assert!(
+        llvm_ir.contains("ret"),
+        "LLVM IR should have return statement"
+    );
 
     // Should not have obvious errors
-    assert!(!llvm_ir.contains("error"), "LLVM IR should not contain error markers");
+    assert!(
+        !llvm_ir.contains("error"),
+        "LLVM IR should not contain error markers"
+    );
 }
 
 #[test]
@@ -1038,8 +1200,10 @@ fn test_llvm_ir_function_signature() {
     // Check parameter types are present
     assert!(llvm_ir.contains("i32"), "LLVM IR should have i32 type");
     assert!(llvm_ir.contains("i64"), "LLVM IR should have i64 type");
-    assert!(llvm_ir.contains("double") || llvm_ir.contains("f64"),
-            "LLVM IR should have double/f64 type");
+    assert!(
+        llvm_ir.contains("double") || llvm_ir.contains("f64"),
+        "LLVM IR should have double/f64 type"
+    );
 }
 
 // ============================================================
@@ -1061,12 +1225,18 @@ fn test_e2e_mir_path_declares_runtime_functions() {
     let llvm_ir = result.unwrap();
 
     // All critical memory safety runtime functions should be declared
-    assert!(llvm_ir.contains("blood_validate_generation"),
-            "LLVM IR should declare blood_validate_generation");
-    assert!(llvm_ir.contains("blood_alloc"),
-            "LLVM IR should declare blood_alloc");
-    assert!(llvm_ir.contains("blood_stale_reference_panic"),
-            "LLVM IR should declare blood_stale_reference_panic");
+    assert!(
+        llvm_ir.contains("blood_validate_generation"),
+        "LLVM IR should declare blood_validate_generation"
+    );
+    assert!(
+        llvm_ir.contains("blood_alloc"),
+        "LLVM IR should declare blood_alloc"
+    );
+    assert!(
+        llvm_ir.contains("blood_stale_reference_panic"),
+        "LLVM IR should declare blood_stale_reference_panic"
+    );
 }
 
 #[test]
@@ -1084,9 +1254,10 @@ fn test_e2e_mir_path_declares_effect_runtime() {
     let llvm_ir = result.unwrap();
 
     // Effect context functions for snapshot management
-    assert!(llvm_ir.contains("blood_effect_context") ||
-            llvm_ir.contains("effect_context"),
-            "LLVM IR should declare effect context functions");
+    assert!(
+        llvm_ir.contains("blood_effect_context") || llvm_ir.contains("effect_context"),
+        "LLVM IR should declare effect context functions"
+    );
 }
 
 #[test]
@@ -1103,12 +1274,19 @@ fn test_e2e_mir_path_produces_valid_ir() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "MIR codegen should produce valid IR: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "MIR codegen should produce valid IR: {:?}",
+        result.err()
+    );
 
     let llvm_ir = result.unwrap();
 
     // Should have function definition
-    assert!(llvm_ir.contains("factorial"), "IR should contain factorial function");
+    assert!(
+        llvm_ir.contains("factorial"),
+        "IR should contain factorial function"
+    );
     // Should have recursion (call to self)
     assert!(llvm_ir.contains("call"), "IR should contain function calls");
 }
@@ -1127,7 +1305,11 @@ fn test_e2e_mir_path_handles_structs() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "MIR codegen should handle structs: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "MIR codegen should handle structs: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1139,7 +1321,11 @@ fn test_e2e_mir_path_handles_tuples() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "MIR codegen should handle tuples: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "MIR codegen should handle tuples: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1151,7 +1337,11 @@ fn test_e2e_mir_path_handles_arrays() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "MIR codegen should handle arrays: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "MIR codegen should handle arrays: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1172,12 +1362,18 @@ fn test_e2e_full_pipeline_fizzbuzz() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "FizzBuzz should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "FizzBuzz should compile: {:?}",
+        result.err()
+    );
 
     let llvm_ir = result.unwrap();
     // Should use modulo (srem for signed remainder)
-    assert!(llvm_ir.contains("srem") || llvm_ir.contains("urem"),
-            "IR should contain remainder operation for modulo");
+    assert!(
+        llvm_ir.contains("srem") || llvm_ir.contains("urem"),
+        "IR should contain remainder operation for modulo"
+    );
 }
 
 // ============================================================
@@ -1250,7 +1446,10 @@ fn test_e2e_higher_order_function_parse() {
     let result = parser.parse_program();
     // Higher-order functions with closures are advanced - check parse status
     if result.is_err() {
-        eprintln!("Higher-order closure syntax not fully supported: {:?}", result.err());
+        eprintln!(
+            "Higher-order closure syntax not fully supported: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -1267,7 +1466,10 @@ fn test_e2e_closure_returning_closure_parse() {
     let result = parser.parse_program();
     // This is an advanced feature - check support status
     if result.is_err() {
-        eprintln!("Closure-returning-closure not fully supported: {:?}", result.err());
+        eprintln!(
+            "Closure-returning-closure not fully supported: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -1282,7 +1484,9 @@ fn test_e2e_multi_param_closure_parse() {
     "#;
 
     let mut parser = Parser::new(source);
-    let program = parser.parse_program().expect("Multi-param closure should parse");
+    let program = parser
+        .parse_program()
+        .expect("Multi-param closure should parse");
     assert_eq!(program.declarations.len(), 1);
 }
 
@@ -1299,7 +1503,10 @@ fn test_e2e_closure_in_expression_parse() {
     let result = parser.parse_program();
     // Inline closure invocation is advanced - check support
     if result.is_err() {
-        eprintln!("Inline closure invocation not fully supported: {:?}", result.err());
+        eprintln!(
+            "Inline closure invocation not fully supported: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -1433,7 +1640,10 @@ fn test_linear_closure_parameter() {
     match result {
         Ok(program) => {
             // May or may not parse depending on closure param syntax support
-            eprintln!("CLOS-004-5: Linear closure param parses: {} decls", program.declarations.len());
+            eprintln!(
+                "CLOS-004-5: Linear closure param parses: {} decls",
+                program.declarations.len()
+            );
         }
         Err(e) => {
             eprintln!("CLOS-004-5: Linear closure param syntax status: {:?}", e);
@@ -1509,7 +1719,10 @@ fn test_nested_affine_types() {
     match result {
         Ok(program) => {
             // May produce parse error for nested affine - that's fine
-            eprintln!("CLOS-004-8: Nested affine types: {} decls", program.declarations.len());
+            eprintln!(
+                "CLOS-004-8: Nested affine types: {} decls",
+                program.declarations.len()
+            );
         }
         Err(e) => {
             eprintln!("CLOS-004-8: Nested affine syntax status: {:?}", e);
@@ -1533,9 +1746,14 @@ fn test_e2e_effect_with_operations_parses() {
     "#;
 
     let mut parser = Parser::new(source);
-    let program = parser.parse_program().expect("Effect with operations should parse");
+    let program = parser
+        .parse_program()
+        .expect("Effect with operations should parse");
     assert_eq!(program.declarations.len(), 1);
-    assert!(matches!(program.declarations[0], bloodc::ast::Declaration::Effect { .. }));
+    assert!(matches!(
+        program.declarations[0],
+        bloodc::ast::Declaration::Effect { .. }
+    ));
 }
 
 #[test]
@@ -1581,7 +1799,9 @@ fn test_e2e_shallow_handler_parses() {
     "#;
 
     let mut parser = Parser::new(source);
-    let program = parser.parse_program().expect("Shallow handler should parse");
+    let program = parser
+        .parse_program()
+        .expect("Shallow handler should parse");
     assert_eq!(program.declarations.len(), 2);
 }
 
@@ -1603,7 +1823,10 @@ fn test_e2e_perform_expression_mir() {
     match result {
         Ok(mir_bodies) => {
             // Should have MIR body for greet
-            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for perform code");
+            assert!(
+                !mir_bodies.is_empty(),
+                "Expected MIR bodies for perform code"
+            );
         }
         Err(e) => {
             // Effect system may not be fully wired - document current state
@@ -1637,7 +1860,10 @@ fn test_e2e_handler_with_resume_mir() {
     let result = compile_to_mir(source);
     match result {
         Ok(mir_bodies) => {
-            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for handler code");
+            assert!(
+                !mir_bodies.is_empty(),
+                "Expected MIR bodies for handler code"
+            );
         }
         Err(e) => {
             eprintln!("Handler with resume MIR: {}", e);
@@ -1670,7 +1896,10 @@ fn test_e2e_handle_block_mir() {
     let result = compile_to_mir(source);
     match result {
         Ok(mir_bodies) => {
-            assert!(!mir_bodies.is_empty(), "Expected MIR bodies for handle block");
+            assert!(
+                !mir_bodies.is_empty(),
+                "Expected MIR bodies for handle block"
+            );
         }
         Err(e) => {
             eprintln!("Handle block MIR: {}", e);
@@ -1693,7 +1922,11 @@ fn test_e2e_effect_row_parsing() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Effect row should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Effect row should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1712,7 +1945,11 @@ fn test_e2e_effect_function_type_annotation() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Effect function type should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Effect function type should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1735,7 +1972,11 @@ fn test_e2e_multi_shot_handler_parses() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Multi-shot handler should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Multi-shot handler should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1763,7 +2004,11 @@ fn test_e2e_handler_with_state_mutation_parses() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Handler with mutable state should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Handler with mutable state should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1794,7 +2039,11 @@ fn test_e2e_nested_handle_blocks_parse() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Nested handle blocks should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Nested handle blocks should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1809,7 +2058,11 @@ fn test_e2e_effect_polymorphism_parses() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Polymorphic effect should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Polymorphic effect should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1834,8 +2087,10 @@ fn test_e2e_effect_to_llvm_ir() {
     match result {
         Ok(llvm_ir) => {
             // Should have function definition
-            assert!(llvm_ir.contains("use_effect") || llvm_ir.contains("define"),
-                    "LLVM IR should contain function definitions");
+            assert!(
+                llvm_ir.contains("use_effect") || llvm_ir.contains("define"),
+                "LLVM IR should contain function definitions"
+            );
         }
         Err(e) => {
             // Effect codegen may not be fully wired
@@ -1864,7 +2119,11 @@ fn test_e2e_perform_in_loop_parses() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Perform in loop should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Perform in loop should parse: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1887,7 +2146,11 @@ fn test_e2e_conditional_perform_parses() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Conditional perform should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Conditional perform should parse: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================
@@ -1914,11 +2177,14 @@ fn test_e2e_resume_type_mismatch_error() {
     let result = check_source(source);
     assert!(result.is_err(), "Should fail with type mismatch");
     let errors = result.unwrap_err();
-    let has_mismatch = errors.iter().any(|e|
-        e.message.contains("mismatch") || e.message.contains("expected")
+    let has_mismatch = errors
+        .iter()
+        .any(|e| e.message.contains("mismatch") || e.message.contains("expected"));
+    assert!(
+        has_mismatch,
+        "Should report type mismatch, got: {:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
-    assert!(has_mismatch, "Should report type mismatch, got: {:?}",
-            errors.iter().map(|e| &e.message).collect::<Vec<_>>());
 }
 
 #[test]
@@ -1938,7 +2204,11 @@ fn test_e2e_resume_correct_type() {
     "#;
 
     let result = check_source(source);
-    assert!(result.is_ok(), "Correct resume type should pass: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Correct resume type should pass: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================
@@ -2015,16 +2285,18 @@ fn test_e2e_effect_llvm_with_generation_checks() {
     match result {
         Ok(llvm_ir) => {
             // Verify memory safety functions are declared
-            let has_gen_check = llvm_ir.contains("blood_validate_generation") ||
-                               llvm_ir.contains("generation");
-            let has_effect_ctx = llvm_ir.contains("effect") ||
-                                llvm_ir.contains("handler");
+            let has_gen_check =
+                llvm_ir.contains("blood_validate_generation") || llvm_ir.contains("generation");
+            let has_effect_ctx = llvm_ir.contains("effect") || llvm_ir.contains("handler");
 
             eprintln!("LLVM IR generation check functions: {}", has_gen_check);
             eprintln!("LLVM IR effect context: {}", has_effect_ctx);
 
             // Should have at least basic function structure
-            assert!(llvm_ir.contains("define"), "Should have function definitions");
+            assert!(
+                llvm_ir.contains("define"),
+                "Should have function definitions"
+            );
         }
         Err(e) => {
             eprintln!("Effect + generation LLVM: {}", e);
@@ -2062,9 +2334,11 @@ fn test_e2e_e0309_shallow_handler_multiple_resumes() {
     // The shallow handler multi-resume validation should cause a compilation error.
     // If the pipeline accepts this, the E0309 check is not yet wired in at codegen level.
     if result.is_ok() {
-        eprintln!("E0309: shallow multi-resume accepted at codegen level — \
+        eprintln!(
+            "E0309: shallow multi-resume accepted at codegen level — \
                    validation only fires during effects lowering phase, \
-                   which is invoked from the main compiler pipeline (not test helpers)");
+                   which is invoked from the main compiler pipeline (not test helpers)"
+        );
     }
 }
 
@@ -2093,12 +2367,15 @@ fn test_e2e_shallow_handler_single_resume_ok() {
         }
         Err(errors) => {
             // If it fails, it should not be E0309
-            let has_e0309 = errors.iter().any(|e|
-                e.message.contains("E0309") ||
-                (e.message.contains("shallow") && e.message.contains("resume"))
+            let has_e0309 = errors.iter().any(|e| {
+                e.message.contains("E0309")
+                    || (e.message.contains("shallow") && e.message.contains("resume"))
+            });
+            assert!(
+                !has_e0309,
+                "Single resume in shallow handler should not trigger E0309: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
             );
-            assert!(!has_e0309, "Single resume in shallow handler should not trigger E0309: {:?}",
-                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
         }
     }
 }
@@ -2135,8 +2412,11 @@ fn test_e2e_deep_handler_multiple_resumes_ok() {
         Err(errors) => {
             // Should NOT fail with E0309 (that's for shallow handlers)
             let has_e0309 = errors.iter().any(|e| e.message.contains("E0309"));
-            assert!(!has_e0309, "Deep handler multi-shot should not trigger E0309: {:?}",
-                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            assert!(
+                !has_e0309,
+                "Deep handler multi-shot should not trigger E0309: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2178,8 +2458,10 @@ fn test_e2e_e0304_linear_value_in_multishot_handler() {
         }
         Err(errors) => {
             // Linear type syntax not yet supported
-            eprintln!("Linear type syntax not yet implemented: {:?}",
-                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Linear type syntax not yet implemented: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2212,11 +2494,16 @@ fn test_e2e_e0304_affine_value_in_multishot_handler() {
     // Track implementation status
     match result {
         Ok(program) => {
-            eprintln!("Affine type syntax parsed ({} declarations)", program.declarations.len());
+            eprintln!(
+                "Affine type syntax parsed ({} declarations)",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Affine type syntax status: {:?}",
-                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Affine type syntax status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2251,8 +2538,11 @@ fn test_e2e_non_linear_value_in_multishot_ok() {
         Err(errors) => {
             // Should NOT fail with E0304 (that's for linear values)
             let has_e0304 = errors.iter().any(|e| e.message.contains("E0304"));
-            assert!(!has_e0304, "Non-linear value should not trigger E0304: {:?}",
-                   errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            assert!(
+                !has_e0304,
+                "Non-linear value should not trigger E0304: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2292,7 +2582,10 @@ fn test_e2e_effect_generation_snapshot_preservation() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty(), "Should generate MIR bodies");
-            eprintln!("Effect + generation snapshot MIR: {} bodies", mir_bodies.len());
+            eprintln!(
+                "Effect + generation snapshot MIR: {} bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Effect + generation snapshot MIR status: {}", e);
@@ -2332,7 +2625,10 @@ fn test_e2e_nested_handlers_generation_isolation() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty());
-            eprintln!("Nested handlers generation isolation: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "Nested handlers generation isolation: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Nested handlers MIR status: {}", e);
@@ -2382,7 +2678,10 @@ fn test_e2e_effect_with_struct_state_generations() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty());
-            eprintln!("Struct state generation tracking: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "Struct state generation tracking: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Struct state generation MIR status: {}", e);
@@ -2421,14 +2720,20 @@ fn test_e2e_effect_generation_llvm_with_snapshots() {
     match result {
         Ok(llvm_ir) => {
             // Check for generation-related functions
-            let has_generation_calls = llvm_ir.contains("generation") ||
-                                       llvm_ir.contains("snapshot") ||
-                                       llvm_ir.contains("blood_");
+            let has_generation_calls = llvm_ir.contains("generation")
+                || llvm_ir.contains("snapshot")
+                || llvm_ir.contains("blood_");
 
-            eprintln!("LLVM IR has generation/snapshot calls: {}", has_generation_calls);
+            eprintln!(
+                "LLVM IR has generation/snapshot calls: {}",
+                has_generation_calls
+            );
 
             // Should at least have function definitions
-            assert!(llvm_ir.contains("define"), "Should have function definitions");
+            assert!(
+                llvm_ir.contains("define"),
+                "Should have function definitions"
+            );
         }
         Err(e) => {
             eprintln!("Effect + generation LLVM IR status: {}", e);
@@ -2472,7 +2777,10 @@ fn test_e2e_multishot_generation_rollback() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty());
-            eprintln!("Multi-shot generation rollback: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "Multi-shot generation rollback: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Multi-shot generation MIR status: {}", e);
@@ -2496,13 +2804,20 @@ fn test_e2e_reserved_generation_values() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "Basic generation test should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Basic generation test should compile: {:?}",
+        result.err()
+    );
 
     let llvm_ir = result.unwrap();
 
     // Verify generation validation is present
     let has_gen_validate = llvm_ir.contains("blood_validate_generation");
-    eprintln!("LLVM IR includes generation validation: {}", has_gen_validate);
+    eprintln!(
+        "LLVM IR includes generation validation: {}",
+        has_gen_validate
+    );
 }
 
 #[test]
@@ -2527,11 +2842,16 @@ fn test_e2e_effect_delimited_continuation_snapshots() {
     // This is advanced shift/reset - track parsing status
     match result {
         Ok(program) => {
-            eprintln!("Shift/reset syntax parsed: {} declarations", program.declarations.len());
+            eprintln!(
+                "Shift/reset syntax parsed: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Shift/reset syntax status: {:?}",
-                     errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Shift/reset syntax status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2573,7 +2893,10 @@ fn test_generation_snapshot_basic_handler() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty(), "Should produce MIR bodies");
-            eprintln!("Generation snapshot basic handler: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "Generation snapshot basic handler: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Generation snapshot basic handler status: {}", e);
@@ -2653,12 +2976,20 @@ fn test_generation_snapshot_exception_rollback() {
 
     match result {
         Ok(program) => {
-            eprintln!("Exception rollback syntax: {} declarations", program.declarations.len());
-            assert!(program.declarations.len() >= 3, "Expected effect, handler, and function");
+            eprintln!(
+                "Exception rollback syntax: {} declarations",
+                program.declarations.len()
+            );
+            assert!(
+                program.declarations.len() >= 3,
+                "Expected effect, handler, and function"
+            );
         }
         Err(errors) => {
-            eprintln!("Exception rollback status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Exception rollback status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2700,7 +3031,10 @@ fn test_multishot_handler_generation_safety() {
     let result = compile_to_mir(source);
     match result {
         Ok(mir_bodies) => {
-            eprintln!("Multi-shot generation safety: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "Multi-shot generation safety: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("Multi-shot generation safety status: {}", e);
@@ -2747,11 +3081,16 @@ fn test_linear_resource_in_handler() {
 
     match result {
         Ok(program) => {
-            eprintln!("Linear resource handler: {} declarations", program.declarations.len());
+            eprintln!(
+                "Linear resource handler: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Linear resource handler status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Linear resource handler status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2778,11 +3117,18 @@ fn test_generation_overflow_detection() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "Generation overflow detection should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Generation overflow detection should compile: {:?}",
+        result.err()
+    );
 
     let llvm_ir = result.unwrap();
     // The generated code should include generation validation calls
-    eprintln!("Generation overflow test IR length: {} bytes", llvm_ir.len());
+    eprintln!(
+        "Generation overflow test IR length: {} bytes",
+        llvm_ir.len()
+    );
 }
 
 #[test]
@@ -2807,7 +3153,11 @@ fn test_generation_wrap_around_safety() {
     "#;
 
     let result = compile_to_llvm_ir(source);
-    assert!(result.is_ok(), "Wrap-around safety should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Wrap-around safety should compile: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================
@@ -2843,11 +3193,16 @@ fn test_concurrent_fiber_scheduling() {
 
     match result {
         Ok(program) => {
-            eprintln!("Concurrent fiber scheduling: {} declarations", program.declarations.len());
+            eprintln!(
+                "Concurrent fiber scheduling: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Concurrent fiber status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Concurrent fiber status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2881,12 +3236,17 @@ fn test_channel_communication() {
 
     match result {
         Ok(program) => {
-            eprintln!("Channel communication: {} declarations", program.declarations.len());
+            eprintln!(
+                "Channel communication: {} declarations",
+                program.declarations.len()
+            );
             assert!(program.declarations.len() >= 2);
         }
         Err(errors) => {
-            eprintln!("Channel communication status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Channel communication status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2913,11 +3273,16 @@ fn test_fork_join_parallelism() {
 
     match result {
         Ok(program) => {
-            eprintln!("Fork-join parallelism: {} declarations", program.declarations.len());
+            eprintln!(
+                "Fork-join parallelism: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Fork-join status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Fork-join status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -2964,13 +3329,18 @@ fn test_effect_composition() {
 
     match result {
         Ok(program) => {
-            eprintln!("Effect composition: {} declarations", program.declarations.len());
+            eprintln!(
+                "Effect composition: {} declarations",
+                program.declarations.len()
+            );
             // Should have 3 effects + 1 function
             assert!(program.declarations.len() >= 4);
         }
         Err(errors) => {
-            eprintln!("Effect composition status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Effect composition status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3006,11 +3376,16 @@ fn test_handler_delegation() {
 
     match result {
         Ok(program) => {
-            eprintln!("Handler delegation: {} declarations", program.declarations.len());
+            eprintln!(
+                "Handler delegation: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("Handler delegation status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "Handler delegation status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3067,7 +3442,10 @@ fn test_perf_generic_effect_with_semicolon() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    eprintln!("Generic effect with perform semicolon: {:?}", result.is_ok());
+    eprintln!(
+        "Generic effect with perform semicolon: {:?}",
+        result.is_ok()
+    );
 }
 
 #[test]
@@ -3273,7 +3651,11 @@ fn test_perf_full_combo_with_return() {
 
     let mut parser = Parser::new(source);
     let result = parser.parse_program();
-    assert!(result.is_ok(), "Should parse with correct syntax order: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse with correct syntax order: {:?}",
+        result.err()
+    );
     eprintln!("Full combo with return: {:?}", result.is_ok());
 }
 
@@ -3376,10 +3758,16 @@ fn test_e2e_stale_reference_after_effect_resume() {
     match result {
         Ok(llvm_ir) => {
             // The generated code should include generation validation
-            let has_validation = llvm_ir.contains("blood_validate_generation") ||
-                               llvm_ir.contains("gen_check");
-            eprintln!("TEST-001: Stale reference detection IR has validation: {}", has_validation);
-            assert!(llvm_ir.contains("define"), "Should have function definitions");
+            let has_validation =
+                llvm_ir.contains("blood_validate_generation") || llvm_ir.contains("gen_check");
+            eprintln!(
+                "TEST-001: Stale reference detection IR has validation: {}",
+                has_validation
+            );
+            assert!(
+                llvm_ir.contains("define"),
+                "Should have function definitions"
+            );
         }
         Err(e) => {
             eprintln!("TEST-001: Stale reference detection status: {}", e);
@@ -3423,8 +3811,14 @@ fn test_e2e_affine_value_deep_handler_capture() {
     let result = compile_to_mir(source);
     match result {
         Ok(mir_bodies) => {
-            assert!(!mir_bodies.is_empty(), "Should generate MIR for affine capture");
-            eprintln!("TEST-003: Affine in deep handler: {} MIR bodies", mir_bodies.len());
+            assert!(
+                !mir_bodies.is_empty(),
+                "Should generate MIR for affine capture"
+            );
+            eprintln!(
+                "TEST-003: Affine in deep handler: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("TEST-003: Affine deep handler status: {}", e);
@@ -3469,7 +3863,10 @@ fn test_e2e_nested_region_suspension() {
     match result {
         Ok(mir_bodies) => {
             assert!(!mir_bodies.is_empty());
-            eprintln!("TEST-004: Nested region suspension: {} MIR bodies", mir_bodies.len());
+            eprintln!(
+                "TEST-004: Nested region suspension: {} MIR bodies",
+                mir_bodies.len()
+            );
         }
         Err(e) => {
             eprintln!("TEST-004: Nested region suspension status: {}", e);
@@ -3504,11 +3901,13 @@ fn test_e2e_generation_overflow_tier_promotion_detection() {
     match result {
         Ok(llvm_ir) => {
             // Check for generation tracking infrastructure
-            let has_generation_tracking = llvm_ir.contains("generation") ||
-                                         llvm_ir.contains("blood_") ||
-                                         llvm_ir.contains("alloc");
-            eprintln!("TEST-005: Generation overflow detection infrastructure present: {}",
-                     has_generation_tracking);
+            let has_generation_tracking = llvm_ir.contains("generation")
+                || llvm_ir.contains("blood_")
+                || llvm_ir.contains("alloc");
+            eprintln!(
+                "TEST-005: Generation overflow detection infrastructure present: {}",
+                has_generation_tracking
+            );
             // Note: Actual tier promotion test pending IMPL-004 implementation
         }
         Err(e) => {
@@ -3522,7 +3921,7 @@ fn test_e2e_generation_overflow_tier_promotion_detection() {
 /// and enables incremental rebuilds.
 #[test]
 fn test_e2e_content_addressed_incremental_rebuild() {
-    use bloodc::content::{Codebase, CanonicalAST, DefinitionRecord};
+    use bloodc::content::{CanonicalAST, Codebase, DefinitionRecord};
 
     // Simulate an incremental build scenario
     let mut codebase = Codebase::new();
@@ -3547,15 +3946,24 @@ fn test_e2e_content_addressed_incremental_rebuild() {
 
     // Simulate "rebuild" - unchanged definitions should have same hash
     let def1_unchanged = DefinitionRecord::new(CanonicalAST::IntLit(1));
-    assert_eq!(def1_unchanged.hash, hash1, "Unchanged definition should have same hash");
+    assert_eq!(
+        def1_unchanged.hash, hash1,
+        "Unchanged definition should have same hash"
+    );
 
     // Modified definition should have different hash
     let def1_modified = DefinitionRecord::new(CanonicalAST::IntLit(100));
-    assert_ne!(def1_modified.hash, hash1, "Modified definition should have different hash");
+    assert_ne!(
+        def1_modified.hash, hash1,
+        "Modified definition should have different hash"
+    );
 
     // Incremental: only need to recompile changed definitions
     let needs_recompile = !codebase.contains(def1_modified.hash);
-    assert!(needs_recompile, "Modified definition should need recompilation");
+    assert!(
+        needs_recompile,
+        "Modified definition should need recompilation"
+    );
 
     eprintln!("TEST-006: Content-addressed incremental rebuild verification complete");
 }
@@ -3607,14 +4015,20 @@ fn test_e2e_multiple_dispatch_generic_handlers() {
     match result {
         Ok(program) => {
             // Should have effect, handler, and multiple functions
-            assert!(program.declarations.len() >= 4,
-                   "Should parse effect, handler, and functions");
-            eprintln!("TEST-007: Multiple dispatch generic handlers: {} declarations",
-                     program.declarations.len());
+            assert!(
+                program.declarations.len() >= 4,
+                "Should parse effect, handler, and functions"
+            );
+            eprintln!(
+                "TEST-007: Multiple dispatch generic handlers: {} declarations",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("TEST-007: Multiple dispatch status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "TEST-007: Multiple dispatch status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3668,7 +4082,10 @@ fn test_e2e_fiber_scheduler_full_pipeline() {
     let result = compile_to_mir(source);
     match result {
         Ok(mir_bodies) => {
-            assert!(!mir_bodies.is_empty(), "Should generate MIR for fiber scheduler");
+            assert!(
+                !mir_bodies.is_empty(),
+                "Should generate MIR for fiber scheduler"
+            );
             eprintln!("TEST-008: Fiber scheduler MIR: {} bodies", mir_bodies.len());
         }
         Err(e) => {
@@ -3759,11 +4176,17 @@ fn test_stress_rapid_alloc_free_cycles() {
 
             // Count allocations (rough measure of generation usage)
             let alloca_count = llvm_ir.matches("alloca").count();
-            eprintln!("TEST-009: Rapid alloc stress test - {} allocas in IR", alloca_count);
+            eprintln!(
+                "TEST-009: Rapid alloc stress test - {} allocas in IR",
+                alloca_count
+            );
 
             // Verify generation infrastructure is present
             let has_gen_infra = llvm_ir.contains("blood_") || alloca_count > 10;
-            eprintln!("TEST-009: Generation infrastructure present: {}", has_gen_infra);
+            eprintln!(
+                "TEST-009: Generation infrastructure present: {}",
+                has_gen_infra
+            );
         }
         Err(e) => {
             eprintln!("TEST-009: Stress test compilation status: {}", e);
@@ -3789,9 +4212,9 @@ fn test_e2e_stale_reference_panic_integration() {
     match result {
         Ok(llvm_ir) => {
             // Check for stale reference panic path
-            let has_panic = llvm_ir.contains("stale_reference") ||
-                           llvm_ir.contains("gen_stale") ||
-                           llvm_ir.contains("unreachable");
+            let has_panic = llvm_ir.contains("stale_reference")
+                || llvm_ir.contains("gen_stale")
+                || llvm_ir.contains("unreachable");
             eprintln!("TEST-001 variant: Stale panic path present: {}", has_panic);
         }
         Err(e) => {
@@ -3840,13 +4263,20 @@ fn test_ffi_bridge_libc_parsing() {
     match result {
         Ok(program) => {
             // Should have bridge and function declarations
-            assert!(program.declarations.len() >= 2,
-                   "Should parse bridge block and function");
-            eprintln!("FFI-006 libc: {} declarations parsed", program.declarations.len());
+            assert!(
+                program.declarations.len() >= 2,
+                "Should parse bridge block and function"
+            );
+            eprintln!(
+                "FFI-006 libc: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 libc parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 libc parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3886,13 +4316,20 @@ fn test_ffi_bridge_libm_parsing() {
 
     match result {
         Ok(program) => {
-            assert!(program.declarations.len() >= 2,
-                   "Should parse bridge block and function");
-            eprintln!("FFI-006 libm: {} declarations parsed", program.declarations.len());
+            assert!(
+                program.declarations.len() >= 2,
+                "Should parse bridge block and function"
+            );
+            eprintln!(
+                "FFI-006 libm: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 libm parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 libm parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3938,13 +4375,20 @@ fn test_ffi_bridge_struct_parsing() {
 
     match result {
         Ok(program) => {
-            assert!(!program.declarations.is_empty(),
-                   "Should parse bridge with structs");
-            eprintln!("FFI-006 struct: {} declarations parsed", program.declarations.len());
+            assert!(
+                !program.declarations.is_empty(),
+                "Should parse bridge with structs"
+            );
+            eprintln!(
+                "FFI-006 struct: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 struct parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 struct parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -3975,13 +4419,20 @@ fn test_ffi_bridge_enum_parsing() {
 
     match result {
         Ok(program) => {
-            assert!(!program.declarations.is_empty(),
-                   "Should parse bridge with enums");
-            eprintln!("FFI-006 enum: {} declarations parsed", program.declarations.len());
+            assert!(
+                !program.declarations.is_empty(),
+                "Should parse bridge with enums"
+            );
+            eprintln!(
+                "FFI-006 enum: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 enum parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 enum parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -4019,13 +4470,20 @@ fn test_ffi_bridge_callback_parsing() {
 
     match result {
         Ok(program) => {
-            assert!(!program.declarations.is_empty(),
-                   "Should parse bridge with callbacks");
-            eprintln!("FFI-006 callback: {} declarations parsed", program.declarations.len());
+            assert!(
+                !program.declarations.is_empty(),
+                "Should parse bridge with callbacks"
+            );
+            eprintln!(
+                "FFI-006 callback: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 callback parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 callback parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -4051,13 +4509,20 @@ fn test_ffi_variadic_function_parsing() {
 
     match result {
         Ok(program) => {
-            assert!(!program.declarations.is_empty(),
-                   "Should parse bridge with variadic functions");
-            eprintln!("FFI-006 variadic: {} declarations parsed", program.declarations.len());
+            assert!(
+                !program.declarations.is_empty(),
+                "Should parse bridge with variadic functions"
+            );
+            eprintln!(
+                "FFI-006 variadic: {} declarations parsed",
+                program.declarations.len()
+            );
         }
         Err(errors) => {
-            eprintln!("FFI-006 variadic parsing status: {:?}",
-                errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+            eprintln!(
+                "FFI-006 variadic parsing status: {:?}",
+                errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -4065,28 +4530,46 @@ fn test_ffi_variadic_function_parsing() {
 /// FFI-006: Test FFI type checking (safe types)
 #[test]
 fn test_ffi_type_safety_validation() {
-    use bloodc::typeck::ffi::{FfiValidator, FfiSafety};
     use bloodc::hir::Type;
+    use bloodc::typeck::ffi::{FfiSafety, FfiValidator};
 
     let validator = FfiValidator::new();
 
     // Test FFI-safe primitives
-    assert!(validator.validate_type(&Type::i32()).is_safe(), "i32 should be FFI-safe");
-    assert!(validator.validate_type(&Type::i64()).is_safe(), "i64 should be FFI-safe");
-    assert!(validator.validate_type(&Type::f32()).is_safe(), "f32 should be FFI-safe");
-    assert!(validator.validate_type(&Type::f64()).is_safe(), "f64 should be FFI-safe");
-    assert!(validator.validate_type(&Type::unit()).is_safe(), "unit should be FFI-safe");
+    assert!(
+        validator.validate_type(&Type::i32()).is_safe(),
+        "i32 should be FFI-safe"
+    );
+    assert!(
+        validator.validate_type(&Type::i64()).is_safe(),
+        "i64 should be FFI-safe"
+    );
+    assert!(
+        validator.validate_type(&Type::f32()).is_safe(),
+        "f32 should be FFI-safe"
+    );
+    assert!(
+        validator.validate_type(&Type::f64()).is_safe(),
+        "f64 should be FFI-safe"
+    );
+    assert!(
+        validator.validate_type(&Type::unit()).is_safe(),
+        "unit should be FFI-safe"
+    );
 
     // Test FFI-unsafe types
-    assert!(matches!(
-        validator.validate_type(&Type::str()),
-        FfiSafety::Unsafe(_)
-    ), "str should not be FFI-safe");
+    assert!(
+        matches!(validator.validate_type(&Type::str()), FfiSafety::Unsafe(_)),
+        "str should not be FFI-safe"
+    );
 
-    assert!(matches!(
-        validator.validate_type(&Type::string()),
-        FfiSafety::Unsafe(_)
-    ), "String should not be FFI-safe");
+    assert!(
+        matches!(
+            validator.validate_type(&Type::string()),
+            FfiSafety::Unsafe(_)
+        ),
+        "String should not be FFI-safe"
+    );
 
     eprintln!("FFI-006: Type safety validation complete");
 }
@@ -4108,11 +4591,17 @@ fn test_ffi_extern_function_codegen() {
     match result {
         Ok(llvm_ir) => {
             // Check for external function declaration
-            let has_extern = llvm_ir.contains("declare") ||
-                            llvm_ir.contains("external_add") ||
-                            llvm_ir.contains("call");
-            eprintln!("FFI-006: Extern function codegen has external: {}", has_extern);
-            assert!(llvm_ir.contains("define"), "Should generate function definitions");
+            let has_extern = llvm_ir.contains("declare")
+                || llvm_ir.contains("external_add")
+                || llvm_ir.contains("call");
+            eprintln!(
+                "FFI-006: Extern function codegen has external: {}",
+                has_extern
+            );
+            assert!(
+                llvm_ir.contains("define"),
+                "Should generate function definitions"
+            );
         }
         Err(e) => {
             eprintln!("FFI-006: Extern function codegen status: {}", e);
@@ -4139,7 +4628,10 @@ fn test_ffi_unsafe_block_codegen() {
     match result {
         Ok(llvm_ir) => {
             // Should compile successfully
-            assert!(llvm_ir.contains("define"), "Should generate function definitions");
+            assert!(
+                llvm_ir.contains("define"),
+                "Should generate function definitions"
+            );
             eprintln!("FFI-006: Unsafe block codegen successful");
         }
         Err(e) => {
@@ -4163,8 +4655,7 @@ fn check_file_with_modules(file_path: &str) -> Result<bloodc::hir::Crate, Vec<bl
     let program = parser.parse_program()?;
     let interner = parser.take_interner();
 
-    let mut ctx = TypeContext::new(&source, interner)
-        .with_source_path(file_path);
+    let mut ctx = TypeContext::new(&source, interner).with_source_path(file_path);
 
     ctx.resolve_program(&program)?;
     ctx.expand_derives();
@@ -4411,7 +4902,9 @@ fn test_module_not_found_error() {
     let errors = result.unwrap_err();
     assert!(!errors.is_empty(), "Expected at least one error");
 
-    let has_module_error = errors.iter().any(|e| e.message.contains("cannot find module"));
+    let has_module_error = errors
+        .iter()
+        .any(|e| e.message.contains("cannot find module"));
     assert!(
         has_module_error,
         "Expected 'cannot find module' error, got:\n{}",
@@ -4430,7 +4923,10 @@ fn test_module_parse_error() {
     let file_path = "tests/fixtures/modules/parse_error_main.blood";
     let result = check_file_with_modules(file_path);
 
-    assert!(result.is_err(), "Expected error for module with parse error");
+    assert!(
+        result.is_err(),
+        "Expected error for module with parse error"
+    );
 
     let errors = result.unwrap_err();
     assert!(!errors.is_empty(), "Expected at least one error");

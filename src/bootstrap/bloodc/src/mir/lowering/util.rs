@@ -19,20 +19,20 @@ use std::collections::HashMap;
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::diagnostics::Diagnostic;
-use crate::ice;
 use crate::hir::{
-    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, FieldExpr, LocalId,
-    LiteralValue, LoopId, MatchArm, Pattern, PatternKind, RecordFieldExpr, Stmt, Type, TypeKind,
+    self, Body, Crate as HirCrate, DefId, Expr, ExprKind, FieldExpr, LiteralValue, LocalId, LoopId,
+    MatchArm, Pattern, PatternKind, RecordFieldExpr, Stmt, Type, TypeKind,
 };
+use crate::ice;
 use crate::mir::body::MirBodyBuilder;
 use crate::mir::static_evidence::{
-    analyze_handler_state, analyze_handler_allocation_tier,
-    analyze_inline_evidence_mode, InlineEvidenceContext,
+    analyze_handler_allocation_tier, analyze_handler_state, analyze_inline_evidence_mode,
+    InlineEvidenceContext,
 };
 use crate::mir::types::{
-    BasicBlockId, Statement, StatementKind, Terminator, TerminatorKind,
-    Place, PlaceElem, Operand, Rvalue, Constant, ConstantKind, AggregateKind, SwitchTargets,
-    BinOp as MirBinOp, UnOp as MirUnOp,
+    AggregateKind, BasicBlockId, BinOp as MirBinOp, Constant, ConstantKind, Operand, Place,
+    PlaceElem, Rvalue, Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind,
+    UnOp as MirUnOp,
 };
 use crate::span::Span;
 
@@ -127,9 +127,9 @@ pub fn lower_literal_to_constant(lit: &LiteralValue, ty: &Type) -> Constant {
 pub fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
     match &pattern.kind {
         PatternKind::Wildcard => true,
-        PatternKind::Binding { subpattern, .. } => {
-            subpattern.as_ref().map_or(true, |p| is_irrefutable_pattern(p))
-        }
+        PatternKind::Binding { subpattern, .. } => subpattern
+            .as_ref()
+            .map_or(true, |p| is_irrefutable_pattern(p)),
         PatternKind::Tuple(pats) => pats.iter().all(is_irrefutable_pattern),
         PatternKind::Ref { inner, .. } => is_irrefutable_pattern(inner),
         // These patterns are refutable (may not match)
@@ -142,10 +142,14 @@ pub fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
             fields.iter().all(|f| is_irrefutable_pattern(&f.pattern))
         }
         // Slice patterns with a rest element (..) are irrefutable
-        PatternKind::Slice { prefix, slice, suffix } => {
-            slice.is_some() &&
-            prefix.iter().all(is_irrefutable_pattern) &&
-            suffix.iter().all(is_irrefutable_pattern)
+        PatternKind::Slice {
+            prefix,
+            slice,
+            suffix,
+        } => {
+            slice.is_some()
+                && prefix.iter().all(is_irrefutable_pattern)
+                && suffix.iter().all(is_irrefutable_pattern)
         }
     }
 }
@@ -300,7 +304,9 @@ pub trait ExprLowering {
         if let Some(&mir_local) = self.local_map().get(&hir_local) {
             mir_local
         } else {
-            let local = self.body().get_local(hir_local)
+            let local = self
+                .body()
+                .get_local(hir_local)
                 .expect("ICE: HIR local not found in body during MIR lowering");
             let ty = local.ty.clone();
             let span = local.span;
@@ -318,7 +324,8 @@ pub trait ExprLowering {
 
     /// Push a statement to the current block.
     fn push_stmt(&mut self, kind: StatementKind) {
-        self.builder_mut().push_stmt(Statement::new(kind, Span::dummy()));
+        self.builder_mut()
+            .push_stmt(Statement::new(kind, Span::dummy()));
     }
 
     /// Push an assignment statement.
@@ -328,7 +335,8 @@ pub trait ExprLowering {
 
     /// Terminate the current block.
     fn terminate(&mut self, kind: TerminatorKind) {
-        self.builder_mut().terminate(Terminator::new(kind, Span::dummy()));
+        self.builder_mut()
+            .terminate(Terminator::new(kind, Span::dummy()));
     }
 
     /// Check if the current block is terminated.
@@ -384,109 +392,106 @@ pub trait ExprLowering {
                 self.lower_binary(*op, left, right, &expr.ty, expr.span)
             }
 
-            ExprKind::Unary { op, operand } => {
-                self.lower_unary(*op, operand, &expr.ty, expr.span)
-            }
+            ExprKind::Unary { op, operand } => self.lower_unary(*op, operand, &expr.ty, expr.span),
 
-            ExprKind::Call { callee, args } => {
-                self.lower_call(callee, args, &expr.ty, expr.span)
-            }
+            ExprKind::Call { callee, args } => self.lower_call(callee, args, &expr.ty, expr.span),
 
             ExprKind::Block { stmts, expr: tail }
-            | ExprKind::Region { stmts, expr: tail, .. } => {
-                self.lower_block(stmts, tail.as_deref(), &expr.ty, expr.span)
-            }
+            | ExprKind::Region {
+                stmts, expr: tail, ..
+            } => self.lower_block(stmts, tail.as_deref(), &expr.ty, expr.span),
 
-            ExprKind::If { condition, then_branch, else_branch } => {
-                self.lower_if(condition, then_branch, else_branch.as_deref(), &expr.ty, expr.span)
-            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.lower_if(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                &expr.ty,
+                expr.span,
+            ),
 
             ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(scrutinee, arms, &expr.ty, expr.span)
             }
 
-            ExprKind::Loop { body, label } => {
-                self.lower_loop(body, *label, &expr.ty, expr.span)
-            }
+            ExprKind::Loop { body, label } => self.lower_loop(body, *label, &expr.ty, expr.span),
 
-            ExprKind::While { condition, body, label } => {
-                self.lower_while(condition, body, *label, &expr.ty, expr.span)
-            }
+            ExprKind::While {
+                condition,
+                body,
+                label,
+            } => self.lower_while(condition, body, *label, &expr.ty, expr.span),
 
             ExprKind::Break { label, value } => {
                 self.lower_break(*label, value.as_deref(), expr.span)
             }
 
-            ExprKind::Continue { label } => {
-                self.lower_continue(*label, expr.span)
-            }
+            ExprKind::Continue { label } => self.lower_continue(*label, expr.span),
 
-            ExprKind::Return(value) => {
-                self.lower_return(value.as_deref(), expr.span)
-            }
+            ExprKind::Return(value) => self.lower_return(value.as_deref(), expr.span),
 
-            ExprKind::Assign { target, value } => {
-                self.lower_assign(target, value, expr.span)
-            }
+            ExprKind::Assign { target, value } => self.lower_assign(target, value, expr.span),
 
-            ExprKind::Tuple(elems) => {
-                self.lower_tuple(elems, &expr.ty, expr.span)
-            }
+            ExprKind::Tuple(elems) => self.lower_tuple(elems, &expr.ty, expr.span),
 
-            ExprKind::Array(elems) => {
-                self.lower_array(elems, &expr.ty, expr.span)
-            }
+            ExprKind::Array(elems) => self.lower_array(elems, &expr.ty, expr.span),
 
-            ExprKind::Struct { def_id, fields, base } => {
-                self.lower_struct(*def_id, fields, base.as_deref(), &expr.ty, expr.span)
-            }
+            ExprKind::Struct {
+                def_id,
+                fields,
+                base,
+            } => self.lower_struct(*def_id, fields, base.as_deref(), &expr.ty, expr.span),
 
             ExprKind::Field { base, field_idx } => {
                 self.lower_field(base, *field_idx, &expr.ty, expr.span)
             }
 
-            ExprKind::Index { base, index } => {
-                self.lower_index(base, index, &expr.ty, expr.span)
-            }
+            ExprKind::Index { base, index } => self.lower_index(base, index, &expr.ty, expr.span),
 
-            ExprKind::Borrow { expr: inner, mutable } => {
-                self.lower_borrow(inner, *mutable, &expr.ty, expr.span)
-            }
+            ExprKind::Borrow {
+                expr: inner,
+                mutable,
+            } => self.lower_borrow(inner, *mutable, &expr.ty, expr.span),
 
-            ExprKind::Deref(inner) => {
-                self.lower_deref(inner, &expr.ty, expr.span)
-            }
+            ExprKind::Deref(inner) => self.lower_deref(inner, &expr.ty, expr.span),
 
-            ExprKind::Cast { expr: inner, target_ty } => {
-                self.lower_cast(inner, target_ty, expr.span)
-            }
+            ExprKind::Cast {
+                expr: inner,
+                target_ty,
+            } => self.lower_cast(inner, target_ty, expr.span),
 
             ExprKind::Repeat { value, count } => {
                 self.lower_repeat(value, *count, &expr.ty, expr.span)
             }
 
-            ExprKind::Variant { def_id, variant_idx, fields } => {
-                self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span)
-            }
+            ExprKind::Variant {
+                def_id,
+                variant_idx,
+                fields,
+            } => self.lower_variant(*def_id, *variant_idx, fields, &expr.ty, expr.span),
 
             ExprKind::Closure { body_id, captures } => {
                 self.lower_closure(*body_id, captures, &expr.ty, expr.span)
             }
 
-            ExprKind::AddrOf { expr: inner, mutable } => {
-                self.lower_addr_of(inner, *mutable, &expr.ty, expr.span)
-            }
+            ExprKind::AddrOf {
+                expr: inner,
+                mutable,
+            } => self.lower_addr_of(inner, *mutable, &expr.ty, expr.span),
 
-            ExprKind::Let { pattern, init } => {
-                self.lower_let(pattern, init, &expr.ty, expr.span)
-            }
+            ExprKind::Let { pattern, init } => self.lower_let(pattern, init, &expr.ty, expr.span),
 
-            ExprKind::Unsafe(inner)
-            | ExprKind::Heap(inner)
-            | ExprKind::Stack(inner) => {
+            ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
-            ExprKind::Unchecked { ref checks, ref when_condition, body } => {
+            ExprKind::Unchecked {
+                ref checks,
+                ref when_condition,
+                body,
+            } => {
                 let condition_met = match when_condition.as_deref() {
                     Some("release") => self.is_release(),
                     Some(_) => true,
@@ -503,29 +508,38 @@ pub trait ExprLowering {
                 }
             }
 
-            ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {
-                self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span)
-            }
+            ExprKind::Perform {
+                effect_id,
+                op_index,
+                args,
+                type_args: _,
+            } => self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span),
 
-            ExprKind::Resume { value } => {
-                self.lower_resume(value.as_deref(), expr.span)
-            }
+            ExprKind::Resume { value } => self.lower_resume(value.as_deref(), expr.span),
 
-            ExprKind::Handle { body, handler_id, handler_instance } => {
-                self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span)
-            }
+            ExprKind::Handle {
+                body,
+                handler_id,
+                handler_instance,
+            } => self.lower_handle(body, *handler_id, handler_instance, &expr.ty, expr.span),
 
             ExprKind::InlineHandle { body, handlers } => {
                 self.lower_inline_handle(body, handlers, &expr.ty, expr.span)
             }
 
-            ExprKind::Range { start, end, inclusive } => {
-                self.lower_range(start.as_deref(), end.as_deref(), *inclusive, &expr.ty, expr.span)
-            }
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.lower_range(
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+                &expr.ty,
+                expr.span,
+            ),
 
-            ExprKind::Record { fields } => {
-                self.lower_record(fields, &expr.ty, expr.span)
-            }
+            ExprKind::Record { fields } => self.lower_record(fields, &expr.ty, expr.span),
 
             ExprKind::Default => {
                 let temp = self.new_temp(expr.ty.clone(), expr.span);
@@ -546,58 +560,48 @@ pub trait ExprLowering {
                 Ok(Operand::Copy(Place::local(temp)))
             }
 
-            ExprKind::Error => {
-                Err(vec![Diagnostic::error("lowering error expression".to_string(), expr.span)])
-            }
+            ExprKind::Error => Err(vec![Diagnostic::error(
+                "lowering error expression".to_string(),
+                expr.span,
+            )]),
 
-            ExprKind::MethodCall { .. } => {
-                Err(vec![Diagnostic::error(
-                    "MIR lowering: method calls should be desugared before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
+            ExprKind::MethodCall { .. } => Err(vec![Diagnostic::error(
+                "MIR lowering: method calls should be desugared before MIR lowering".to_string(),
+                expr.span,
+            )]),
 
-            ExprKind::MethodFamily { name, candidates } => {
-                Err(vec![Diagnostic::error(
-                    format!(
-                        "cannot reference method family '{}' without a call (has {} overloads)",
-                        name,
-                        candidates.len()
-                    ),
-                    expr.span,
-                )])
-            }
+            ExprKind::MethodFamily { name, candidates } => Err(vec![Diagnostic::error(
+                format!(
+                    "cannot reference method family '{}' without a call (has {} overloads)",
+                    name,
+                    candidates.len()
+                ),
+                expr.span,
+            )]),
 
-            ExprKind::MacroExpansion { macro_name, .. } => {
-                Err(vec![Diagnostic::error(
-                    format!("macro expansion '{}!' should be expanded before MIR lowering", macro_name),
-                    expr.span,
-                )])
-            }
-            ExprKind::VecLiteral(_) => {
-                Err(vec![Diagnostic::error(
-                    "vec! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::VecRepeat { .. } => {
-                Err(vec![Diagnostic::error(
-                    "vec! repeat macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::Assert { .. } => {
-                Err(vec![Diagnostic::error(
-                    "assert! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
-            ExprKind::Dbg(_) => {
-                Err(vec![Diagnostic::error(
-                    "dbg! macro should be expanded before MIR lowering".to_string(),
-                    expr.span,
-                )])
-            }
+            ExprKind::MacroExpansion { macro_name, .. } => Err(vec![Diagnostic::error(
+                format!(
+                    "macro expansion '{}!' should be expanded before MIR lowering",
+                    macro_name
+                ),
+                expr.span,
+            )]),
+            ExprKind::VecLiteral(_) => Err(vec![Diagnostic::error(
+                "vec! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::VecRepeat { .. } => Err(vec![Diagnostic::error(
+                "vec! repeat macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::Assert { .. } => Err(vec![Diagnostic::error(
+                "assert! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
+            ExprKind::Dbg(_) => Err(vec![Diagnostic::error(
+                "dbg! macro should be expanded before MIR lowering".to_string(),
+                expr.span,
+            )]),
 
             ExprKind::SliceLen(slice_expr) => {
                 // Lower slice/array length to Rvalue::Len
@@ -644,7 +648,10 @@ pub trait ExprLowering {
                 Ok(Operand::Copy(Place::local(len_temp)))
             }
 
-            ExprKind::ArrayToSlice { expr: array_expr, array_len } => {
+            ExprKind::ArrayToSlice {
+                expr: array_expr,
+                array_len,
+            } => {
                 // Lower array-to-slice coercion: &[T; N] -> &[T]
                 let array_ref_op = self.lower_expr(array_expr)?;
 
@@ -956,7 +963,10 @@ pub trait ExprLowering {
             let else_val = self.lower_expr(else_expr)?;
             self.push_assign(Place::local(result), Rvalue::Use(else_val));
         } else {
-            self.push_assign(Place::local(result), Rvalue::Use(Operand::Constant(Constant::unit())));
+            self.push_assign(
+                Place::local(result),
+                Rvalue::Use(Operand::Constant(Constant::unit())),
+            );
         }
         if !self.is_terminated() {
             self.terminate(TerminatorKind::Goto { target: join_block });
@@ -983,11 +993,14 @@ pub trait ExprLowering {
         let result = self.new_temp(ty.clone(), span);
 
         // Push loop context
-        self.push_loop_context(label, LoopContextInfo {
-            break_block: exit_block,
-            continue_block: loop_block,
-            result_place: Some(Place::local(result)),
-        });
+        self.push_loop_context(
+            label,
+            LoopContextInfo {
+                break_block: exit_block,
+                continue_block: loop_block,
+                result_place: Some(Place::local(result)),
+            },
+        );
 
         // Jump to loop
         self.terminate(TerminatorKind::Goto { target: loop_block });
@@ -1028,11 +1041,14 @@ pub trait ExprLowering {
         let result = self.new_temp(ty.clone(), span);
 
         // Push loop context
-        self.push_loop_context(label, LoopContextInfo {
-            break_block: exit_block,
-            continue_block: cond_block,
-            result_place: Some(Place::local(result)),
-        });
+        self.push_loop_context(
+            label,
+            LoopContextInfo {
+                break_block: exit_block,
+                continue_block: cond_block,
+                result_place: Some(Place::local(result)),
+            },
+        );
 
         // Jump to condition
         self.terminate(TerminatorKind::Goto { target: cond_block });
@@ -1080,9 +1096,14 @@ pub trait ExprLowering {
                     self.push_assign(rp.clone(), Rvalue::Use(val));
                 }
             }
-            self.terminate(TerminatorKind::Goto { target: ctx.break_block });
+            self.terminate(TerminatorKind::Goto {
+                target: ctx.break_block,
+            });
         } else {
-            return Err(vec![Diagnostic::error("break outside of loop".to_string(), span)]);
+            return Err(vec![Diagnostic::error(
+                "break outside of loop".to_string(),
+                span,
+            )]);
         }
 
         // Unreachable after break
@@ -1102,9 +1123,14 @@ pub trait ExprLowering {
         let ctx = self.get_loop_context(label);
 
         if let Some(ctx) = ctx {
-            self.terminate(TerminatorKind::Goto { target: ctx.continue_block });
+            self.terminate(TerminatorKind::Goto {
+                target: ctx.continue_block,
+            });
         } else {
-            return Err(vec![Diagnostic::error("continue outside of loop".to_string(), span)]);
+            return Err(vec![Diagnostic::error(
+                "continue outside of loop".to_string(),
+                span,
+            )]);
         }
 
         let next = self.builder_mut().new_block();
@@ -1126,7 +1152,10 @@ pub trait ExprLowering {
             let val = self.lower_expr(value)?;
             self.push_assign(return_place, Rvalue::Use(val));
         } else {
-            self.push_assign(return_place, Rvalue::Use(Operand::Constant(Constant::unit())));
+            self.push_assign(
+                return_place,
+                Rvalue::Use(Operand::Constant(Constant::unit())),
+            );
         }
 
         self.terminate(TerminatorKind::Return);
@@ -1414,10 +1443,7 @@ pub trait ExprLowering {
     ) -> Result<Operand, Vec<Diagnostic>> {
         let place = self.lower_place(inner)?;
         let temp = self.new_temp(ty.clone(), span);
-        self.push_assign(
-            Place::local(temp),
-            Rvalue::AddressOf { place, mutable },
-        );
+        self.push_assign(Place::local(temp), Rvalue::AddressOf { place, mutable });
         Ok(Operand::Copy(Place::local(temp)))
     }
 
@@ -1486,7 +1512,8 @@ pub trait ExprLowering {
             };
 
             // Collect explicitly provided field indices and their lowered values
-            let mut explicit_fields: std::collections::HashMap<u32, Operand> = std::collections::HashMap::new();
+            let mut explicit_fields: std::collections::HashMap<u32, Operand> =
+                std::collections::HashMap::new();
             for field in fields {
                 let value_operand = self.lower_expr(&field.value)?;
                 explicit_fields.insert(field.field_idx, value_operand);
@@ -1510,7 +1537,10 @@ pub trait ExprLowering {
                         },
                     };
                     let field_temp = self.new_temp(field_ty.clone(), span);
-                    self.push_assign(Place::local(field_temp), Rvalue::Use(Operand::Copy(field_place)));
+                    self.push_assign(
+                        Place::local(field_temp),
+                        Rvalue::Use(Operand::Copy(field_place)),
+                    );
                     Operand::Copy(Place::local(field_temp))
                 };
                 all_operands.push(operand);
@@ -1566,8 +1596,8 @@ pub trait ExprLowering {
     ///
     /// If the struct is generic, type_args provides the concrete types to substitute.
     fn get_struct_field_type(&self, def_id: DefId, field_idx: u32, type_args: &[Type]) -> Type {
-        use crate::hir::{ItemKind, StructKind, GenericParamKind};
         use crate::hir::ty::TyVarId;
+        use crate::hir::{GenericParamKind, ItemKind, StructKind};
 
         if let Some(item) = self.hir().get_item(def_id) {
             if let ItemKind::Struct(struct_def) = &item.kind {
@@ -1583,7 +1613,8 @@ pub trait ExprLowering {
                     if !type_args.is_empty() && !struct_def.generics.params.is_empty() {
                         // Collect type parameter indices by matching GenericParamKind::Type
                         let mut type_param_idx = 0usize;
-                        let mut subst: std::collections::HashMap<TyVarId, Type> = std::collections::HashMap::new();
+                        let mut subst: std::collections::HashMap<TyVarId, Type> =
+                            std::collections::HashMap::new();
 
                         for param in &struct_def.generics.params {
                             if matches!(param.kind, GenericParamKind::Type { .. }) {
@@ -1611,15 +1642,18 @@ pub trait ExprLowering {
     }
 
     /// Substitute type parameters in a type.
-    fn substitute_type(&self, ty: &Type, subst: &std::collections::HashMap<crate::hir::ty::TyVarId, Type>) -> Type {
+    fn substitute_type(
+        &self,
+        ty: &Type,
+        subst: &std::collections::HashMap<crate::hir::ty::TyVarId, Type>,
+    ) -> Type {
         use crate::hir::ty::TypeKind;
 
         match ty.kind() {
-            TypeKind::Param(id) => {
-                subst.get(id).cloned().unwrap_or_else(|| ty.clone())
-            }
+            TypeKind::Param(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
             TypeKind::Adt { def_id, args } => {
-                let new_args: Vec<Type> = args.iter()
+                let new_args: Vec<Type> = args
+                    .iter()
                     .map(|arg| self.substitute_type(arg, subst))
                     .collect();
                 Type::adt(*def_id, new_args)
@@ -1630,40 +1664,62 @@ pub trait ExprLowering {
             TypeKind::Array { element, size } => {
                 Type::array_with_const(self.substitute_type(element, subst), size.clone())
             }
-            TypeKind::Slice { element } => {
-                Type::slice(self.substitute_type(element, subst))
-            }
+            TypeKind::Slice { element } => Type::slice(self.substitute_type(element, subst)),
             TypeKind::Tuple(elements) => {
-                let new_elements: Vec<Type> = elements.iter()
+                let new_elements: Vec<Type> = elements
+                    .iter()
                     .map(|e| self.substitute_type(e, subst))
                     .collect();
                 Type::tuple(new_elements)
             }
-            TypeKind::Fn { params, ret, effects, const_args } => {
-                let new_params: Vec<Type> = params.iter()
+            TypeKind::Fn {
+                params,
+                ret,
+                effects,
+                const_args,
+            } => {
+                let new_params: Vec<Type> = params
+                    .iter()
                     .map(|p| self.substitute_type(p, subst))
                     .collect();
                 let new_ret = self.substitute_type(ret, subst);
-                Type::new(TypeKind::Fn { params: new_params, ret: new_ret, effects: effects.clone(), const_args: const_args.clone() })
+                Type::new(TypeKind::Fn {
+                    params: new_params,
+                    ret: new_ret,
+                    effects: effects.clone(),
+                    const_args: const_args.clone(),
+                })
             }
-            TypeKind::Closure { def_id, params, ret } => {
-                let new_params: Vec<Type> = params.iter()
+            TypeKind::Closure {
+                def_id,
+                params,
+                ret,
+            } => {
+                let new_params: Vec<Type> = params
+                    .iter()
                     .map(|p| self.substitute_type(p, subst))
                     .collect();
                 let new_ret = self.substitute_type(ret, subst);
-                Type::new(TypeKind::Closure { def_id: *def_id, params: new_params, ret: new_ret })
+                Type::new(TypeKind::Closure {
+                    def_id: *def_id,
+                    params: new_params,
+                    ret: new_ret,
+                })
             }
-            TypeKind::Ptr { inner, mutable } => {
-                Type::new(TypeKind::Ptr { inner: self.substitute_type(inner, subst), mutable: *mutable })
-            }
-            TypeKind::Range { element, inclusive } => {
-                Type::new(TypeKind::Range { element: self.substitute_type(element, subst), inclusive: *inclusive })
-            }
+            TypeKind::Ptr { inner, mutable } => Type::new(TypeKind::Ptr {
+                inner: self.substitute_type(inner, subst),
+                mutable: *mutable,
+            }),
+            TypeKind::Range { element, inclusive } => Type::new(TypeKind::Range {
+                element: self.substitute_type(element, subst),
+                inclusive: *inclusive,
+            }),
             TypeKind::Ownership { qualifier, inner } => {
                 Type::ownership(*qualifier, self.substitute_type(inner, subst))
             }
             TypeKind::Record { fields, row_var } => {
-                let new_fields: Vec<_> = fields.iter()
+                let new_fields: Vec<_> = fields
+                    .iter()
                     .map(|f| crate::hir::ty::RecordField {
                         name: f.name,
                         ty: self.substitute_type(&f.ty, subst),
@@ -1779,7 +1835,10 @@ pub trait ExprLowering {
         self.push_assign(
             dest_place.clone(),
             Rvalue::Aggregate {
-                kind: AggregateKind::Range { element: elem_ty, inclusive },
+                kind: AggregateKind::Range {
+                    element: elem_ty,
+                    inclusive,
+                },
                 operands,
             },
         );
@@ -1842,7 +1901,9 @@ pub trait ExprLowering {
         // Create unreachable block (resume doesn't return normally)
         let unreachable_block = self.builder_mut().new_block();
 
-        self.terminate(TerminatorKind::Resume { value: Some(resume_value) });
+        self.terminate(TerminatorKind::Resume {
+            value: Some(resume_value),
+        });
 
         self.builder_mut().switch_to(unreachable_block);
         *self.current_block_mut() = unreachable_block;
@@ -1898,7 +1959,9 @@ pub trait ExprLowering {
 
         // Step 5: Call the return clause to transform the body result
         // The return clause function is {handler_name}_return (content-based naming)
-        let handler_name = self.hir().get_item(handler_id)
+        let handler_name = self
+            .hir()
+            .get_item(handler_id)
             .map(|item| item.name.clone())
             .unwrap_or_else(|| format!("unknown_handler_{}", handler_id.index));
         let dest = self.new_temp(ty.clone(), span);
@@ -1949,10 +2012,13 @@ pub trait ExprLowering {
             *self.closure_counter_mut() += 1;
             let synthetic_fn_def_id = DefId::new(0xFFFE_0000 + synthetic_id);
 
-            let op_index = self.hir().get_item(handler.effect_id)
+            let op_index = self
+                .hir()
+                .get_item(handler.effect_id)
                 .and_then(|item| {
                     if let hir::ItemKind::Effect { operations, .. } = &item.kind {
-                        operations.iter()
+                        operations
+                            .iter()
                             .position(|op| op.name == handler.op_name)
                             .map(|i| i as u32)
                     } else {
@@ -2033,7 +2099,10 @@ pub trait ExprLowering {
                 let inner_place = self.lower_place(inner)?;
                 Ok(inner_place.project(PlaceElem::Deref))
             }
-            ExprKind::Unary { op: UnaryOp::Deref, operand } => {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
                 let inner_place = self.lower_place(operand)?;
                 Ok(inner_place.project(PlaceElem::Deref))
             }
@@ -2146,16 +2215,24 @@ pub trait ExprLowering {
     }
 
     /// Test a pattern against a place, returning a boolean operand.
-    fn test_pattern(&mut self, pattern: &Pattern, place: &Place) -> Result<Operand, Vec<Diagnostic>> {
+    fn test_pattern(
+        &mut self,
+        pattern: &Pattern,
+        place: &Place,
+    ) -> Result<Operand, Vec<Diagnostic>> {
         match &pattern.kind {
-            PatternKind::Wildcard => {
-                Ok(Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true))))
-            }
+            PatternKind::Wildcard => Ok(Operand::Constant(Constant::new(
+                Type::bool(),
+                ConstantKind::Bool(true),
+            ))),
             PatternKind::Binding { subpattern, .. } => {
                 if let Some(sub) = subpattern {
                     self.test_pattern(sub, place)
                 } else {
-                    Ok(Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true))))
+                    Ok(Operand::Constant(Constant::new(
+                        Type::bool(),
+                        ConstantKind::Bool(true),
+                    )))
                 }
             }
             PatternKind::Literal(lit) => {
@@ -2174,24 +2251,33 @@ pub trait ExprLowering {
                 );
                 Ok(Operand::Copy(Place::local(result)))
             }
-            PatternKind::Tuple(pats) => {
-                self.test_pattern_tuple(pats, place, pattern.span)
-            }
-            PatternKind::Variant { variant_idx, fields, .. } => {
-                self.test_pattern_variant(*variant_idx, fields, place, pattern.span)
-            }
+            PatternKind::Tuple(pats) => self.test_pattern_tuple(pats, place, pattern.span),
+            PatternKind::Variant {
+                variant_idx,
+                fields,
+                ..
+            } => self.test_pattern_variant(*variant_idx, fields, place, pattern.span),
             PatternKind::Struct { fields, .. } => {
                 self.test_pattern_struct(fields, place, pattern.span)
             }
-            PatternKind::Or(alts) => {
-                self.test_pattern_or(alts, place, pattern.span)
-            }
-            PatternKind::Slice { prefix, slice, suffix } => {
-                self.test_pattern_slice(prefix, slice.as_deref(), suffix, place, pattern.span)
-            }
-            PatternKind::Range { start, end, inclusive } => {
-                self.test_pattern_range(start.as_deref(), end.as_deref(), *inclusive, place, &pattern.ty, pattern.span)
-            }
+            PatternKind::Or(alts) => self.test_pattern_or(alts, place, pattern.span),
+            PatternKind::Slice {
+                prefix,
+                slice,
+                suffix,
+            } => self.test_pattern_slice(prefix, slice.as_deref(), suffix, place, pattern.span),
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.test_pattern_range(
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+                place,
+                &pattern.ty,
+                pattern.span,
+            ),
             PatternKind::Ref { inner, .. } => {
                 let deref_place = place.project(PlaceElem::Deref);
                 self.test_pattern(inner, &deref_place)
@@ -2207,7 +2293,10 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         if pats.is_empty() {
-            return Ok(Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true))));
+            return Ok(Operand::Constant(Constant::new(
+                Type::bool(),
+                ConstantKind::Bool(true),
+            )));
         }
 
         let mut result = self.test_pattern(&pats[0], &place.project(PlaceElem::Field(0)))?;
@@ -2241,9 +2330,15 @@ pub trait ExprLowering {
     ) -> Result<Operand, Vec<Diagnostic>> {
         // First check discriminant using Rvalue::Discriminant
         let discr_temp = self.new_temp(Type::u32(), span);
-        self.push_assign(Place::local(discr_temp), Rvalue::Discriminant(place.clone()));
+        self.push_assign(
+            Place::local(discr_temp),
+            Rvalue::Discriminant(place.clone()),
+        );
 
-        let expected = Operand::Constant(Constant::new(Type::u32(), ConstantKind::Int(variant_idx as i128)));
+        let expected = Operand::Constant(Constant::new(
+            Type::u32(),
+            ConstantKind::Int(variant_idx as i128),
+        ));
 
         let discr_matches = self.new_temp(Type::bool(), span);
         self.push_assign(
@@ -2290,7 +2385,10 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         if fields.is_empty() {
-            return Ok(Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true))));
+            return Ok(Operand::Constant(Constant::new(
+                Type::bool(),
+                ConstantKind::Bool(true),
+            )));
         }
 
         let mut result = self.test_pattern(
@@ -2325,7 +2423,10 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
         if alts.is_empty() {
-            return Ok(Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(false))));
+            return Ok(Operand::Constant(Constant::new(
+                Type::bool(),
+                ConstantKind::Bool(false),
+            )));
         }
 
         let mut result = self.test_pattern(&alts[0], place)?;
@@ -2364,7 +2465,10 @@ pub trait ExprLowering {
         self.push_assign(Place::local(len_temp), Rvalue::Len(place.clone()));
 
         // Check minimum length
-        let min_len_const = Operand::Constant(Constant::new(Type::u64(), ConstantKind::Int(min_len as i128)));
+        let min_len_const = Operand::Constant(Constant::new(
+            Type::u64(),
+            ConstantKind::Int(min_len as i128),
+        ));
 
         let len_check = if slice.is_some() {
             // With rest pattern: length >= min_len
@@ -2496,7 +2600,11 @@ pub trait ExprLowering {
         if let Some(end_pat) = end {
             if let PatternKind::Literal(lit) = &end_pat.kind {
                 let end_const = lower_literal_to_constant(lit, ty);
-                let end_op = if inclusive { MirBinOp::Le } else { MirBinOp::Lt };
+                let end_op = if inclusive {
+                    MirBinOp::Le
+                } else {
+                    MirBinOp::Lt
+                };
                 let end_check = self.new_temp(Type::bool(), span);
                 self.push_assign(
                     Place::local(end_check),
@@ -2524,7 +2632,9 @@ pub trait ExprLowering {
             }
         }
 
-        Ok(result.unwrap_or_else(|| Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true)))))
+        Ok(result.unwrap_or_else(|| {
+            Operand::Constant(Constant::new(Type::bool(), ConstantKind::Bool(true)))
+        }))
     }
 
     /// Bind pattern variables to a place.
@@ -2533,7 +2643,12 @@ pub trait ExprLowering {
             PatternKind::Wildcard => {
                 // Nothing to bind
             }
-            PatternKind::Binding { local_id, mutable, by_ref, subpattern } => {
+            PatternKind::Binding {
+                local_id,
+                mutable,
+                by_ref,
+                subpattern,
+            } => {
                 let mir_local = self.map_local(*local_id);
 
                 if *by_ref {
@@ -2575,14 +2690,22 @@ pub trait ExprLowering {
                     self.bind_pattern(&field.pattern, &field_place)?;
                 }
             }
-            PatternKind::Variant { variant_idx, fields, .. } => {
+            PatternKind::Variant {
+                variant_idx,
+                fields,
+                ..
+            } => {
                 let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
                 for (i, field_pat) in fields.iter().enumerate() {
                     let field_place = variant_place.project(PlaceElem::Field(i as u32));
                     self.bind_pattern(field_pat, &field_place)?;
                 }
             }
-            PatternKind::Slice { prefix, slice, suffix } => {
+            PatternKind::Slice {
+                prefix,
+                slice,
+                suffix,
+            } => {
                 let min_length = (prefix.len() + suffix.len()) as u64;
 
                 for (i, pat) in prefix.iter().enumerate() {
@@ -2688,7 +2811,11 @@ pub trait ExprLowering {
                 });
             }
 
-            PatternKind::Variant { variant_idx, fields, .. } => {
+            PatternKind::Variant {
+                variant_idx,
+                fields,
+                ..
+            } => {
                 // Get discriminant and compare with expected variant
                 let discr_temp = self.new_temp(Type::i32(), span);
                 self.push_assign(
@@ -2720,7 +2847,13 @@ pub trait ExprLowering {
                     self.builder_mut().switch_to(fields_test_block);
                     *self.current_block_mut() = fields_test_block;
                     let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
-                    self.test_pattern_fields_cf(fields, &variant_place, on_match, on_no_match, span)?;
+                    self.test_pattern_fields_cf(
+                        fields,
+                        &variant_place,
+                        on_match,
+                        on_no_match,
+                        span,
+                    )?;
                 }
             }
 
@@ -2731,16 +2864,22 @@ pub trait ExprLowering {
 
             PatternKind::Struct { fields, .. } => {
                 // Test each field pattern sequentially
-                let field_pats: Vec<_> = fields.iter()
-                    .map(|f| (f.field_idx, &f.pattern))
-                    .collect();
-                self.test_pattern_struct_fields_cf(&field_pats, place, on_match, on_no_match, span)?;
+                let field_pats: Vec<_> = fields.iter().map(|f| (f.field_idx, &f.pattern)).collect();
+                self.test_pattern_struct_fields_cf(
+                    &field_pats,
+                    place,
+                    on_match,
+                    on_no_match,
+                    span,
+                )?;
             }
 
             PatternKind::Or(alternatives) => {
                 // Try each alternative; succeed if any matches
                 if alternatives.is_empty() {
-                    self.terminate(TerminatorKind::Goto { target: on_no_match });
+                    self.terminate(TerminatorKind::Goto {
+                        target: on_no_match,
+                    });
                 } else {
                     self.test_pattern_or_cf(alternatives, place, on_match, on_no_match, span)?;
                 }
@@ -2752,12 +2891,28 @@ pub trait ExprLowering {
                 self.test_pattern_cf(inner, &deref_place, on_match, on_no_match, span)?;
             }
 
-            PatternKind::Slice { prefix, slice, suffix } => {
+            PatternKind::Slice {
+                prefix,
+                slice,
+                suffix,
+            } => {
                 // For slices, check length first, then test element patterns
-                self.test_pattern_slice_cf(prefix, slice, suffix, place, on_match, on_no_match, span)?;
+                self.test_pattern_slice_cf(
+                    prefix,
+                    slice,
+                    suffix,
+                    place,
+                    on_match,
+                    on_no_match,
+                    span,
+                )?;
             }
 
-            PatternKind::Range { start, end, inclusive } => {
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 // Range pattern: check if value is within range
                 let value_operand = Operand::Copy(place.clone());
 
@@ -2785,7 +2940,11 @@ pub trait ExprLowering {
                     if let PatternKind::Literal(lit) = &end_pat.kind {
                         let end_const = lower_literal_to_constant(lit, &pattern.ty);
                         let cmp_result = self.new_temp(Type::bool(), span);
-                        let cmp_op = if *inclusive { MirBinOp::Le } else { MirBinOp::Lt };
+                        let cmp_op = if *inclusive {
+                            MirBinOp::Le
+                        } else {
+                            MirBinOp::Lt
+                        };
                         self.push_assign(
                             Place::local(cmp_result),
                             Rvalue::BinaryOp {
@@ -2839,7 +2998,9 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<(), Vec<Diagnostic>> {
         if pats.is_empty() {
-            self.terminate(TerminatorKind::Goto { target: final_match });
+            self.terminate(TerminatorKind::Goto {
+                target: final_match,
+            });
             return Ok(());
         }
 
@@ -2877,7 +3038,9 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<(), Vec<Diagnostic>> {
         if pats.is_empty() {
-            self.terminate(TerminatorKind::Goto { target: final_match });
+            self.terminate(TerminatorKind::Goto {
+                target: final_match,
+            });
             return Ok(());
         }
 
@@ -2913,7 +3076,9 @@ pub trait ExprLowering {
         span: Span,
     ) -> Result<(), Vec<Diagnostic>> {
         if fields.is_empty() {
-            self.terminate(TerminatorKind::Goto { target: final_match });
+            self.terminate(TerminatorKind::Goto {
+                target: final_match,
+            });
             return Ok(());
         }
 
@@ -2982,10 +3147,7 @@ pub trait ExprLowering {
 
         // Check length first
         let len_temp = self.new_temp(Type::usize(), span);
-        self.push_assign(
-            Place::local(len_temp),
-            Rvalue::Len(place.clone()),
-        );
+        self.push_assign(Place::local(len_temp), Rvalue::Len(place.clone()));
 
         // Compare length
         let len_ok = self.new_temp(Type::bool(), span);
@@ -3093,7 +3255,12 @@ pub trait ExprLowering {
     /// which is needed for proper pattern binding in match arms.
     fn bind_pattern_cf(&mut self, pattern: &Pattern, place: &Place) -> Result<(), Vec<Diagnostic>> {
         match &pattern.kind {
-            PatternKind::Binding { local_id, mutable, by_ref, subpattern } => {
+            PatternKind::Binding {
+                local_id,
+                mutable,
+                by_ref,
+                subpattern,
+            } => {
                 // For `ref` bindings, the local type is a reference to the pattern type.
                 // For regular bindings, the local type is the pattern type itself.
                 let local_ty = if *by_ref {
@@ -3144,14 +3311,22 @@ pub trait ExprLowering {
             PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Range { .. } => {
                 // Nothing to bind
             }
-            PatternKind::Variant { variant_idx, fields, .. } => {
+            PatternKind::Variant {
+                variant_idx,
+                fields,
+                ..
+            } => {
                 let variant_place = place.project(PlaceElem::Downcast(*variant_idx));
                 for (i, field_pat) in fields.iter().enumerate() {
                     let field_place = variant_place.project(PlaceElem::Field(i as u32));
                     self.bind_pattern_cf(field_pat, &field_place)?;
                 }
             }
-            PatternKind::Slice { prefix, slice, suffix } => {
+            PatternKind::Slice {
+                prefix,
+                slice,
+                suffix,
+            } => {
                 let min_length = (prefix.len() + suffix.len()) as u64;
 
                 for (i, pat) in prefix.iter().enumerate() {
@@ -3237,7 +3412,9 @@ pub trait ExprLowering {
                 }
             };
 
-            let capture_ty = self.body().get_local(capture.local_id)
+            let capture_ty = self
+                .body()
+                .get_local(capture.local_id)
                 .map(|l| l.ty.clone())
                 .unwrap_or_else(Type::error);
 
@@ -3245,16 +3422,15 @@ pub trait ExprLowering {
             captures_with_types.push((capture.clone(), capture_ty));
         }
 
-        self.pending_closures_mut().push((body_id, closure_def_id, captures_with_types));
+        self.pending_closures_mut()
+            .push((body_id, closure_def_id, captures_with_types));
 
         let closure_ty = match ty.kind() {
-            TypeKind::Fn { params, ret, .. } => {
-                Type::new(TypeKind::Closure {
-                    def_id: closure_def_id,
-                    params: params.clone(),
-                    ret: ret.clone(),
-                })
-            }
+            TypeKind::Fn { params, ret, .. } => Type::new(TypeKind::Closure {
+                def_id: closure_def_id,
+                params: params.clone(),
+                ret: ret.clone(),
+            }),
             _ => ty.clone(),
         };
 
@@ -3263,7 +3439,9 @@ pub trait ExprLowering {
         self.push_assign(
             Place::local(temp),
             Rvalue::Aggregate {
-                kind: AggregateKind::Closure { def_id: closure_def_id },
+                kind: AggregateKind::Closure {
+                    def_id: closure_def_id,
+                },
                 operands: capture_operands,
             },
         );
@@ -3411,24 +3589,20 @@ mod tests {
         // Struct with all irrefutable field patterns is irrefutable
         let pat = make_pattern(PatternKind::Struct {
             def_id: DefId::new(1),
-            fields: vec![
-                FieldPattern {
-                    field_idx: 0,
-                    pattern: make_pattern(PatternKind::Wildcard),
-                },
-            ],
+            fields: vec![FieldPattern {
+                field_idx: 0,
+                pattern: make_pattern(PatternKind::Wildcard),
+            }],
         });
         assert!(is_irrefutable_pattern(&pat));
 
         // Struct with refutable field pattern is refutable
         let pat = make_pattern(PatternKind::Struct {
             def_id: DefId::new(1),
-            fields: vec![
-                FieldPattern {
-                    field_idx: 0,
-                    pattern: make_pattern(PatternKind::Literal(LiteralValue::Int(42))),
-                },
-            ],
+            fields: vec![FieldPattern {
+                field_idx: 0,
+                pattern: make_pattern(PatternKind::Literal(LiteralValue::Int(42))),
+            }],
         });
         assert!(!is_irrefutable_pattern(&pat));
     }
@@ -3471,19 +3645,44 @@ mod tests {
     /// And/Or are excluded — they use short-circuit lowering, not convert_binop.
     fn all_ast_binops() -> Vec<BinOp> {
         vec![
-            BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Rem,
-            BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge,
-            BinOp::BitAnd, BinOp::BitOr, BinOp::BitXor, BinOp::Shl, BinOp::Shr,
+            BinOp::Add,
+            BinOp::Sub,
+            BinOp::Mul,
+            BinOp::Div,
+            BinOp::Rem,
+            BinOp::Eq,
+            BinOp::Ne,
+            BinOp::Lt,
+            BinOp::Le,
+            BinOp::Gt,
+            BinOp::Ge,
+            BinOp::BitAnd,
+            BinOp::BitOr,
+            BinOp::BitXor,
+            BinOp::Shl,
+            BinOp::Shr,
         ]
     }
 
     /// Generate all MIR binary operators (for validation).
     fn all_mir_binops() -> Vec<MirBinOp> {
         vec![
-            MirBinOp::Add, MirBinOp::Sub, MirBinOp::Mul, MirBinOp::Div, MirBinOp::Rem,
-            MirBinOp::BitAnd, MirBinOp::BitOr, MirBinOp::BitXor,
-            MirBinOp::Shl, MirBinOp::Shr,
-            MirBinOp::Eq, MirBinOp::Ne, MirBinOp::Lt, MirBinOp::Le, MirBinOp::Gt, MirBinOp::Ge,
+            MirBinOp::Add,
+            MirBinOp::Sub,
+            MirBinOp::Mul,
+            MirBinOp::Div,
+            MirBinOp::Rem,
+            MirBinOp::BitAnd,
+            MirBinOp::BitOr,
+            MirBinOp::BitXor,
+            MirBinOp::Shl,
+            MirBinOp::Shr,
+            MirBinOp::Eq,
+            MirBinOp::Ne,
+            MirBinOp::Lt,
+            MirBinOp::Le,
+            MirBinOp::Gt,
+            MirBinOp::Ge,
             MirBinOp::Offset,
         ]
     }
@@ -3508,7 +3707,8 @@ mod tests {
             assert!(
                 valid_mir_ops.contains(&mir_op),
                 "convert_binop({:?}) produced invalid MIR operator: {:?}",
-                ast_op, mir_op
+                ast_op,
+                mir_op
             );
         }
     }
@@ -3525,8 +3725,11 @@ mod tests {
         ];
         for (ast_op, expected_mir_op) in arithmetic_pairs {
             assert_eq!(
-                convert_binop(ast_op), expected_mir_op,
-                "Arithmetic operator {:?} should map to {:?}", ast_op, expected_mir_op
+                convert_binop(ast_op),
+                expected_mir_op,
+                "Arithmetic operator {:?} should map to {:?}",
+                ast_op,
+                expected_mir_op
             );
         }
     }
@@ -3544,8 +3747,11 @@ mod tests {
         ];
         for (ast_op, expected_mir_op) in comparison_pairs {
             assert_eq!(
-                convert_binop(ast_op), expected_mir_op,
-                "Comparison operator {:?} should map to {:?}", ast_op, expected_mir_op
+                convert_binop(ast_op),
+                expected_mir_op,
+                "Comparison operator {:?} should map to {:?}",
+                ast_op,
+                expected_mir_op
             );
         }
     }
@@ -3562,8 +3768,11 @@ mod tests {
         ];
         for (ast_op, expected_mir_op) in bitwise_pairs {
             assert_eq!(
-                convert_binop(ast_op), expected_mir_op,
-                "Bitwise operator {:?} should map to {:?}", ast_op, expected_mir_op
+                convert_binop(ast_op),
+                expected_mir_op,
+                "Bitwise operator {:?} should map to {:?}",
+                ast_op,
+                expected_mir_op
             );
         }
     }
@@ -3574,7 +3783,13 @@ mod tests {
 
     /// Generate all AST unary operators.
     fn all_ast_unops() -> Vec<UnaryOp> {
-        vec![UnaryOp::Neg, UnaryOp::Not, UnaryOp::Deref, UnaryOp::Ref, UnaryOp::RefMut]
+        vec![
+            UnaryOp::Neg,
+            UnaryOp::Not,
+            UnaryOp::Deref,
+            UnaryOp::Ref,
+            UnaryOp::RefMut,
+        ]
     }
 
     // PROPERTY: UnaryOp conversion is total - every AST UnaryOp either maps to
@@ -3590,16 +3805,31 @@ mod tests {
     // PROPERTY: Simple unary operators (Neg, Not) always produce Some
     #[test]
     fn test_property_simple_unop_produces_some() {
-        assert!(convert_unop(UnaryOp::Neg).is_some(), "Neg should map to Some");
-        assert!(convert_unop(UnaryOp::Not).is_some(), "Not should map to Some");
+        assert!(
+            convert_unop(UnaryOp::Neg).is_some(),
+            "Neg should map to Some"
+        );
+        assert!(
+            convert_unop(UnaryOp::Not).is_some(),
+            "Not should map to Some"
+        );
     }
 
     // PROPERTY: Place-based unary operators (Deref, Ref, RefMut) always produce None
     #[test]
     fn test_property_place_unop_produces_none() {
-        assert!(convert_unop(UnaryOp::Deref).is_none(), "Deref should map to None");
-        assert!(convert_unop(UnaryOp::Ref).is_none(), "Ref should map to None");
-        assert!(convert_unop(UnaryOp::RefMut).is_none(), "RefMut should map to None");
+        assert!(
+            convert_unop(UnaryOp::Deref).is_none(),
+            "Deref should map to None"
+        );
+        assert!(
+            convert_unop(UnaryOp::Ref).is_none(),
+            "Ref should map to None"
+        );
+        assert!(
+            convert_unop(UnaryOp::RefMut).is_none(),
+            "RefMut should map to None"
+        );
     }
 
     // PROPERTY: UnaryOp conversion preserves operator semantics
@@ -3715,7 +3945,8 @@ mod tests {
             let constant = lower_literal_to_constant(&lit, &ty);
             assert_eq!(
                 constant.ty, ty,
-                "Type should be preserved for literal {:?}", lit
+                "Type should be preserved for literal {:?}",
+                lit
             );
         }
     }
@@ -3728,7 +3959,10 @@ mod tests {
     #[test]
     fn test_property_wildcard_always_irrefutable() {
         let pat = make_pattern(PatternKind::Wildcard);
-        assert!(is_irrefutable_pattern(&pat), "Wildcard must always be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&pat),
+            "Wildcard must always be irrefutable"
+        );
     }
 
     // PROPERTY: Simple binding without subpattern is always irrefutable
@@ -3765,7 +3999,11 @@ mod tests {
 
         for lit in literals {
             let pat = make_pattern(PatternKind::Literal(lit.clone()));
-            assert!(!is_irrefutable_pattern(&pat), "Literal {:?} must be refutable", lit);
+            assert!(
+                !is_irrefutable_pattern(&pat),
+                "Literal {:?} must be refutable",
+                lit
+            );
         }
     }
 
@@ -3793,7 +4031,10 @@ mod tests {
             make_pattern(PatternKind::Wildcard),
             make_pattern(PatternKind::Wildcard),
         ]));
-        assert!(!is_irrefutable_pattern(&pat), "Or pattern must be refutable");
+        assert!(
+            !is_irrefutable_pattern(&pat),
+            "Or pattern must be refutable"
+        );
     }
 
     // PROPERTY: Range patterns are always refutable
@@ -3804,14 +4045,20 @@ mod tests {
             end: None,
             inclusive: true,
         });
-        assert!(!is_irrefutable_pattern(&pat), "Range pattern must be refutable");
+        assert!(
+            !is_irrefutable_pattern(&pat),
+            "Range pattern must be refutable"
+        );
     }
 
     // PROPERTY: Empty tuple is irrefutable
     #[test]
     fn test_property_empty_tuple_irrefutable() {
         let pat = make_pattern(PatternKind::Tuple(vec![]));
-        assert!(is_irrefutable_pattern(&pat), "Empty tuple must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&pat),
+            "Empty tuple must be irrefutable"
+        );
     }
 
     // PROPERTY: Tuple of wildcards is irrefutable
@@ -3856,14 +4103,20 @@ mod tests {
             mutable: false,
             inner: Box::new(make_pattern(PatternKind::Wildcard)),
         });
-        assert!(is_irrefutable_pattern(&irrefutable_ref), "Ref of wildcard must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&irrefutable_ref),
+            "Ref of wildcard must be irrefutable"
+        );
 
         // Ref of literal is refutable
         let refutable_ref = make_pattern(PatternKind::Ref {
             mutable: true,
             inner: Box::new(make_pattern(PatternKind::Literal(LiteralValue::Int(42)))),
         });
-        assert!(!is_irrefutable_pattern(&refutable_ref), "Ref of literal must be refutable");
+        assert!(
+            !is_irrefutable_pattern(&refutable_ref),
+            "Ref of literal must be refutable"
+        );
     }
 
     // PROPERTY: Struct with all wildcard fields is irrefutable
@@ -3882,7 +4135,10 @@ mod tests {
                 },
             ],
         });
-        assert!(is_irrefutable_pattern(&pat), "Struct with all wildcards must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&pat),
+            "Struct with all wildcards must be irrefutable"
+        );
     }
 
     // PROPERTY: Empty struct (no fields) is irrefutable
@@ -3892,7 +4148,10 @@ mod tests {
             def_id: DefId::new(1),
             fields: vec![],
         });
-        assert!(is_irrefutable_pattern(&pat), "Empty struct must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&pat),
+            "Empty struct must be irrefutable"
+        );
     }
 
     // PROPERTY: Slice with rest element and irrefutable prefix/suffix is irrefutable
@@ -3911,7 +4170,10 @@ mod tests {
             slice: Some(Box::new(make_pattern(PatternKind::Wildcard))),
             suffix: vec![make_pattern(PatternKind::Wildcard)],
         });
-        assert!(is_irrefutable_pattern(&pat), "Slice with rest and irrefutable elements must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&pat),
+            "Slice with rest and irrefutable elements must be irrefutable"
+        );
     }
 
     // PROPERTY: Slice without rest element is always refutable
@@ -3940,25 +4202,33 @@ mod tests {
             by_ref: false,
             subpattern: Some(Box::new(make_pattern(PatternKind::Wildcard))),
         });
-        assert!(is_irrefutable_pattern(&irrefutable), "Binding @ _ must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&irrefutable),
+            "Binding @ _ must be irrefutable"
+        );
 
         // Binding with literal subpattern is refutable
         let refutable = make_pattern(PatternKind::Binding {
             local_id: HirLocalId::new(2),
             mutable: false,
             by_ref: false,
-            subpattern: Some(Box::new(make_pattern(PatternKind::Literal(LiteralValue::Int(0))))),
+            subpattern: Some(Box::new(make_pattern(PatternKind::Literal(
+                LiteralValue::Int(0),
+            )))),
         });
-        assert!(!is_irrefutable_pattern(&refutable), "Binding @ 0 must be refutable");
+        assert!(
+            !is_irrefutable_pattern(&refutable),
+            "Binding @ 0 must be refutable"
+        );
     }
 
     // PROPERTY: Deeply nested irrefutable patterns are irrefutable
     #[test]
     fn test_property_deeply_nested_irrefutable() {
         // (((_,), _), _) should be irrefutable
-        let inner_tuple = make_pattern(PatternKind::Tuple(vec![
-            make_pattern(PatternKind::Wildcard),
-        ]));
+        let inner_tuple = make_pattern(PatternKind::Tuple(vec![make_pattern(
+            PatternKind::Wildcard,
+        )]));
         let middle_tuple = make_pattern(PatternKind::Tuple(vec![
             inner_tuple,
             make_pattern(PatternKind::Wildcard),
@@ -3967,16 +4237,19 @@ mod tests {
             middle_tuple,
             make_pattern(PatternKind::Wildcard),
         ]));
-        assert!(is_irrefutable_pattern(&outer_tuple), "Deeply nested wildcards must be irrefutable");
+        assert!(
+            is_irrefutable_pattern(&outer_tuple),
+            "Deeply nested wildcards must be irrefutable"
+        );
     }
 
     // PROPERTY: Single refutable element in deep nesting makes whole pattern refutable
     #[test]
     fn test_property_deeply_nested_single_refutable() {
         // (((42,), _), _) should be refutable because of the 42
-        let inner_tuple = make_pattern(PatternKind::Tuple(vec![
-            make_pattern(PatternKind::Literal(LiteralValue::Int(42))),
-        ]));
+        let inner_tuple = make_pattern(PatternKind::Tuple(vec![make_pattern(
+            PatternKind::Literal(LiteralValue::Int(42)),
+        )]));
         let middle_tuple = make_pattern(PatternKind::Tuple(vec![
             inner_tuple,
             make_pattern(PatternKind::Wildcard),
@@ -3985,6 +4258,9 @@ mod tests {
             middle_tuple,
             make_pattern(PatternKind::Wildcard),
         ]));
-        assert!(!is_irrefutable_pattern(&outer_tuple), "Deeply nested literal makes pattern refutable");
+        assert!(
+            !is_irrefutable_pattern(&outer_tuple),
+            "Deeply nested literal makes pattern refutable"
+        );
     }
 }

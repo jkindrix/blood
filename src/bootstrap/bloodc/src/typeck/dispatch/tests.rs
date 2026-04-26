@@ -3,15 +3,15 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type, TypeKind, PrimitiveTy, TyVarId};
+use crate::hir::{DefId, PrimitiveTy, TyVarId, Type, TypeKind};
 use crate::typeck::unify::Unifier;
 
-use super::types::{MethodCandidate, TypeParam, Constraint, InstantiationResult};
-use super::effect_row::EffectRow;
-use super::result::{DispatchResult, AmbiguityError, TraitChecker};
-use super::resolver::{DispatchResolver, compare_type_param_specificity};
-use super::stability::{TypeStabilityChecker, TypeStabilityResult, TypeStabilityError};
 use super::constraints::{ConstraintChecker, TraitConstraintChecker};
+use super::effect_row::EffectRow;
+use super::resolver::{compare_type_param_specificity, DispatchResolver};
+use super::result::{AmbiguityError, DispatchResult, TraitChecker};
+use super::stability::{TypeStabilityChecker, TypeStabilityError, TypeStabilityResult};
+use super::types::{Constraint, InstantiationResult, MethodCandidate, TypeParam};
 
 fn make_candidate(name: &str, params: Vec<Type>, ret: Type) -> MethodCandidate {
     MethodCandidate {
@@ -36,7 +36,9 @@ fn test_exact_match() {
     ];
 
     let result = resolver.resolve("add", &[Type::i32(), Type::i32()], &candidates);
-    assert!(matches!(result, DispatchResult::Resolved(m) if m.name == "add" && *m.return_type.kind == TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32))));
+    assert!(
+        matches!(result, DispatchResult::Resolved(m) if m.name == "add" && *m.return_type.kind == TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32)))
+    );
 }
 
 #[test]
@@ -44,9 +46,11 @@ fn test_no_match() {
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
 
-    let candidates = vec![
-        make_candidate("add", vec![Type::i32(), Type::i32()], Type::i32()),
-    ];
+    let candidates = vec![make_candidate(
+        "add",
+        vec![Type::i32(), Type::i32()],
+        Type::i32(),
+    )];
 
     let result = resolver.resolve("add", &[Type::str()], &candidates);
     assert!(matches!(result, DispatchResult::NoMatch(_)));
@@ -57,9 +61,11 @@ fn test_arity_mismatch() {
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
 
-    let candidates = vec![
-        make_candidate("add", vec![Type::i32(), Type::i32()], Type::i32()),
-    ];
+    let candidates = vec![make_candidate(
+        "add",
+        vec![Type::i32(), Type::i32()],
+        Type::i32(),
+    )];
 
     let result = resolver.resolve("add", &[Type::i32()], &candidates);
     assert!(matches!(result, DispatchResult::NoMatch(_)));
@@ -165,9 +171,7 @@ fn test_single_candidate() {
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
 
-    let candidates = vec![
-        make_candidate("single", vec![Type::i32()], Type::bool()),
-    ];
+    let candidates = vec![make_candidate("single", vec![Type::i32()], Type::bool())];
 
     let result = resolver.resolve("single", &[Type::i32()], &candidates);
     match result {
@@ -315,9 +319,7 @@ fn test_find_maximal_single() {
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
 
-    let candidates = vec![
-        make_candidate("f", vec![Type::i32()], Type::i32()),
-    ];
+    let candidates = vec![make_candidate("f", vec![Type::i32()], Type::i32())];
 
     let maximal = resolver.find_maximal(&candidates);
     assert_eq!(maximal.len(), 1);
@@ -531,8 +533,10 @@ fn test_type_subtype_dyn_trait_with_checker() {
 
     // Create a trait checker that says i32 implements trait 100
     let checker: &TraitChecker = &|ty: &Type, tid: DefId| {
-        matches!(ty.kind.as_ref(), TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32)))
-            && tid.index == 100
+        matches!(
+            ty.kind.as_ref(),
+            TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32))
+        ) && tid.index == 100
     };
 
     let resolver = DispatchResolver::with_trait_checker(&unifier, checker);
@@ -748,13 +752,9 @@ fn test_effect_row_with_row_variable_compatibility() {
     // Open row {IO | rho}
     let open_io = EffectRow::open(vec!["IO".to_string()]);
     // Closed row {IO, Error}
-    let closed_io_error = EffectRow::with_effects(
-        vec!["IO".to_string(), "Error".to_string()]
-    );
+    let closed_io_error = EffectRow::with_effects(vec!["IO".to_string(), "Error".to_string()]);
     // Open row {IO, Error | rho}
-    let open_io_error = EffectRow::open(
-        vec!["IO".to_string(), "Error".to_string()]
-    );
+    let open_io_error = EffectRow::open(vec!["IO".to_string(), "Error".to_string()]);
 
     // Open row method NOT compatible with closed context
     // (row variable could expand to include unhandled effects)
@@ -780,7 +780,10 @@ fn test_effect_specificity_as_tiebreaker() {
         "f",
         vec![Type::i32()],
         Type::i32(),
-        Some(EffectRow::with_effects(vec!["IO".to_string(), "Error".to_string()])),
+        Some(EffectRow::with_effects(vec![
+            "IO".to_string(),
+            "Error".to_string(),
+        ])),
     );
 
     // IO method is more specific than IO+Error method (fewer effects)
@@ -803,7 +806,10 @@ fn test_dispatch_resolves_to_less_effectful() {
         "f",
         vec![Type::i32()],
         Type::i32(),
-        Some(EffectRow::with_effects(vec!["IO".to_string(), "Error".to_string()])),
+        Some(EffectRow::with_effects(vec![
+            "IO".to_string(),
+            "Error".to_string(),
+        ])),
     );
 
     let candidates = vec![io_error.clone(), io.clone()];
@@ -851,17 +857,15 @@ fn test_instantiate_generic_single_type_param() {
     };
     let t_type = Type::param(t_id);
 
-    let method = make_generic_candidate(
-        "identity",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method = make_generic_candidate("identity", vec![t_param], vec![t_type.clone()], t_type);
 
     // Call with i32
     let result = resolver.instantiate_generic(&method, &[Type::i32()]);
     match result {
-        InstantiationResult::Success { substitutions, candidate } => {
+        InstantiationResult::Success {
+            substitutions,
+            candidate,
+        } => {
             // T should be substituted with i32
             assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
             // Parameter should be i32
@@ -907,7 +911,10 @@ fn test_instantiate_generic_multiple_type_params() {
     // Call with (i32, bool)
     let result = resolver.instantiate_generic(&method, &[Type::i32(), Type::bool()]);
     match result {
-        InstantiationResult::Success { substitutions, candidate } => {
+        InstantiationResult::Success {
+            substitutions,
+            candidate,
+        } => {
             // T should be i32, U should be bool
             assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
             assert_eq!(substitutions.get(&u_id), Some(&Type::bool()));
@@ -938,18 +945,16 @@ fn test_instantiate_generic_nested_types() {
     let param_type = Type::reference(t_type.clone(), false);
     let ret_type = Type::array(t_type, 1);
 
-    let method = make_generic_candidate(
-        "wrap",
-        vec![t_param],
-        vec![param_type],
-        ret_type,
-    );
+    let method = make_generic_candidate("wrap", vec![t_param], vec![param_type], ret_type);
 
     // Call with &i64
     let arg = Type::reference(Type::i64(), false);
     let result = resolver.instantiate_generic(&method, &[arg]);
     match result {
-        InstantiationResult::Success { substitutions, candidate } => {
+        InstantiationResult::Success {
+            substitutions,
+            candidate,
+        } => {
             // T should be i64
             assert_eq!(substitutions.get(&t_id), Some(&Type::i64()));
             // Parameter should be &i64
@@ -992,7 +997,11 @@ fn test_instantiate_generic_consistent_substitution() {
     // Call with (i32, i64) - should fail (inconsistent T)
     let result = resolver.instantiate_generic(&method, &[Type::i32(), Type::i64()]);
     match result {
-        InstantiationResult::TypeMismatch { param_id, expected, found } => {
+        InstantiationResult::TypeMismatch {
+            param_id,
+            expected,
+            found,
+        } => {
             assert_eq!(param_id, t_id);
             assert!(resolver.types_equal(&expected, &Type::i32()));
             assert!(resolver.types_equal(&found, &Type::i64()));
@@ -1014,12 +1023,7 @@ fn test_instantiate_generic_arity_mismatch() {
     };
     let t_type = Type::param(t_id);
 
-    let method = make_generic_candidate(
-        "identity",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method = make_generic_candidate("identity", vec![t_param], vec![t_type.clone()], t_type);
 
     // Call with wrong arity
     let result = resolver.instantiate_generic(&method, &[Type::i32(), Type::i32()]);
@@ -1046,12 +1050,7 @@ fn test_is_applicable_generic_method() {
     };
     let t_type = Type::param(t_id);
 
-    let method = make_generic_candidate(
-        "identity",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method = make_generic_candidate("identity", vec![t_param], vec![t_type.clone()], t_type);
 
     // Should be applicable for any type
     assert!(resolver.is_applicable(&method, &[Type::i32()]));
@@ -1077,12 +1076,7 @@ fn test_dispatch_with_generic_method() {
     };
     let t_type = Type::param(t_id);
 
-    let generic_method = make_generic_candidate(
-        "show",
-        vec![t_param],
-        vec![t_type],
-        Type::unit(),
-    );
+    let generic_method = make_generic_candidate("show", vec![t_param], vec![t_type], Type::unit());
 
     // Specific method: fn show(x: i32) -> ()
     let specific_method = make_candidate("show", vec![Type::i32()], Type::unit());
@@ -1128,18 +1122,16 @@ fn test_instantiate_generic_with_adt() {
     let t_type = Type::param(t_id);
     let option_t = Type::adt(option_def_id, vec![t_type.clone()]);
 
-    let method = make_generic_candidate(
-        "get",
-        vec![t_param],
-        vec![option_t],
-        t_type,
-    );
+    let method = make_generic_candidate("get", vec![t_param], vec![option_t], t_type);
 
     // Call with Option<i32>
     let option_i32 = Type::adt(option_def_id, vec![Type::i32()]);
     let result = resolver.instantiate_generic(&method, &[option_i32]);
     match result {
-        InstantiationResult::Success { substitutions, candidate } => {
+        InstantiationResult::Success {
+            substitutions,
+            candidate,
+        } => {
             // T should be i32
             assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
             // Return should be i32
@@ -1413,16 +1405,14 @@ fn test_constraint_checker_ord_satisfied_by_i32() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Ord".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "sort",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("sort", vec![t_param], vec![t_type.clone()], t_type);
 
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
@@ -1430,7 +1420,10 @@ fn test_constraint_checker_ord_satisfied_by_i32() {
     // Call with i32 - should satisfy Ord constraint
     let result = resolver.instantiate_generic(&method, &[Type::i32()]);
     match result {
-        InstantiationResult::Success { substitutions, candidate } => {
+        InstantiationResult::Success {
+            substitutions,
+            candidate,
+        } => {
             assert_eq!(substitutions.get(&t_id), Some(&Type::i32()));
             assert!(resolver.types_equal(&candidate.param_types[0], &Type::i32()));
             assert!(resolver.types_equal(&candidate.return_type, &Type::i32()));
@@ -1446,16 +1439,14 @@ fn test_constraint_checker_ord_not_satisfied_by_adt() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Ord".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "sort",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("sort", vec![t_param], vec![t_type.clone()], t_type);
 
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
@@ -1483,18 +1474,18 @@ fn test_constraint_checker_multiple_constraints() {
         name: "T".to_string(),
         id: t_id,
         constraints: vec![
-            Constraint { trait_name: "Ord".to_string() },
-            Constraint { trait_name: "Hash".to_string() },
+            Constraint {
+                trait_name: "Ord".to_string(),
+            },
+            Constraint {
+                trait_name: "Hash".to_string(),
+            },
         ],
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "process",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("process", vec![t_param], vec![t_type.clone()], t_type);
 
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
@@ -1527,16 +1518,14 @@ fn test_constraint_checker_copy_constraint() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Copy".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Copy".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "copy_val",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("copy_val", vec![t_param], vec![t_type.clone()], t_type);
 
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
@@ -1553,7 +1542,10 @@ fn test_constraint_checker_copy_constraint() {
     // ADTs are not Copy by default
     let adt = Type::adt(DefId::new(100), vec![]);
     let result = resolver.instantiate_generic(&method, &[adt]);
-    assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    assert!(matches!(
+        result,
+        InstantiationResult::ConstraintNotSatisfied(_)
+    ));
 }
 
 #[test]
@@ -1563,7 +1555,9 @@ fn test_constraint_checker_sized_constraint() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Sized".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Sized".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
@@ -1583,12 +1577,18 @@ fn test_constraint_checker_sized_constraint() {
 
     // str is NOT Sized
     let result = resolver.instantiate_generic(&method, &[Type::str()]);
-    assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    assert!(matches!(
+        result,
+        InstantiationResult::ConstraintNotSatisfied(_)
+    ));
 
     // Slices are NOT Sized
     let slice = Type::slice(Type::i32());
     let result = resolver.instantiate_generic(&method, &[slice]);
-    assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    assert!(matches!(
+        result,
+        InstantiationResult::ConstraintNotSatisfied(_)
+    ));
 }
 
 #[test]
@@ -1599,7 +1599,9 @@ fn test_constraint_checker_default_constraint() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Default".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Default".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
@@ -1623,7 +1625,10 @@ fn test_constraint_checker_default_constraint() {
 
     // str does NOT have Default
     let result = resolver.instantiate_generic(&method, &[Type::str()]);
-    assert!(matches!(result, InstantiationResult::ConstraintNotSatisfied(_)));
+    assert!(matches!(
+        result,
+        InstantiationResult::ConstraintNotSatisfied(_)
+    ));
 }
 
 #[test]
@@ -1633,21 +1638,22 @@ fn test_constraint_checker_with_custom_trait_checker() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "MyTrait".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "MyTrait".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "custom",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("custom", vec![t_param], vec![t_type.clone()], t_type);
 
     // Custom trait checker: only i32 implements MyTrait
     let custom_checker: &TraitConstraintChecker = &|ty: &Type, trait_name: &str| {
         trait_name == "MyTrait"
-            && matches!(ty.kind.as_ref(), TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32)))
+            && matches!(
+                ty.kind.as_ref(),
+                TypeKind::Primitive(PrimitiveTy::Int(crate::hir::def::IntTy::I32))
+            )
     };
     let constraint_checker = ConstraintChecker::with_trait_checker(custom_checker);
 
@@ -1656,13 +1662,17 @@ fn test_constraint_checker_with_custom_trait_checker() {
 
     // i32 implements MyTrait
     let result = resolver.instantiate_generic_with_constraint_checker(
-        &method, &[Type::i32()], Some(&constraint_checker)
+        &method,
+        &[Type::i32()],
+        Some(&constraint_checker),
     );
     assert!(matches!(result, InstantiationResult::Success { .. }));
 
     // i64 does NOT implement MyTrait
     let result = resolver.instantiate_generic_with_constraint_checker(
-        &method, &[Type::i64()], Some(&constraint_checker)
+        &method,
+        &[Type::i64()],
+        Some(&constraint_checker),
     );
     match result {
         InstantiationResult::ConstraintNotSatisfied(err) => {
@@ -1683,12 +1693,8 @@ fn test_constraint_checker_no_constraints_succeeds() {
     };
     let t_type = Type::param(t_id);
 
-    let method = make_constrained_generic_candidate(
-        "identity",
-        vec![t_param],
-        vec![t_type.clone()],
-        t_type,
-    );
+    let method =
+        make_constrained_generic_candidate("identity", vec![t_param], vec![t_type.clone()], t_type);
 
     let unifier = Unifier::new();
     let resolver = DispatchResolver::new(&unifier);
@@ -1710,12 +1716,16 @@ fn test_constraint_checker_multiple_type_params() {
     let t_param = TypeParam {
         name: "T".to_string(),
         id: t_id,
-        constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Ord".to_string(),
+        }],
     };
     let u_param = TypeParam {
         name: "U".to_string(),
         id: u_id,
-        constraints: vec![Constraint { trait_name: "Copy".to_string() }],
+        constraints: vec![Constraint {
+            trait_name: "Copy".to_string(),
+        }],
     };
     let t_type = Type::param(t_id);
     let u_type = Type::param(u_id);
@@ -1772,7 +1782,9 @@ fn test_constraint_checker_dispatch_filters_by_constraints() {
         vec![TypeParam {
             name: "T".to_string(),
             id: t_id_constrained,
-            constraints: vec![Constraint { trait_name: "Ord".to_string() }],
+            constraints: vec![Constraint {
+                trait_name: "Ord".to_string(),
+            }],
         }],
         vec![Type::param(t_id_constrained)],
         Type::param(t_id_constrained),
@@ -1812,5 +1824,7 @@ fn test_constraint_checker_default_impl() {
     let type_params: Vec<TypeParam> = vec![];
 
     // Empty params should succeed
-    assert!(checker.check_constraints(&type_params, &substitutions).is_ok());
+    assert!(checker
+        .check_constraints(&type_params, &substitutions)
+        .is_ok());
 }

@@ -62,7 +62,9 @@ use super::evidence::EvidenceVector;
 use super::handler::HandlerKind;
 use super::infer::InferenceResult;
 use super::row::EffectRow;
-use crate::hir::{DefId, Expr, ExprKind, Item, ItemKind, Type, Generics, EffectOp, HandlerOp, Body};
+use crate::hir::{
+    Body, DefId, EffectOp, Expr, ExprKind, Generics, HandlerOp, Item, ItemKind, Type,
+};
 use crate::ice;
 use std::collections::HashMap;
 
@@ -218,7 +220,10 @@ impl EffectLowering {
     /// evidence passing compilation.
     pub fn lower_effect_decl(&mut self, item: &Item) -> Option<EffectInfo> {
         match &item.kind {
-            ItemKind::Effect { generics, operations } => {
+            ItemKind::Effect {
+                generics,
+                operations,
+            } => {
                 let ops: Vec<OperationInfo> = operations
                     .iter()
                     .enumerate()
@@ -268,7 +273,13 @@ impl EffectLowering {
         bodies: Option<&std::collections::HashMap<crate::hir::BodyId, crate::hir::Body>>,
     ) -> Result<HandlerInfo, LoweringError> {
         match &item.kind {
-            ItemKind::Handler { kind, effect, operations, return_clause, .. } => {
+            ItemKind::Handler {
+                kind,
+                effect,
+                operations,
+                return_clause,
+                ..
+            } => {
                 let effect_id = match self.resolve_effect_type(effect) {
                     Some(id) => id,
                     None => {
@@ -355,7 +366,9 @@ impl EffectLowering {
         };
 
         // Look up the operation in the effect's operations
-        let operation_id = match effect_info.operations.iter()
+        let operation_id = match effect_info
+            .operations
+            .iter()
             .find(|op_info| op_info.name == op.name)
             .map(|op_info| op_info.def_id)
         {
@@ -476,10 +489,7 @@ impl EffectLowering {
         def_id: DefId,
         effect_row: EffectRow,
     ) -> EvidenceRequirement {
-        let effects: Vec<DefId> = effect_row
-            .effects()
-            .map(|e| e.def_id)
-            .collect();
+        let effects: Vec<DefId> = effect_row.effects().map(|e| e.def_id).collect();
         let polymorphic = effect_row.is_polymorphic();
         let req = EvidenceRequirement {
             effects,
@@ -576,10 +586,8 @@ impl EffectLowering {
                 ice!("effect not found during lowering";
                      "effect_id" => effect_id,
                      "note" => "type checking should have validated the effect exists");
-                let error = LoweringError::ice(format!(
-                    "Effect {:?} not found during lowering",
-                    effect_id
-                ));
+                let error =
+                    LoweringError::ice(format!("Effect {:?} not found during lowering", effect_id));
                 // Type::error() is correct ICE recovery — the real error is propagated
                 // via the `error` field, and the Error expr/type prevents further codegen
                 // from misinterpreting this result.
@@ -713,10 +721,7 @@ impl EffectLowering {
                 }
             };
 
-            ev.add(
-                super::row::EffectRef::new(effect_id),
-                handler_id,
-            );
+            ev.add(super::row::EffectRef::new(effect_id), handler_id);
         }
         Ok(ev)
     }
@@ -731,10 +736,7 @@ impl EffectLowering {
     ) -> EvidenceVector {
         let mut ev = EvidenceVector::new();
         for &(effect_id, handler_id) in effect_handler_pairs {
-            ev.add(
-                super::row::EffectRef::new(effect_id),
-                handler_id,
-            );
+            ev.add(super::row::EffectRef::new(effect_id), handler_id);
         }
         ev
     }
@@ -792,7 +794,10 @@ mod tests {
 
         // Without registered handlers, build_evidence should return Err
         let ev = lowering.build_evidence(&effects);
-        assert!(ev.is_err(), "build_evidence should return Err when no handlers are registered");
+        assert!(
+            ev.is_err(),
+            "build_evidence should return Err when no handlers are registered"
+        );
         let err = ev.unwrap_err();
         assert!(!err.is_ice, "Missing handler is a user error, not an ICE");
     }

@@ -4,12 +4,9 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{
-    self, Type, LocalId, Body, Local, FnSig,
-    Expr, ExprKind, FieldExpr,
-};
+use crate::hir::{self, Body, Expr, ExprKind, FieldExpr, FnSig, Local, LocalId, Type};
 
-use super::{DeriveExpander, DeriveRequest, local_expr};
+use super::{local_expr, DeriveExpander, DeriveRequest};
 
 /// Expand Clone derive for a struct.
 pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
@@ -29,7 +26,9 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn clone(&self) -> Self
     let sig = FnSig::new(vec![self_ref_ty.clone()], self_ty.clone());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let self_local_id = LocalId::new(1);
@@ -50,28 +49,36 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     };
 
     // Build struct expression: Self { field1: self.field1.clone(), ... }
-    let fields: Vec<FieldExpr> = struct_info.fields.iter().map(|field| {
-        // Access field: (*self).field
-        let field_access = Expr::new(
-            ExprKind::Field {
-                base: Box::new(Expr::new(
-                    ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
-                    self_ty.clone(),
-                    span,
-                )),
-                field_idx: field.index,
-            },
-            field.ty.clone(),
-            span,
-        );
+    let fields: Vec<FieldExpr> = struct_info
+        .fields
+        .iter()
+        .map(|field| {
+            // Access field: (*self).field
+            let field_access = Expr::new(
+                ExprKind::Field {
+                    base: Box::new(Expr::new(
+                        ExprKind::Deref(Box::new(local_expr(
+                            self_local_id,
+                            self_ref_ty.clone(),
+                            span,
+                        ))),
+                        self_ty.clone(),
+                        span,
+                    )),
+                    field_idx: field.index,
+                },
+                field.ty.clone(),
+                span,
+            );
 
-        // For primitives, just copy the value
-        // For other types, ideally call .clone() - for now, copy
-        FieldExpr {
-            field_idx: field.index,
-            value: field_access,
-        }
-    }).collect();
+            // For primitives, just copy the value
+            // For other types, ideally call .clone() - for now, copy
+            FieldExpr {
+                field_idx: field.index,
+                value: field_access,
+            }
+        })
+        .collect();
 
     let struct_expr = Expr::new(
         ExprKind::Struct {
@@ -116,7 +123,9 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn clone(&self) -> Self
     let sig = FnSig::new(vec![self_ref_ty.clone()], self_ty.clone());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body with match expression
     let self_local_id = LocalId::new(1);
@@ -239,7 +248,11 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
 
     // Scrutinee: *self
     let scrutinee = Expr::new(
-        ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
+        ExprKind::Deref(Box::new(local_expr(
+            self_local_id,
+            self_ref_ty.clone(),
+            span,
+        ))),
         self_ty.clone(),
         span,
     );

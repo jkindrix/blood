@@ -38,10 +38,10 @@
 
 use std::collections::HashSet;
 
-use crate::hir::{LocalId, Type, TypeKind};
 use super::body::MirBody;
 use super::ptr::{BloodPtr, PERSISTENT_MARKER};
-use super::types::{Place, Operand, Rvalue, StatementKind, TerminatorKind};
+use super::types::{Operand, Place, Rvalue, StatementKind, TerminatorKind};
+use crate::hir::{LocalId, Type, TypeKind};
 
 // ============================================================================
 // Snapshot Identification
@@ -333,7 +333,8 @@ impl SnapshotStore {
     pub fn create_child(&mut self, parent_id: SnapshotId) -> SnapshotId {
         let id = SnapshotId::new(self.next_id);
         self.next_id += 1;
-        self.snapshots.push(GenerationSnapshot::with_parent(id, parent_id));
+        self.snapshots
+            .push(GenerationSnapshot::with_parent(id, parent_id));
         id
     }
 
@@ -351,7 +352,11 @@ impl SnapshotStore {
     ///
     /// Validation walks from the given snapshot up through all parent
     /// snapshots, checking each entry against the current generation.
-    pub fn validate_chain<F>(&self, id: SnapshotId, get_current_gen: F) -> Result<(), SnapshotValidationError>
+    pub fn validate_chain<F>(
+        &self,
+        id: SnapshotId,
+        get_current_gen: F,
+    ) -> Result<(), SnapshotValidationError>
     where
         F: Fn(u64) -> Option<u32>,
     {
@@ -417,7 +422,9 @@ impl SnapshotStore {
                         result.push(entry.clone());
                     } else {
                         // Update existing entry with newer generation
-                        if let Some(existing) = result.iter_mut().find(|e| e.address == entry.address) {
+                        if let Some(existing) =
+                            result.iter_mut().find(|e| e.address == entry.address)
+                        {
                             *existing = entry.clone();
                         }
                     }
@@ -448,7 +455,8 @@ impl SnapshotStore {
     /// Note: This invalidates IDs. Use with caution.
     pub fn remove_chain(&mut self, id: SnapshotId) {
         // Find all descendants
-        let descendants: Vec<_> = self.snapshots
+        let descendants: Vec<_> = self
+            .snapshots
             .iter()
             .enumerate()
             .filter(|(_, s)| {
@@ -508,7 +516,10 @@ impl std::fmt::Display for SnapshotValidationError {
         write!(
             f,
             "stale reference in continuation: local _{} at {:#x} expected generation {}, found {}",
-            self.entry.local.index, self.entry.address, self.entry.generation, self.actual_generation
+            self.entry.local.index,
+            self.entry.address,
+            self.entry.generation,
+            self.actual_generation
         )
     }
 }
@@ -765,7 +776,7 @@ impl SnapshotAnalyzer {
             TypeKind::Slice { ref element } => self.type_contains_genref(element),
             TypeKind::Tuple(elems) => elems.iter().any(|e| self.type_contains_genref(e)),
             TypeKind::Adt { .. } => true, // Conservative: ADTs might contain refs
-            TypeKind::Fn { .. } => true, // Closures might capture refs
+            TypeKind::Fn { .. } => true,  // Closures might capture refs
             TypeKind::Closure { .. } => true, // Closures capture environment which might contain refs
             TypeKind::Range { ref element, .. } => self.type_contains_genref(element),
             TypeKind::DynTrait { .. } => true, // Trait objects are fat pointers
@@ -776,7 +787,9 @@ impl SnapshotAnalyzer {
             TypeKind::Never => false,
             TypeKind::Error => false,
             // Records may contain refs if any field does
-            TypeKind::Record { fields, .. } => fields.iter().any(|f| self.type_contains_genref(&f.ty)),
+            TypeKind::Record { fields, .. } => {
+                fields.iter().any(|f| self.type_contains_genref(&f.ty))
+            }
             // Forall types may contain refs if body does
             TypeKind::Forall { body, .. } => self.type_contains_genref(body),
             // Ownership-qualified types delegate to the inner type
@@ -793,20 +806,28 @@ impl SnapshotAnalyzer {
     ///
     /// Based on [rustc_mir_dataflow](https://nnethercote.github.io/2024/12/19/streamlined-dataflow-analysis-code-in-rustc.html)
     /// liveness analysis approach.
-    fn compute_live_genrefs(&self, body: &MirBody, target_bb: super::types::BasicBlockId) -> Vec<LocalId> {
+    fn compute_live_genrefs(
+        &self,
+        body: &MirBody,
+        target_bb: super::types::BasicBlockId,
+    ) -> Vec<LocalId> {
         // Perform liveness analysis on the MIR body
         let liveness = LivenessAnalysis::analyze(body);
 
         // Get the live locals at the entry of the target block
         // (for effect operations, we want locals live after the effect returns)
-        let live_at_target = liveness.live_out.get(&target_bb)
+        let live_at_target = liveness
+            .live_out
+            .get(&target_bb)
             .cloned()
             .unwrap_or_default();
 
         // Filter to only include locals that:
         // 1. Are marked as containing genrefs
         // 2. Are actually live at the suspension point
-        let mut live_genrefs: Vec<_> = self.genref_locals.iter()
+        let mut live_genrefs: Vec<_> = self
+            .genref_locals
+            .iter()
             .filter(|local| live_at_target.contains(local))
             .cloned()
             .collect();
@@ -875,10 +896,7 @@ pub struct SnapshotLowering;
 
 impl SnapshotLowering {
     /// Generate statements to capture a snapshot.
-    pub fn generate_capture(
-        locals: &[LocalId],
-        snapshot_local: LocalId,
-    ) -> Vec<StatementKind> {
+    pub fn generate_capture(locals: &[LocalId], snapshot_local: LocalId) -> Vec<StatementKind> {
         let mut stmts = Vec::new();
 
         // For each local, emit a CaptureSnapshot statement
@@ -918,9 +936,7 @@ impl SnapshotLowering {
     /// - They are never deallocated while in scope
     /// - Their generation is always 1 (immutable)
     /// - Escape analysis ensures they aren't captured across effect boundaries
-    pub fn generate_validation(
-        locals: &[LocalId],
-    ) -> Vec<StatementKind> {
+    pub fn generate_validation(locals: &[LocalId]) -> Vec<StatementKind> {
         let mut stmts = Vec::new();
 
         for &local in locals {
@@ -983,7 +999,8 @@ impl LivenessAnalysis {
 
                     // live_in = use(block) ∪ (live_out - def(block))
                     let (uses, defs) = Self::compute_use_def(block);
-                    let mut new_live_in: HashSet<_> = new_live_out.difference(&defs).cloned().collect();
+                    let mut new_live_in: HashSet<_> =
+                        new_live_out.difference(&defs).cloned().collect();
                     new_live_in.extend(uses);
 
                     // Check for changes
@@ -1003,7 +1020,9 @@ impl LivenessAnalysis {
     }
 
     /// Compute use and def sets for a basic block.
-    fn compute_use_def(block: &super::types::BasicBlockData) -> (HashSet<LocalId>, HashSet<LocalId>) {
+    fn compute_use_def(
+        block: &super::types::BasicBlockData,
+    ) -> (HashSet<LocalId>, HashSet<LocalId>) {
         let mut uses = HashSet::new();
         let mut defs = HashSet::new();
 
@@ -1039,7 +1058,9 @@ impl LivenessAnalysis {
                     let _ = local;
                 }
                 StatementKind::Nop => {}
-                StatementKind::PushHandler { .. } | StatementKind::PushInlineHandler { .. } | StatementKind::PopHandler => {
+                StatementKind::PushHandler { .. }
+                | StatementKind::PushInlineHandler { .. }
+                | StatementKind::PopHandler => {
                     // Effect handler statements don't use or define locals
                 }
                 StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
@@ -1048,7 +1069,12 @@ impl LivenessAnalysis {
                 StatementKind::Safepoint => {
                     // Safepoints don't use or define locals
                 }
-                StatementKind::CallReturnClause { body_result, state_place, destination, .. } => {
+                StatementKind::CallReturnClause {
+                    body_result,
+                    state_place,
+                    destination,
+                    ..
+                } => {
                     // body_result is used, state_place is used, destination is defined
                     Self::collect_operand_uses(body_result, &mut uses);
                     // state_place is used (read)
@@ -1098,7 +1124,10 @@ impl LivenessAnalysis {
                     Self::collect_operand_uses(op, uses);
                 }
             }
-            Rvalue::Discriminant(place) | Rvalue::Len(place) | Rvalue::VecLen(place) | Rvalue::ReadGeneration(place) => {
+            Rvalue::Discriminant(place)
+            | Rvalue::Len(place)
+            | Rvalue::VecLen(place)
+            | Rvalue::ReadGeneration(place) => {
                 if let Some(local) = place.as_local() {
                     uses.insert(local);
                 }
@@ -1106,7 +1135,11 @@ impl LivenessAnalysis {
             Rvalue::NullCheck(op) => {
                 Self::collect_operand_uses(op, uses);
             }
-            Rvalue::MakeGenPtr { address, generation, metadata } => {
+            Rvalue::MakeGenPtr {
+                address,
+                generation,
+                metadata,
+            } => {
                 Self::collect_operand_uses(address, uses);
                 Self::collect_operand_uses(generation, uses);
                 Self::collect_operand_uses(metadata, uses);
@@ -1213,7 +1246,11 @@ mod tests {
     #[test]
     fn test_generation_snapshot_skip_persistent() {
         let mut snapshot = GenerationSnapshot::new();
-        snapshot.add_entry(SnapshotEntry::new(0x1000, PERSISTENT_MARKER, LocalId::new(1)));
+        snapshot.add_entry(SnapshotEntry::new(
+            0x1000,
+            PERSISTENT_MARKER,
+            LocalId::new(1),
+        ));
 
         // Persistent entries should be skipped
         assert!(snapshot.is_empty());
@@ -1680,15 +1717,17 @@ mod tests {
 
         // Create root with entry
         let root_id = store.create_root();
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
-        );
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 42, LocalId::new(1)));
 
         // Create child with additional entry
         let child_id = store.create_child(root_id);
-        store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
-        );
+        store
+            .get_mut(child_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x2000, 43, LocalId::new(2)));
 
         // Validate entire chain
         let result = store.validate_chain(child_id, |addr| match addr {
@@ -1706,15 +1745,17 @@ mod tests {
 
         // Create root with entry that will fail
         let root_id = store.create_root();
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
-        );
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 42, LocalId::new(1)));
 
         // Create child with valid entry
         let child_id = store.create_child(root_id);
-        store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
-        );
+        store
+            .get_mut(child_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x2000, 43, LocalId::new(2)));
 
         // Validation should fail on parent's entry
         let result = store.validate_chain(child_id, |addr| match addr {
@@ -1734,20 +1775,22 @@ mod tests {
 
         // Create root with entries
         let root_id = store.create_root();
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
-        );
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
-        );
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 42, LocalId::new(1)));
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x2000, 43, LocalId::new(2)));
 
         // Create child that overrides one entry and adds new one
         let child_id = store.create_child(root_id);
         store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 99, LocalId::new(2)) // Override
+            SnapshotEntry::new(0x2000, 99, LocalId::new(2)), // Override
         );
         store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x3000, 44, LocalId::new(3)) // New
+            SnapshotEntry::new(0x3000, 44, LocalId::new(3)), // New
         );
 
         let flattened = store.flatten_chain(child_id);
@@ -1763,17 +1806,20 @@ mod tests {
         let mut store = SnapshotStore::new();
 
         let root_id = store.create_root();
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
-        );
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
-        );
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 42, LocalId::new(1)));
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x2000, 43, LocalId::new(2)));
 
         let child_id = store.create_child(root_id);
-        store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x3000, 44, LocalId::new(3))
-        );
+        store
+            .get_mut(child_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x3000, 44, LocalId::new(3)));
 
         assert_eq!(store.total_entries(), 3);
     }
@@ -1783,17 +1829,20 @@ mod tests {
         let mut store = SnapshotStore::new();
 
         let root_id = store.create_root();
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 42, LocalId::new(1))
-        );
-        store.get_mut(root_id).unwrap().add_entry(
-            SnapshotEntry::new(0x2000, 43, LocalId::new(2))
-        );
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 42, LocalId::new(1)));
+        store
+            .get_mut(root_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x2000, 43, LocalId::new(2)));
 
         let child_id = store.create_child(root_id);
-        store.get_mut(child_id).unwrap().add_entry(
-            SnapshotEntry::new(0x3000, 44, LocalId::new(3))
-        );
+        store
+            .get_mut(child_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x3000, 44, LocalId::new(3)));
 
         // Root has 2 entries
         let root = store.get(root_id).unwrap();
@@ -1846,15 +1895,21 @@ mod tests {
 
         // Create a chain of 10 nested snapshots
         let mut current_id = store.create_root();
-        store.get_mut(current_id).unwrap().add_entry(
-            SnapshotEntry::new(0x1000, 1, LocalId::new(1))
-        );
+        store
+            .get_mut(current_id)
+            .unwrap()
+            .add_entry(SnapshotEntry::new(0x1000, 1, LocalId::new(1)));
 
         for i in 1..10 {
             let child_id = store.create_child(current_id);
-            store.get_mut(child_id).unwrap().add_entry(
-                SnapshotEntry::new(0x1000 + (i * 0x100) as u64, (i + 1) as u32, LocalId::new(1))
-            );
+            store
+                .get_mut(child_id)
+                .unwrap()
+                .add_entry(SnapshotEntry::new(
+                    0x1000 + (i * 0x100) as u64,
+                    (i + 1) as u32,
+                    LocalId::new(1),
+                ));
             current_id = child_id;
         }
 

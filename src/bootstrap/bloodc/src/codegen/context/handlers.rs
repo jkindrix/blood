@@ -3,14 +3,13 @@
 //! This module handles compilation of effect handler operations,
 //! return clauses, and runtime registration.
 
-use inkwell::values::{FunctionValue, BasicValueEnum};
 use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::AddressSpace;
 
-use crate::hir::{self, DefId, LocalId, TypeKind};
 use crate::diagnostics::Diagnostic;
+use crate::hir::{self, DefId, LocalId, TypeKind};
 use crate::span::Span;
-
 
 use super::CodegenContext;
 
@@ -24,15 +23,21 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// compile_return_clause, and PushHandler in statement.rs) MUST use this
     /// to ensure layout agreement between the caller-side shadow alloca and
     /// the handler body's state struct.
-    pub(crate) fn handler_state_field_types(&self, state_fields: &[hir::HandlerState]) -> Vec<BasicTypeEnum<'ctx>> {
+    pub(crate) fn handler_state_field_types(
+        &self,
+        state_fields: &[hir::HandlerState],
+    ) -> Vec<BasicTypeEnum<'ctx>> {
         let i64_type: BasicTypeEnum<'ctx> = self.context.i64_type().into();
-        state_fields.iter().map(|field| {
-            if field.ty.has_type_vars() {
-                i64_type
-            } else {
-                self.lower_type(&field.ty)
-            }
-        }).collect()
+        state_fields
+            .iter()
+            .map(|field| {
+                if field.ty.has_type_vars() {
+                    i64_type
+                } else {
+                    self.lower_type(&field.ty)
+                }
+            })
+            .collect()
     }
 
     /// Declare handler operation functions (Phase 2: Effect Handlers).
@@ -42,14 +47,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// The continuation parameter is used for non-tail-resumptive handlers (deep handlers).
     /// For tail-resumptive handlers (shallow), the continuation is 0 (unused).
-    pub fn declare_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+    pub fn declare_handler_operations(
+        &mut self,
+        hir_crate: &hir::Crate,
+    ) -> Result<(), Vec<Diagnostic>> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Handler operation function signature:
         // fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64
         let handler_op_type = i64_type.fn_type(
-            &[ptr_type.into(), ptr_type.into(), i64_type.into(), i64_type.into()],
+            &[
+                ptr_type.into(),
+                ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+            ],
             false,
         );
 
@@ -78,7 +91,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         item: &hir::Item,
         hir_crate: &hir::Crate,
     ) -> Result<(), Vec<Diagnostic>> {
-        if let hir::ItemKind::Handler { operations, return_clause, finally_clause, state, .. } = &item.kind {
+        if let hir::ItemKind::Handler {
+            operations,
+            return_clause,
+            finally_clause,
+            state,
+            ..
+        } = &item.kind
+        {
             // Compile each operation (both tail-resumptive and non-tail-resumptive)
             // Non-tail-resumptive handlers use continuation capture via blood_continuation_resume
             for (op_idx, handler_op) in operations.iter().enumerate() {
@@ -107,13 +127,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Both tail-resumptive and non-tail-resumptive handlers are supported:
     /// - Tail-resumptive: resume is a simple return
     /// - Non-tail-resumptive: resume calls blood_continuation_resume
-    pub fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+    pub fn compile_handler_operations(
+        &mut self,
+        hir_crate: &hir::Crate,
+    ) -> Result<(), Vec<Diagnostic>> {
         // Sort items by DefId for deterministic compilation order.
         let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
         sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
         // Compile all handler operations
         for (&def_id, item) in &sorted_items {
-            if let hir::ItemKind::Handler { operations, return_clause, finally_clause, state, .. } = &item.kind {
+            if let hir::ItemKind::Handler {
+                operations,
+                return_clause,
+                finally_clause,
+                state,
+                ..
+            } = &item.kind
+            {
                 // Compile each operation
                 for (op_idx, handler_op) in operations.iter().enumerate() {
                     if let Some(&fn_value) = self.handler_ops.get(&(def_id, op_idx)) {
@@ -160,9 +190,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Check if function was already declared (e.g., by compile_handle when compiling
         // the 'with ... handle' expression). If so, reuse it; otherwise create it.
-        let fn_value = self.module.get_function(&fn_name).unwrap_or_else(|| {
-            self.module.add_function(&fn_name, ret_clause_type, None)
-        });
+        let fn_value = self
+            .module
+            .get_function(&fn_name)
+            .unwrap_or_else(|| self.module.add_function(&fn_name, ret_clause_type, None));
 
         // Create entry block
         let entry_block = self.context.append_basic_block(fn_value, "entry");
@@ -176,12 +207,20 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.in_handler_body = true;
 
         // Get the result parameter and bind to the param local
-        let result_param = fn_value.get_nth_param(0)
-            .ok_or_else(|| vec![Diagnostic::error("Missing result parameter".to_string(), span)])?;
+        let result_param = fn_value.get_nth_param(0).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing result parameter".to_string(),
+                span,
+            )]
+        })?;
 
         // Get the state pointer parameter
-        let state_ptr = fn_value.get_nth_param(1)
-            .ok_or_else(|| vec![Diagnostic::error("Missing state pointer parameter".to_string(), span)])?;
+        let state_ptr = fn_value.get_nth_param(1).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing state pointer parameter".to_string(),
+                span,
+            )]
+        })?;
 
         // Build the handler state struct type using TYPED layout.
         // Same as compile_handler_op_body: concrete types use their actual LLVM
@@ -194,7 +233,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let typed_state_ptr = state_ptr.into_pointer_value();
 
         // Build a map of state field names to their index in the struct
-        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields
+            .iter()
             .enumerate()
             .map(|(i, s)| (s.name.as_str(), i as u32))
             .collect();
@@ -212,8 +252,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             // For unresolved types (Param/Infer/Error), lower_type returns i8 or i8*
             // which is wrong — it truncates values. Use i64 instead.
-            let is_unresolved = matches!(local.ty.kind(),
-                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+            let is_unresolved = matches!(
+                local.ty.kind(),
+                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error
+            );
             let effective_type: BasicTypeEnum = if is_unresolved {
                 i64_type.into()
             } else {
@@ -223,11 +265,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // Check if this local corresponds to a state field
             if let Some(&field_idx) = state_field_indices.get(local_name) {
                 // This is a state field - load its value from the typed state struct.
-                let field_ptr = self.builder
-                    .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                let field_ptr = self
+                    .builder
+                    .build_struct_gep(
+                        state_struct_type,
+                        typed_state_ptr,
+                        field_idx,
+                        &format!("{}_ptr", local_name),
+                    )
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-                let alloca = self.builder
+                let alloca = self
+                    .builder
                     .build_alloca(effective_type, local_name)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
@@ -237,14 +286,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // load directly (no conversion needed). This handles aggregate types
                 // like String ({i8*, i64, i64}) correctly.
                 if state_field_ty == effective_type {
-                    let loaded = self.builder
+                    let loaded = self
+                        .builder
                         .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                    self.builder.build_store(alloca, loaded)
+                    self.builder
+                        .build_store(alloca, loaded)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 } else {
                     // Generic fallback: state field is i64, convert to effective type.
-                    let i64_value = self.builder
+                    let i64_value = self
+                        .builder
                         .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
@@ -254,21 +306,49 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         if target_int.get_bit_width() == 64 {
                             i64_value
                         } else if target_int.get_bit_width() < 64 {
-                            self.builder.build_int_truncate(i64_int, target_int, &format!("{}_trunc", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            self.builder
+                                .build_int_truncate(
+                                    i64_int,
+                                    target_int,
+                                    &format!("{}_trunc", local_name),
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                                 .into()
                         } else {
-                            self.builder.build_int_s_extend(i64_int, target_int, &format!("{}_sext", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            self.builder
+                                .build_int_s_extend(
+                                    i64_int,
+                                    target_int,
+                                    &format!("{}_sext", local_name),
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                                 .into()
                         }
                     } else if effective_type.is_pointer_type() {
-                        self.builder.build_int_to_ptr(i64_value.into_int_value(), effective_type.into_pointer_type(), &format!("{}_ptr", local_name))
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        self.builder
+                            .build_int_to_ptr(
+                                i64_value.into_int_value(),
+                                effective_type.into_pointer_type(),
+                                &format!("{}_ptr", local_name),
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into()
                     } else if effective_type.is_float_type() {
-                        self.builder.build_bit_cast(i64_value, effective_type, &format!("{}_float", local_name))
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                        self.builder
+                            .build_bit_cast(
+                                i64_value,
+                                effective_type,
+                                &format!("{}_float", local_name),
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                     } else {
                         return Err(vec![Diagnostic::error(
                             format!(
@@ -279,7 +359,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             span,
                         )]);
                     };
-                    self.builder.build_store(alloca, converted)
+                    self.builder
+                        .build_store(alloca, converted)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 }
 
@@ -289,7 +370,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             // For the result param local, bind to the result parameter
-            let alloca = self.builder
+            let alloca = self
+                .builder
                 .build_alloca(effective_type, local_name)
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
@@ -303,21 +385,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         result_param
                     } else {
                         self.builder
-                            .build_int_truncate(result_param.into_int_value(), int_type, "ret_trunc")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .build_int_truncate(
+                                result_param.into_int_value(),
+                                int_type,
+                                "ret_trunc",
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into()
                     }
                 } else {
                     result_param
                 };
 
-                self.builder.build_store(alloca, converted_val)
+                self.builder
+                    .build_store(alloca, converted_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             } else {
                 // Initialize with zero/default for other locals
                 if effective_type.is_int_type() {
                     let zero_val = effective_type.into_int_type().const_zero();
-                    self.builder.build_store(alloca, zero_val)
+                    self.builder
+                        .build_store(alloca, zero_val)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 }
             }
@@ -338,14 +428,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     } else {
                         self.builder
                             .build_int_s_extend(iv, i64_type, "ret_ext")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                     }
                 }
-                BasicValueEnum::PointerValue(pv) => {
-                    self.builder
-                        .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                }
+                BasicValueEnum::PointerValue(pv) => self
+                    .builder
+                    .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?,
                 BasicValueEnum::FloatValue(fv) => {
                     // Bitcast float to i64 for passing through uniform interface
                     self.builder
@@ -357,10 +448,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     // For small structs that fit in 64 bits, pack the bits directly into i64.
                     // This avoids lifetime issues with stack-allocated pointers.
                     let struct_type = sv.get_type();
-                    let alloca = self.builder
+                    let alloca = self
+                        .builder
                         .build_alloca(struct_type, "ret_struct")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                    self.builder.build_store(alloca, sv)
+                    self.builder
+                        .build_store(alloca, sv)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                     // With opaque pointers, load as i64 directly from the alloca
@@ -372,10 +465,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 BasicValueEnum::ArrayValue(av) => {
                     // Array return: allocate on stack and return pointer as i64
                     let array_type = av.get_type();
-                    let alloca = self.builder
+                    let alloca = self
+                        .builder
                         .build_alloca(array_type, "ret_array")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                    self.builder.build_store(alloca, av)
+                    self.builder
+                        .build_store(alloca, av)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder
                         .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
@@ -389,11 +484,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     )]);
                 }
             };
-            self.builder.build_return(Some(&ret_i64))
+            self.builder
+                .build_return(Some(&ret_i64))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
         } else {
             // Return the input unchanged for unit type
-            self.builder.build_return(Some(&result_param.into_int_value()))
+            self.builder
+                .build_return(Some(&result_param.into_int_value()))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
         }
 
@@ -434,9 +531,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let fn_name = format!("{}_finally", handler_name);
 
         // Check if function was already declared; if so, reuse it
-        let fn_value = self.module.get_function(&fn_name).unwrap_or_else(|| {
-            self.module.add_function(&fn_name, finally_fn_type, None)
-        });
+        let fn_value = self
+            .module
+            .get_function(&fn_name)
+            .unwrap_or_else(|| self.module.add_function(&fn_name, finally_fn_type, None));
 
         // Create entry block
         let entry_block = self.context.append_basic_block(fn_value, "entry");
@@ -455,16 +553,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.in_handler_body = true;
 
                 // Get the state pointer parameter
-                let state_ptr = fn_value.get_nth_param(0)
-                    .ok_or_else(|| vec![Diagnostic::error("Missing state pointer parameter".to_string(), span)])?;
+                let state_ptr = fn_value.get_nth_param(0).ok_or_else(|| {
+                    vec![Diagnostic::error(
+                        "Missing state pointer parameter".to_string(),
+                        span,
+                    )]
+                })?;
 
                 // Build the handler state struct type using TYPED layout
-                let state_field_types: Vec<BasicTypeEnum> = self.handler_state_field_types(state_fields);
+                let state_field_types: Vec<BasicTypeEnum> =
+                    self.handler_state_field_types(state_fields);
                 let state_struct_type = self.context.struct_type(&state_field_types, false);
                 let typed_state_ptr = state_ptr.into_pointer_value();
 
                 // Build a map of state field names to their index in the struct
-                let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+                let state_field_indices: std::collections::HashMap<&str, u32> = state_fields
+                    .iter()
                     .enumerate()
                     .map(|(i, s)| (s.name.as_str(), i as u32))
                     .collect();
@@ -474,8 +578,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     let local_type = self.lower_type(&local.ty);
                     let local_name = local.name.as_deref().unwrap_or("local");
 
-                    let is_unresolved = matches!(local.ty.kind(),
-                        TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+                    let is_unresolved = matches!(
+                        local.ty.kind(),
+                        TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error
+                    );
                     let effective_type: BasicTypeEnum = if is_unresolved {
                         i64_type.into()
                     } else {
@@ -484,26 +590,48 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
                     // Check if this local corresponds to a state field
                     if let Some(&field_idx) = state_field_indices.get(local_name) {
-                        let field_ptr = self.builder
-                            .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        let field_ptr = self
+                            .builder
+                            .build_struct_gep(
+                                state_struct_type,
+                                typed_state_ptr,
+                                field_idx,
+                                &format!("{}_ptr", local_name),
+                            )
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?;
 
-                        let alloca = self.builder
+                        let alloca = self
+                            .builder
                             .build_alloca(effective_type, local_name)
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?;
 
                         let state_field_ty = state_field_types[field_idx as usize];
 
                         if state_field_ty == effective_type {
-                            let loaded = self.builder
-                                .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                            self.builder.build_store(alloca, loaded)
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                            let loaded = self
+                                .builder
+                                .build_load(
+                                    effective_type,
+                                    field_ptr,
+                                    &format!("{}_val", local_name),
+                                )
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?;
+                            self.builder.build_store(alloca, loaded).map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?;
                         } else {
-                            let i64_value = self.builder
+                            let i64_value = self
+                                .builder
                                 .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?;
 
                             let converted = if effective_type.is_int_type() {
                                 let target_int = effective_type.into_int_type();
@@ -511,21 +639,55 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 if target_int.get_bit_width() == 64 {
                                     i64_value
                                 } else if target_int.get_bit_width() < 64 {
-                                    self.builder.build_int_truncate(i64_int, target_int, &format!("{}_trunc", local_name))
-                                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                    self.builder
+                                        .build_int_truncate(
+                                            i64_int,
+                                            target_int,
+                                            &format!("{}_trunc", local_name),
+                                        )
+                                        .map_err(|e| {
+                                            vec![Diagnostic::error(
+                                                format!("LLVM error: {}", e),
+                                                span,
+                                            )]
+                                        })?
                                         .into()
                                 } else {
-                                    self.builder.build_int_s_extend(i64_int, target_int, &format!("{}_sext", local_name))
-                                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                    self.builder
+                                        .build_int_s_extend(
+                                            i64_int,
+                                            target_int,
+                                            &format!("{}_sext", local_name),
+                                        )
+                                        .map_err(|e| {
+                                            vec![Diagnostic::error(
+                                                format!("LLVM error: {}", e),
+                                                span,
+                                            )]
+                                        })?
                                         .into()
                                 }
                             } else if effective_type.is_pointer_type() {
-                                self.builder.build_int_to_ptr(i64_value.into_int_value(), effective_type.into_pointer_type(), &format!("{}_ptr", local_name))
-                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                self.builder
+                                    .build_int_to_ptr(
+                                        i64_value.into_int_value(),
+                                        effective_type.into_pointer_type(),
+                                        &format!("{}_ptr", local_name),
+                                    )
+                                    .map_err(|e| {
+                                        vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                    })?
                                     .into()
                             } else if effective_type.is_float_type() {
-                                self.builder.build_bit_cast(i64_value, effective_type, &format!("{}_float", local_name))
-                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                self.builder
+                                    .build_bit_cast(
+                                        i64_value,
+                                        effective_type,
+                                        &format!("{}_float", local_name),
+                                    )
+                                    .map_err(|e| {
+                                        vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                    })?
                             } else {
                                 return Err(vec![Diagnostic::error(
                                     format!(
@@ -535,8 +697,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                     span,
                                 )]);
                             };
-                            self.builder.build_store(alloca, converted)
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                            self.builder.build_store(alloca, converted).map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?;
                         }
 
                         self.locals.insert(local.id, alloca);
@@ -545,14 +708,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
 
                     // Non-state locals
-                    let alloca = self.builder
+                    let alloca = self
+                        .builder
                         .build_alloca(effective_type, local_name)
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                     if effective_type.is_int_type() {
                         let zero_val = effective_type.into_int_type().const_zero();
-                        self.builder.build_store(alloca, zero_val)
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        self.builder.build_store(alloca, zero_val).map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                        })?;
                     }
 
                     self.locals.insert(local.id, alloca);
@@ -563,7 +728,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let _result = self.compile_expr(&body.expr)?;
 
                 // Return void
-                self.builder.build_return(None)
+                self.builder
+                    .build_return(None)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Set WeakODR linkage for cross-object deduplication
@@ -576,15 +742,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.in_handler_body = saved_in_handler_body;
             } else {
                 // Body not found — generate no-op
-                self.builder.build_return(None)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+                self.builder.build_return(None).map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        Span::dummy(),
+                    )]
+                })?;
                 use inkwell::module::Linkage;
                 fn_value.set_linkage(Linkage::WeakODR);
             }
         } else {
             // No finally clause — generate no-op function (just ret void)
-            self.builder.build_return(None)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            self.builder.build_return(None).map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    Span::dummy(),
+                )]
+            })?;
             use inkwell::module::Linkage;
             fn_value.set_linkage(Linkage::WeakODR);
         }
@@ -632,22 +806,40 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.in_handler_body = true;
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
-        let state_ptr = fn_value.get_nth_param(0)
-            .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
-        let args_ptr = fn_value.get_nth_param(1)
-            .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
-        let _arg_count_param = fn_value.get_nth_param(2)
-            .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
-        let continuation_param = fn_value.get_nth_param(3)
-            .ok_or_else(|| vec![Diagnostic::error("Missing continuation parameter".to_string(), span)])?;
+        let state_ptr = fn_value.get_nth_param(0).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing state parameter".to_string(),
+                span,
+            )]
+        })?;
+        let args_ptr = fn_value.get_nth_param(1).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing args parameter".to_string(),
+                span,
+            )]
+        })?;
+        let _arg_count_param = fn_value.get_nth_param(2).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing arg_count parameter".to_string(),
+                span,
+            )]
+        })?;
+        let continuation_param = fn_value.get_nth_param(3).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing continuation parameter".to_string(),
+                span,
+            )]
+        })?;
 
         let i64_type = self.context.i64_type();
 
         // Store continuation parameter for use by compile_resume
-        let cont_alloca = self.builder
+        let cont_alloca = self
+            .builder
             .build_alloca(i64_type, "continuation")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-        self.builder.build_store(cont_alloca, continuation_param)
+        self.builder
+            .build_store(cont_alloca, continuation_param)
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
         self.current_continuation = Some(cont_alloca);
 
@@ -664,7 +856,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let typed_state_ptr = state_ptr.into_pointer_value();
 
         // Build a map of state field names to their index in the struct
-        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+        let state_field_indices: std::collections::HashMap<&str, u32> = state_fields
+            .iter()
             .enumerate()
             .map(|(i, s)| (s.name.as_str(), i as u32))
             .collect();
@@ -682,8 +875,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             // For unresolved types (Param/Infer/Error), use i64 matching the
             // uniform handler protocol width. Only call lower_type for concrete types
             // to avoid spurious "unsubstituted type parameter" errors.
-            let is_unresolved = matches!(local.ty.kind(),
-                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+            let is_unresolved = matches!(
+                local.ty.kind(),
+                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error
+            );
             let effective_type: BasicTypeEnum = if is_unresolved {
                 i64_type.into()
             } else {
@@ -694,7 +889,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             if local.name.as_deref() == Some("resume") {
                 // Resume is a placeholder - we'll handle resume calls specially
                 // Create an alloca for it but don't initialize it (it's not a real value)
-                let alloca = self.builder
+                let alloca = self
+                    .builder
                     .build_alloca(i64_type, "resume_placeholder")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.locals.insert(local.id, alloca);
@@ -708,8 +904,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // This ensures reads/writes go through the shared state, so mutations
                 // are visible even when resume() does a longjmp (which would skip
                 // any post-body writeback code). This matches the selfhost approach.
-                let field_ptr = self.builder
-                    .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                let field_ptr = self
+                    .builder
+                    .build_struct_gep(
+                        state_struct_type,
+                        typed_state_ptr,
+                        field_idx,
+                        &format!("{}_ptr", local_name),
+                    )
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Use the GEP pointer directly — all reads/writes go through
@@ -721,14 +923,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
 
             // For other locals (operation params, temporaries), allocate with effective type
-            let alloca = self.builder
+            let alloca = self
+                .builder
                 .build_alloca(effective_type, local_name)
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             // Initialize with zero/default
             if effective_type.is_int_type() {
                 let zero_val = effective_type.into_int_type().const_zero();
-                self.builder.build_store(alloca, zero_val)
+                self.builder
+                    .build_store(alloca, zero_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             }
 
@@ -750,7 +954,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // We need to process exactly param_count non-state-field, non-resume locals.
         let mut arg_index: u32 = 0;
         let op_param_count = body.param_count;
-        for local in body.locals.iter().skip(1) {  // Skip return place at index 0
+        for local in body.locals.iter().skip(1) {
+            // Skip return place at index 0
             // Stop once we've processed all operation parameters
             if arg_index as usize >= op_param_count {
                 break;
@@ -769,18 +974,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // args_ptr is a pointer to i64 values, so we only need one index
                 let idx = i64_type.const_int(arg_index as u64, false);
                 let arg_ptr = unsafe {
-                    self.builder.build_gep(i64_type, args_ptr_val, &[idx], &format!("arg_{}_ptr", arg_index))
-                }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    self.builder.build_gep(
+                        i64_type,
+                        args_ptr_val,
+                        &[idx],
+                        &format!("arg_{}_ptr", arg_index),
+                    )
+                }
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Load the argument value (as i64)
-                let arg_val = self.builder
+                let arg_val = self
+                    .builder
                     .build_load(i64_type, arg_ptr, &format!("arg_{}", arg_index))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // Convert to match the parameter type.
                 // Use i64 for unresolved types to avoid truncation.
-                let is_param_unresolved = matches!(local.ty.kind(),
-                    TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+                let is_param_unresolved = matches!(
+                    local.ty.kind(),
+                    TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error
+                );
                 let param_type: BasicTypeEnum = if is_param_unresolved {
                     i64_type.into()
                 } else {
@@ -792,12 +1006,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     if target_int_type.get_bit_width() < 64 {
                         self.builder
                             .build_int_truncate(arg_int, target_int_type, "arg_trunc")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into()
                     } else if target_int_type.get_bit_width() > 64 {
                         self.builder
                             .build_int_s_extend(arg_int, target_int_type, "arg_ext")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into()
                     } else {
                         arg_int.into()
@@ -811,7 +1029,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 } else if param_type.is_struct_type() {
                     // For struct types, the i64 is a pointer to the struct - convert and load
                     let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                    let struct_ptr = self.builder
+                    let struct_ptr = self
+                        .builder
                         .build_int_to_ptr(arg_int, opaque_ptr_type, "struct_arg_ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder
@@ -820,7 +1039,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 } else if param_type.is_array_type() {
                     // For array types, the i64 is a pointer to the array - convert and load
                     let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                    let array_ptr = self.builder
+                    let array_ptr = self
+                        .builder
                         .build_int_to_ptr(arg_int, opaque_ptr_type, "array_arg_ptr")
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                     self.builder
@@ -837,7 +1057,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 };
 
                 // Store in the parameter's alloca
-                self.builder.build_store(alloca, final_val)
+                self.builder
+                    .build_store(alloca, final_val)
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 arg_index += 1;
@@ -852,7 +1073,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Check if the basic block already has a terminator (e.g., from resume)
         // If so, don't add another return
-        let current_block = self.builder.get_insert_block()
+        let current_block = self
+            .builder
+            .get_insert_block()
             .ok_or_else(|| vec![Diagnostic::error("No current block".to_string(), span)])?;
         if current_block.get_terminator().is_some() {
             // Block already terminated (likely by resume), don't add another return
@@ -866,48 +1089,63 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         } else {
                             self.builder
                                 .build_int_s_extend(iv, i64_type, "ret_ext")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                         }
                     }
-                    BasicValueEnum::PointerValue(pv) => {
-                        self.builder
-                            .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                    }
+                    BasicValueEnum::PointerValue(pv) => self
+                        .builder
+                        .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?,
                     BasicValueEnum::FloatValue(fv) => {
                         // Bitcast float to i64 for passing through uniform interface
                         self.builder
                             .build_bit_cast(fv, i64_type, "float_as_i64")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into_int_value()
                     }
                     BasicValueEnum::StructValue(sv) => {
                         // For small structs that fit in 64 bits, pack the bits directly into i64.
                         // This avoids lifetime issues with stack-allocated pointers.
                         let struct_type = sv.get_type();
-                        let alloca = self.builder
+                        let alloca = self
+                            .builder
                             .build_alloca(struct_type, "ret_struct")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                        self.builder.build_store(alloca, sv)
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?;
+                        self.builder.build_store(alloca, sv).map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                        })?;
 
                         // With opaque pointers, load as i64 directly from the alloca
                         self.builder
                             .build_load(i64_type, alloca, "ret_struct_bits")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                             .into_int_value()
                     }
                     BasicValueEnum::ArrayValue(av) => {
                         // Array return: allocate on stack and return pointer as i64
                         let array_type = av.get_type();
-                        let alloca = self.builder
-                            .build_alloca(array_type, "ret_array")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                        self.builder.build_store(alloca, av)
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        let alloca =
+                            self.builder
+                                .build_alloca(array_type, "ret_array")
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?;
+                        self.builder.build_store(alloca, av).map_err(|e| {
+                            vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                        })?;
                         self.builder
                             .build_ptr_to_int(alloca, i64_type, "ret_array_ptr")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            .map_err(|e| {
+                                vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                            })?
                     }
                     BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
                         return Err(vec![Diagnostic::error(
@@ -916,11 +1154,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )]);
                     }
                 };
-                self.builder.build_return(Some(&ret_i64))
+                self.builder
+                    .build_return(Some(&ret_i64))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             } else {
                 // Return 0 for unit type
-                self.builder.build_return(Some(&i64_type.const_zero()))
+                self.builder
+                    .build_return(Some(&i64_type.const_zero()))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             }
         }
@@ -958,7 +1198,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let void_type = self.context.void_type();
 
         // Get or declare the registration function (returns registry index)
-        let register_fn = self.module.get_function("blood_evidence_register")
+        let register_fn = self
+            .module
+            .get_function("blood_evidence_register")
             .unwrap_or_else(|| {
                 let fn_type = i64_type.fn_type(
                     &[
@@ -970,7 +1212,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     ],
                     false,
                 );
-                self.module.add_function("blood_evidence_register", fn_type, None)
+                self.module
+                    .add_function("blood_evidence_register", fn_type, None)
             });
 
         // Create a global constructor function to register handlers at startup
@@ -979,7 +1222,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // and handler_registration.o).
         let init_fn_type = void_type.fn_type(&[], false);
         use inkwell::module::Linkage;
-        let init_fn = self.module.add_function("__blood_register_handlers", init_fn_type, Some(Linkage::LinkOnceODR));
+        let init_fn = self.module.add_function(
+            "__blood_register_handlers",
+            init_fn_type,
+            Some(Linkage::LinkOnceODR),
+        );
 
         let entry = self.context.append_basic_block(init_fn, "entry");
         self.builder.position_at_end(entry);
@@ -993,9 +1240,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             // Create array of function pointers
             let array_type = ptr_type.array_type(op_count as u32);
-            let ops_alloca = self.builder
+            let ops_alloca = self
+                .builder
                 .build_alloca(array_type, "handler_ops")
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             let i32_type = self.context.i32_type();
             let zero = i32_type.const_zero();
@@ -1004,21 +1257,39 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 if let Some(&fn_value) = self.handler_ops.get(&(*handler_id, op_idx)) {
                     let idx = i32_type.const_int(op_idx as u64, false);
                     let gep = unsafe {
-                        self.builder.build_gep(array_type, ops_alloca, &[zero, idx], "op_ptr")
-                    }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                        self.builder
+                            .build_gep(array_type, ops_alloca, &[zero, idx], "op_ptr")
+                    }
+                    .map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
 
                     // With opaque pointers, all pointers are the same type — no cast needed.
                     let fn_ptr = fn_value.as_global_value().as_pointer_value();
 
-                    self.builder.build_store(gep, fn_ptr)
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                    self.builder.build_store(gep, fn_ptr).map_err(|e| {
+                        vec![Diagnostic::error(
+                            format!("LLVM error: {}", e),
+                            self.current_span(),
+                        )]
+                    })?;
                 }
             }
 
             // Get pointer to first element
             let ops_ptr = unsafe {
-                self.builder.build_gep(array_type, ops_alloca, &[zero, zero], "ops_ptr")
-            }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+                self.builder
+                    .build_gep(array_type, ops_alloca, &[zero, zero], "ops_ptr")
+            }
+            .map_err(|e| {
+                vec![Diagnostic::error(
+                    format!("LLVM error: {}", e),
+                    self.current_span(),
+                )]
+            })?;
 
             // Call blood_evidence_register(null, effect_id, ops, op_count, is_deep)
             // Returns the registry index for this handler
@@ -1033,31 +1304,57 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 false,
             );
 
-            let reg_result = self.builder.build_call(
-                register_fn,
-                &[null_ev.into(), effect_id_val.into(), ops_ptr.into(), op_count_val.into(), is_deep_val.into()],
-                "reg_idx",
-            ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            let reg_result = self
+                .builder
+                .build_call(
+                    register_fn,
+                    &[
+                        null_ev.into(),
+                        effect_id_val.into(),
+                        ops_ptr.into(),
+                        op_count_val.into(),
+                        is_deep_val.into(),
+                    ],
+                    "reg_idx",
+                )
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
 
             // Store the registry index in the pre-created global variable
             let global_name = format!("__handler_registry_idx_{}", handler_id.index);
-            let global = self.module.get_global(&global_name)
-                .ok_or_else(|| vec![Diagnostic::error(
+            let global = self.module.get_global(&global_name).ok_or_else(|| {
+                vec![Diagnostic::error(
                     format!("Handler registry global '{}' not found", global_name),
                     self.current_span(),
-                )])?;
+                )]
+            })?;
 
-            let reg_idx_val = reg_result.try_as_basic_value()
-                .basic()
-                .ok_or_else(|| vec![Diagnostic::error(
-                    "blood_evidence_register returned void", self.current_span()
-                )])?;
-            self.builder.build_store(global.as_pointer_value(), reg_idx_val)
-                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+            let reg_idx_val = reg_result.try_as_basic_value().basic().ok_or_else(|| {
+                vec![Diagnostic::error(
+                    "blood_evidence_register returned void",
+                    self.current_span(),
+                )]
+            })?;
+            self.builder
+                .build_store(global.as_pointer_value(), reg_idx_val)
+                .map_err(|e| {
+                    vec![Diagnostic::error(
+                        format!("LLVM error: {}", e),
+                        self.current_span(),
+                    )]
+                })?;
         }
 
-        self.builder.build_return(None)
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+        self.builder.build_return(None).map_err(|e| {
+            vec![Diagnostic::error(
+                format!("LLVM error: {}", e),
+                self.current_span(),
+            )]
+        })?;
 
         // Add to llvm.global_ctors so it runs at program startup
         self.add_global_constructor(init_fn)?;
@@ -1086,17 +1383,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Handler operation function signature:
         // fn(state: *mut void, args: *const i64, arg_count: i64, continuation: i64) -> i64
         let handler_op_type = i64_type.fn_type(
-            &[ptr_type.into(), ptr_type.into(), i64_type.into(), i64_type.into()],
+            &[
+                ptr_type.into(),
+                ptr_type.into(),
+                i64_type.into(),
+                i64_type.into(),
+            ],
             false,
         );
 
         // Generate unique function name for this inline handler operation
         // Include parent_def_id to ensure uniqueness across different functions
         // that handle the same effect operation
-        let parent_path = self.def_paths.get(&handler_body.parent_def_id)
+        let parent_path = self
+            .def_paths
+            .get(&handler_body.parent_def_id)
             .map(|p| p.replace("::", "$"))
             .unwrap_or_else(|| format!("{}", handler_body.parent_def_id.index()));
-        let effect_path = self.def_paths.get(&handler_body.effect_id)
+        let effect_path = self
+            .def_paths
+            .get(&handler_body.effect_id)
             .map(|p| p.replace("::", "$"))
             .unwrap_or_else(|| format!("{}", handler_body.effect_id.index()));
         let fn_name = format!(
@@ -1117,7 +1423,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // (e.g., when monomorphized generic functions with inline handlers are
         // called from multiple closures).
         use inkwell::module::Linkage;
-        let fn_value = self.module.add_function(&fn_name, handler_op_type, Some(Linkage::LinkOnceODR));
+        let fn_value =
+            self.module
+                .add_function(&fn_name, handler_op_type, Some(Linkage::LinkOnceODR));
 
         // Detect if this is a multi-shot handler (has multiple resume calls)
         let resume_count = crate::effects::handler::count_resumes_in_expr(&handler_body.body);
@@ -1138,20 +1446,38 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.in_handler_body = true;
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
-        let state_ptr = fn_value.get_nth_param(0)
-            .ok_or_else(|| vec![Diagnostic::error("Missing state parameter".to_string(), span)])?;
-        let args_ptr = fn_value.get_nth_param(1)
-            .ok_or_else(|| vec![Diagnostic::error("Missing args parameter".to_string(), span)])?;
-        let _arg_count_param = fn_value.get_nth_param(2)
-            .ok_or_else(|| vec![Diagnostic::error("Missing arg_count parameter".to_string(), span)])?;
-        let continuation_param = fn_value.get_nth_param(3)
-            .ok_or_else(|| vec![Diagnostic::error("Missing continuation parameter".to_string(), span)])?;
+        let state_ptr = fn_value.get_nth_param(0).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing state parameter".to_string(),
+                span,
+            )]
+        })?;
+        let args_ptr = fn_value.get_nth_param(1).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing args parameter".to_string(),
+                span,
+            )]
+        })?;
+        let _arg_count_param = fn_value.get_nth_param(2).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing arg_count parameter".to_string(),
+                span,
+            )]
+        })?;
+        let continuation_param = fn_value.get_nth_param(3).ok_or_else(|| {
+            vec![Diagnostic::error(
+                "Missing continuation parameter".to_string(),
+                span,
+            )]
+        })?;
 
         // Store continuation parameter for use by compile_resume
-        let cont_alloca = self.builder
+        let cont_alloca = self
+            .builder
             .build_alloca(i64_type, "continuation")
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-        self.builder.build_store(cont_alloca, continuation_param)
+        self.builder
+            .build_store(cont_alloca, continuation_param)
             .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
         self.current_continuation = Some(cont_alloca);
 
@@ -1168,15 +1494,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.builder.build_gep(
                         i8_type,
                         state_ptr_val,
-                        &[i64_type.const_int(capture_idx as u64 * 8, false)],  // 8 bytes per pointer
-                        &format!("capture_{}_ptr_ptr", capture_idx)
+                        &[i64_type.const_int(capture_idx as u64 * 8, false)], // 8 bytes per pointer
+                        &format!("capture_{}_ptr_ptr", capture_idx),
                     )
-                }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                }
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
                 // With opaque pointers, no pointer cast needed — load the pointer directly.
                 // The elem_ptr points to a slot containing a pointer to the captured variable.
                 let capture_type = self.lower_type(&capture.ty);
-                let capture_ptr = self.builder
+                let capture_ptr = self
+                    .builder
                     .build_load(ptr_type, elem_ptr, &format!("capture_{}_ptr", capture_idx))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
                     .into_pointer_value();
@@ -1190,22 +1518,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Extract operation parameters from args_ptr and bind to locals
         let args_ptr_val = args_ptr.into_pointer_value();
-        for (idx, (param_id, param_ty)) in handler_body.params.iter()
+        for (idx, (param_id, param_ty)) in handler_body
+            .params
+            .iter()
             .zip(handler_body.param_types.iter())
             .enumerate()
         {
             let local_type = self.lower_type(param_ty);
-            let alloca = self.builder
+            let alloca = self
+                .builder
                 .build_alloca(local_type, &format!("param_{}", idx))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             // Load the argument from args[idx]
             let arg_idx = i64_type.const_int(idx as u64, false);
             let arg_ptr = unsafe {
-                self.builder.build_gep(i64_type, args_ptr_val, &[arg_idx], &format!("arg_{}_ptr", idx))
-            }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                self.builder.build_gep(
+                    i64_type,
+                    args_ptr_val,
+                    &[arg_idx],
+                    &format!("arg_{}_ptr", idx),
+                )
+            }
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-            let arg_val = self.builder
+            let arg_val = self
+                .builder
                 .build_load(i64_type, arg_ptr, &format!("arg_{}", idx))
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
@@ -1234,7 +1572,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             } else if local_type.is_struct_type() {
                 // For struct types, the i64 is a pointer to the struct - convert and load
                 let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let struct_ptr = self.builder
+                let struct_ptr = self
+                    .builder
                     .build_int_to_ptr(arg_int, opaque_ptr_type, "struct_arg_ptr")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder
@@ -1243,7 +1582,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             } else if local_type.is_array_type() {
                 // For array types, the i64 is a pointer to the array - convert and load
                 let opaque_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let array_ptr = self.builder
+                let array_ptr = self
+                    .builder
                     .build_int_to_ptr(arg_int, opaque_ptr_type, "array_arg_ptr")
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
                 self.builder
@@ -1259,7 +1599,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 arg_int.into()
             };
 
-            self.builder.build_store(alloca, final_val)
+            self.builder
+                .build_store(alloca, final_val)
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
             self.locals.insert(*param_id, alloca);
@@ -1270,7 +1611,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let result = self.compile_expr(&handler_body.body)?;
 
         // Check if block already terminated (e.g., by resume)
-        let current_block = self.builder.get_insert_block()
+        let current_block = self
+            .builder
+            .get_insert_block()
             .ok_or_else(|| vec![Diagnostic::error("No current block".to_string(), span)])?;
         if current_block.get_terminator().is_some() {
             // Block already terminated, don't add return
@@ -1284,14 +1627,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         } else {
                             self.builder
                                 .build_int_s_extend(iv, i64_type, "ret_ext")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                         }
                     }
-                    BasicValueEnum::PointerValue(pv) => {
-                        self.builder
-                            .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                    }
+                    BasicValueEnum::PointerValue(pv) => self
+                        .builder
+                        .build_ptr_to_int(pv, i64_type, "ret_ptr_int")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?,
                     BasicValueEnum::FloatValue(fv) => {
                         // Convert float to i64 via bitcast for ABI compatibility
                         // Check if this is a 64-bit float by comparing types
@@ -1299,16 +1643,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         if fv.get_type() == f64_type {
                             self.builder
                                 .build_bit_cast(fv, i64_type, "ret_float_cast")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                                 .into_int_value()
                         } else {
                             // Extend f32 to f64, then bitcast to i64
-                            let extended = self.builder
+                            let extended = self
+                                .builder
                                 .build_float_ext(fv, f64_type, "ret_float_ext")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?;
                             self.builder
                                 .build_bit_cast(extended, i64_type, "ret_float_cast")
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                .map_err(|e| {
+                                    vec![Diagnostic::error(format!("LLVM error: {}", e), span)]
+                                })?
                                 .into_int_value()
                         }
                     }
@@ -1320,8 +1671,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     }
                     BasicValueEnum::StructValue(_) => {
                         return Err(vec![Diagnostic::error(
-                            "Handler cannot return struct type directly - use a pointer or wrapper".to_string(),
-                            span
+                            "Handler cannot return struct type directly - use a pointer or wrapper"
+                                .to_string(),
+                            span,
                         )]);
                     }
                     BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
@@ -1331,11 +1683,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         )]);
                     }
                 };
-                self.builder.build_return(Some(&ret_i64))
+                self.builder
+                    .build_return(Some(&ret_i64))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             } else {
                 // Return 0 for unit type
-                self.builder.build_return(Some(&i64_type.const_zero()))
+                self.builder
+                    .build_return(Some(&i64_type.const_zero()))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
             }
         }
@@ -1351,19 +1705,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Add a function to llvm.global_ctors for automatic execution at startup.
-    pub(super) fn add_global_constructor(&mut self, init_fn: FunctionValue<'ctx>) -> Result<(), Vec<Diagnostic>> {
+    pub(super) fn add_global_constructor(
+        &mut self,
+        init_fn: FunctionValue<'ctx>,
+    ) -> Result<(), Vec<Diagnostic>> {
         let i32_type = self.context.i32_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Constructor entry: { i32 priority, ptr fn, ptr data }
-        let ctor_struct_type = self.context.struct_type(
-            &[
-                i32_type.into(),
-                ptr_type.into(),
-                ptr_type.into(),
-            ],
-            false,
-        );
+        let ctor_struct_type = self
+            .context
+            .struct_type(&[i32_type.into(), ptr_type.into(), ptr_type.into()], false);
 
         // Create the constructor entry
         let priority = i32_type.const_int(65535, false); // Low priority (runs early)
@@ -1381,7 +1733,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ctor_array = ctor_struct_type.const_array(&[ctor_entry]);
 
         // Add as global variable with initializer
-        let global = self.module.add_global(ctor_array_type, None, "llvm.global_ctors");
+        let global = self
+            .module
+            .add_global(ctor_array_type, None, "llvm.global_ctors");
         global.set_initializer(&ctor_array);
         global.set_linkage(inkwell::module::Linkage::Appending);
 

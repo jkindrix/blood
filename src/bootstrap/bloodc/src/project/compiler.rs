@@ -161,7 +161,8 @@ impl ProjectCompiler {
         if let Some(parent) = dep_graph_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        self.dep_graph.save(&dep_graph_path)
+        self.dep_graph
+            .save(&dep_graph_path)
             .map_err(|e| FileCacheError::Io(std::io::Error::other(e.to_string())))?;
 
         Ok(())
@@ -213,7 +214,8 @@ impl ProjectCompiler {
         invalidated_modules.extend(self.file_cache.get_invalidated_modules(&deleted_files));
 
         // Use dependency graph to find transitive invalidations
-        let all_invalidated_modules: HashSet<_> = self.dep_graph
+        let all_invalidated_modules: HashSet<_> = self
+            .dep_graph
             .invalidation_set(&invalidated_modules.iter().copied().collect::<Vec<_>>());
 
         // Add files for transitively invalidated modules

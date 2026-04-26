@@ -23,47 +23,28 @@
 //! - [`stability`] - Type stability analysis
 //! - [`constraints`] - Constraint satisfaction checking
 
-mod types;
-mod effect_row;
-mod result;
-mod resolver;
-mod stability;
 mod constraints;
+mod effect_row;
+mod resolver;
+mod result;
+mod stability;
+mod types;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export all public items for backwards compatibility
 pub use types::{
-    MethodCandidate,
+    Constraint, ConstraintError, InstantiationResult, MethodCandidate, StructuralConstraint,
     TypeParam,
-    InstantiationResult,
-    ConstraintError,
-    Constraint,
-    StructuralConstraint,
 };
 
 pub use effect_row::EffectRow;
 
-pub use result::{
-    DispatchResult,
-    NoMatchError,
-    AmbiguityError,
-    TraitChecker,
-};
+pub use result::{AmbiguityError, DispatchResult, NoMatchError, TraitChecker};
 
-pub use resolver::{
-    DispatchResolver,
-    compare_type_param_specificity,
-};
+pub use resolver::{compare_type_param_specificity, DispatchResolver};
 
-pub use stability::{
-    TypeStabilityError,
-    TypeStabilityResult,
-    TypeStabilityChecker,
-};
+pub use stability::{TypeStabilityChecker, TypeStabilityError, TypeStabilityResult};
 
-pub use constraints::{
-    TraitConstraintChecker,
-    ConstraintChecker,
-};
+pub use constraints::{ConstraintChecker, TraitConstraintChecker};

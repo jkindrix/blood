@@ -225,13 +225,22 @@ impl<'a> AmbiguityChecker<'a> {
             // Tuples unify if elements unify
             (TypeKind::Tuple(ts1), TypeKind::Tuple(ts2)) => {
                 ts1.len() == ts2.len()
-                    && ts1.iter().zip(ts2).all(|(a, b)| self.types_could_unify(a, b))
+                    && ts1
+                        .iter()
+                        .zip(ts2)
+                        .all(|(a, b)| self.types_could_unify(a, b))
             }
 
             // Arrays unify if element types unify and lengths match
             (
-                TypeKind::Array { element: e1, size: l1 },
-                TypeKind::Array { element: e2, size: l2 },
+                TypeKind::Array {
+                    element: e1,
+                    size: l1,
+                },
+                TypeKind::Array {
+                    element: e2,
+                    size: l2,
+                },
             ) => l1 == l2 && self.types_could_unify(e1, e2),
 
             // Slices unify if element types unify
@@ -241,20 +250,31 @@ impl<'a> AmbiguityChecker<'a> {
 
             // References unify if inner types unify and mutability matches
             (
-                TypeKind::Ref { inner: i1, mutable: m1 },
-                TypeKind::Ref { inner: i2, mutable: m2 },
+                TypeKind::Ref {
+                    inner: i1,
+                    mutable: m1,
+                },
+                TypeKind::Ref {
+                    inner: i2,
+                    mutable: m2,
+                },
             ) => m1 == m2 && self.types_could_unify(i1, i2),
 
             // ADTs unify if they're the same type
-            (
-                TypeKind::Adt { def_id: d1, .. },
-                TypeKind::Adt { def_id: d2, .. },
-            ) => d1 == d2,
+            (TypeKind::Adt { def_id: d1, .. }, TypeKind::Adt { def_id: d2, .. }) => d1 == d2,
 
             // Function types unify if signatures unify
             (
-                TypeKind::Fn { params: p1, ret: r1, .. },
-                TypeKind::Fn { params: p2, ret: r2, .. },
+                TypeKind::Fn {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
             ) => {
                 p1.len() == p2.len()
                     && p1.iter().zip(p2).all(|(a, b)| self.types_could_unify(a, b))
@@ -270,9 +290,8 @@ impl<'a> AmbiguityChecker<'a> {
     fn find_conflict_types(&self, m1: &MethodCandidate, m2: &MethodCandidate) -> Option<Vec<Type>> {
         // Try to find concrete types that would match both methods
         // For now, return the first method's types if they're concrete
-        let is_type_var = |t: &Type| {
-            matches!(t.kind.as_ref(), TypeKind::Infer(_) | TypeKind::Param(_))
-        };
+        let is_type_var =
+            |t: &Type| matches!(t.kind.as_ref(), TypeKind::Infer(_) | TypeKind::Param(_));
 
         let types: Vec<Type> = m1
             .param_types
@@ -322,16 +341,13 @@ impl<'a> AmbiguityChecker<'a> {
 
             if m1_constraints != m2_constraints {
                 // Suggest combining constraints
-                if let (Some(p1), Some(p2)) =
-                    (m1.type_params.first(), m2.type_params.first())
-                {
+                if let (Some(p1), Some(p2)) = (m1.type_params.first(), m2.type_params.first()) {
                     if !p1.constraints.is_empty() && !p2.constraints.is_empty() {
                         return AmbiguitySuggestion::ConstrainTypeParameter {
                             param: p1.name.clone(),
                             with_trait: format!(
                                 "{} + {}",
-                                p1.constraints[0].trait_name,
-                                p2.constraints[0].trait_name
+                                p1.constraints[0].trait_name, p2.constraints[0].trait_name
                             ),
                         };
                     }
@@ -407,8 +423,8 @@ pub fn check_call_site_ambiguity(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::dispatch::TypeParam;
+    use super::*;
     use crate::hir::DefId;
 
     fn make_candidate(name: &str, params: Vec<Type>) -> MethodCandidate {

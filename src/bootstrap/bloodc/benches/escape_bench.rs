@@ -332,13 +332,17 @@ fn bench_escape_analysis_speed(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("mixed_workload", size), size, |b, &size| {
-            let body = generate_mixed_workload(size);
-            b.iter(|| {
-                let mut analyzer = EscapeAnalyzer::new();
-                black_box(analyzer.analyze(&body))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("mixed_workload", size),
+            size,
+            |b, &size| {
+                let body = generate_mixed_workload(size);
+                b.iter(|| {
+                    let mut analyzer = EscapeAnalyzer::new();
+                    black_box(analyzer.analyze(&body))
+                });
+            },
+        );
     }
 
     group.finish();
@@ -362,15 +366,19 @@ fn bench_stack_promotion_effectiveness(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(BenchmarkId::new("mixed_workload", size), size, |b, &size| {
-            let body = generate_mixed_workload(size);
-            b.iter(|| {
-                let mut analyzer = EscapeAnalyzer::new();
-                let results = analyzer.analyze(&body);
-                let rate = results.stack_promotable.len() as f64 / results.states.len() as f64;
-                black_box(rate)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("mixed_workload", size),
+            size,
+            |b, &size| {
+                let body = generate_mixed_workload(size);
+                b.iter(|| {
+                    let mut analyzer = EscapeAnalyzer::new();
+                    let results = analyzer.analyze(&body);
+                    let rate = results.stack_promotable.len() as f64 / results.states.len() as f64;
+                    black_box(rate)
+                });
+            },
+        );
     }
 
     group.finish();
@@ -385,13 +393,17 @@ fn bench_closure_chain_convergence(c: &mut Criterion) {
     let mut group = c.benchmark_group("closure_chain_convergence");
 
     for size in [50, 100, 200, 500].iter() {
-        group.bench_with_input(BenchmarkId::new("closure_chains", size), size, |b, &size| {
-            let body = generate_closure_chain(size);
-            b.iter(|| {
-                let mut analyzer = EscapeAnalyzer::new();
-                black_box(analyzer.analyze(&body))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("closure_chains", size),
+            size,
+            |b, &size| {
+                let body = generate_closure_chain(size);
+                b.iter(|| {
+                    let mut analyzer = EscapeAnalyzer::new();
+                    black_box(analyzer.analyze(&body))
+                });
+            },
+        );
     }
 
     group.finish();

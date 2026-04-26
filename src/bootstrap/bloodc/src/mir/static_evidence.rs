@@ -30,9 +30,9 @@
 //! }
 //! ```
 
+use super::ptr::MemoryTier;
 use crate::effects::evidence::HandlerStateKind;
 use crate::hir::{Expr, ExprKind, LiteralValue, Type, TypeKind};
-use super::ptr::MemoryTier;
 
 // ============================================================================
 // Inline Evidence Mode (EFF-OPT-003/004)
@@ -215,8 +215,7 @@ fn contains_nested_handle(expr: &Expr) -> bool {
         ExprKind::Closure { .. } => true,
 
         // Recursively check sub-expressions
-        ExprKind::Block { stmts, expr }
-        | ExprKind::Region { stmts, expr, .. } => {
+        ExprKind::Block { stmts, expr } | ExprKind::Region { stmts, expr, .. } => {
             for stmt in stmts {
                 if contains_nested_handle_stmt(stmt) {
                     return true;
@@ -225,10 +224,16 @@ fn contains_nested_handle(expr: &Expr) -> bool {
             expr.as_ref().is_some_and(|e| contains_nested_handle(e))
         }
 
-        ExprKind::If { condition, then_branch, else_branch } => {
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             contains_nested_handle(condition)
                 || contains_nested_handle(then_branch)
-                || else_branch.as_ref().is_some_and(|e| contains_nested_handle(e))
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|e| contains_nested_handle(e))
         }
 
         ExprKind::Match { scrutinee, arms } => {
@@ -250,9 +255,9 @@ fn contains_nested_handle(expr: &Expr) -> bool {
 
         ExprKind::Loop { body, .. } => contains_nested_handle(body),
 
-        ExprKind::While { condition, body, .. } => {
-            contains_nested_handle(condition) || contains_nested_handle(body)
-        }
+        ExprKind::While {
+            condition, body, ..
+        } => contains_nested_handle(condition) || contains_nested_handle(body),
 
         ExprKind::Call { callee, args } => {
             // Function calls could contain handles, but we're analyzing
@@ -293,13 +298,9 @@ fn contains_nested_handle(expr: &Expr) -> bool {
             contains_nested_handle(value) || contains_nested_handle(count)
         }
 
-        ExprKind::Return(value) => {
-            value.as_ref().is_some_and(|e| contains_nested_handle(e))
-        }
+        ExprKind::Return(value) => value.as_ref().is_some_and(|e| contains_nested_handle(e)),
 
-        ExprKind::Break { value, .. } => {
-            value.as_ref().is_some_and(|e| contains_nested_handle(e))
-        }
+        ExprKind::Break { value, .. } => value.as_ref().is_some_and(|e| contains_nested_handle(e)),
 
         ExprKind::Assign { target, value } => {
             contains_nested_handle(target) || contains_nested_handle(value)
@@ -323,16 +324,16 @@ fn contains_nested_handle(expr: &Expr) -> bool {
 
         ExprKind::Variant { fields, .. } => fields.iter().any(contains_nested_handle),
 
-        ExprKind::Record { fields } => {
-            fields.iter().any(|f| contains_nested_handle(&f.value))
-        }
+        ExprKind::Record { fields } => fields.iter().any(|f| contains_nested_handle(&f.value)),
 
         ExprKind::Assert { condition, message } => {
             contains_nested_handle(condition)
                 || message.as_ref().is_some_and(|m| contains_nested_handle(m))
         }
 
-        ExprKind::MacroExpansion { args, named_args, .. } => {
+        ExprKind::MacroExpansion {
+            args, named_args, ..
+        } => {
             args.iter().any(contains_nested_handle)
                 || named_args.iter().any(|(_, a)| contains_nested_handle(a))
         }
@@ -439,9 +440,7 @@ fn is_constant_expr(expr: &Expr) -> bool {
         ExprKind::Repeat { value, .. } => is_constant_expr(value),
 
         // Struct literal with constant fields is constant
-        ExprKind::Struct { fields, .. } => {
-            fields.iter().all(|f| is_constant_expr(&f.value))
-        }
+        ExprKind::Struct { fields, .. } => fields.iter().all(|f| is_constant_expr(&f.value)),
 
         // Default is handled separately as ZeroInit
         ExprKind::Default => false,
@@ -450,9 +449,7 @@ fn is_constant_expr(expr: &Expr) -> bool {
         ExprKind::Unary { operand, .. } => is_constant_expr(operand),
 
         // Binary operations on constants are constant (for simple ops)
-        ExprKind::Binary { left, right, .. } => {
-            is_constant_expr(left) && is_constant_expr(right)
-        }
+        ExprKind::Binary { left, right, .. } => is_constant_expr(left) && is_constant_expr(right),
 
         // Block with only expression (no statements) that is constant
         ExprKind::Block { stmts, expr } if stmts.is_empty() => {
@@ -481,9 +478,7 @@ fn is_default_expr(expr: &Expr) -> bool {
         ExprKind::Tuple(elements) => elements.iter().all(is_default_expr),
 
         // Struct with all default fields is default
-        ExprKind::Struct { fields, .. } => {
-            fields.iter().all(|f| is_default_expr(&f.value))
-        }
+        ExprKind::Struct { fields, .. } => fields.iter().all(|f| is_default_expr(&f.value)),
 
         // Zero literals are effectively default for their types
         ExprKind::Literal(LiteralValue::Int(0)) => true,
@@ -641,12 +636,13 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
         // Inline handlers: similar to Handle, check body and handler bodies
         ExprKind::InlineHandle { body, handlers } => {
             contains_escaping_control_flow(body)
-                || handlers.iter().any(|h| contains_escaping_control_flow(&h.body))
+                || handlers
+                    .iter()
+                    .any(|h| contains_escaping_control_flow(&h.body))
         }
 
         // Recursively check all sub-expressions
-        ExprKind::Block { stmts, expr }
-        | ExprKind::Region { stmts, expr, .. } => {
+        ExprKind::Block { stmts, expr } | ExprKind::Region { stmts, expr, .. } => {
             for stmt in stmts {
                 if contains_escaping_control_flow_stmt(stmt) {
                     return true;
@@ -660,10 +656,16 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
             false
         }
 
-        ExprKind::If { condition, then_branch, else_branch } => {
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             contains_escaping_control_flow(condition)
                 || contains_escaping_control_flow(then_branch)
-                || else_branch.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|e| contains_escaping_control_flow(e))
         }
 
         ExprKind::Match { scrutinee, arms } => {
@@ -683,14 +685,11 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
             false
         }
 
-        ExprKind::Loop { body, .. } => {
-            contains_escaping_control_flow(body)
-        }
+        ExprKind::Loop { body, .. } => contains_escaping_control_flow(body),
 
-        ExprKind::While { condition, body, .. } => {
-            contains_escaping_control_flow(condition)
-                || contains_escaping_control_flow(body)
-        }
+        ExprKind::While {
+            condition, body, ..
+        } => contains_escaping_control_flow(condition) || contains_escaping_control_flow(body),
 
         ExprKind::Call { callee, args } => {
             // Function calls could internally use effects, but we're
@@ -714,34 +713,30 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
         }
 
         ExprKind::Binary { left, right, .. } => {
-            contains_escaping_control_flow(left)
-                || contains_escaping_control_flow(right)
+            contains_escaping_control_flow(left) || contains_escaping_control_flow(right)
         }
 
-        ExprKind::Unary { operand, .. } => {
-            contains_escaping_control_flow(operand)
-        }
+        ExprKind::Unary { operand, .. } => contains_escaping_control_flow(operand),
 
-        ExprKind::Cast { expr, .. } => {
-            contains_escaping_control_flow(expr)
-        }
+        ExprKind::Cast { expr, .. } => contains_escaping_control_flow(expr),
 
         ExprKind::Index { base, index } => {
-            contains_escaping_control_flow(base)
-                || contains_escaping_control_flow(index)
+            contains_escaping_control_flow(base) || contains_escaping_control_flow(index)
         }
 
-        ExprKind::Field { base, .. } => {
-            contains_escaping_control_flow(base)
-        }
+        ExprKind::Field { base, .. } => contains_escaping_control_flow(base),
 
         ExprKind::Tuple(elements) | ExprKind::Array(elements) | ExprKind::VecLiteral(elements) => {
             elements.iter().any(contains_escaping_control_flow)
         }
 
         ExprKind::Struct { fields, base, .. } => {
-            fields.iter().any(|f| contains_escaping_control_flow(&f.value))
-                || base.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
+            fields
+                .iter()
+                .any(|f| contains_escaping_control_flow(&f.value))
+                || base
+                    .as_ref()
+                    .is_some_and(|e| contains_escaping_control_flow(e))
         }
 
         ExprKind::Repeat { value, .. } => {
@@ -750,21 +745,19 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
         }
 
         ExprKind::VecRepeat { value, count } => {
-            contains_escaping_control_flow(value)
-                || contains_escaping_control_flow(count)
+            contains_escaping_control_flow(value) || contains_escaping_control_flow(count)
         }
 
-        ExprKind::Return(value) => {
-            value.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
-        }
+        ExprKind::Return(value) => value
+            .as_ref()
+            .is_some_and(|e| contains_escaping_control_flow(e)),
 
-        ExprKind::Break { value, .. } => {
-            value.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
-        }
+        ExprKind::Break { value, .. } => value
+            .as_ref()
+            .is_some_and(|e| contains_escaping_control_flow(e)),
 
         ExprKind::Assign { target, value } => {
-            contains_escaping_control_flow(target)
-                || contains_escaping_control_flow(value)
+            contains_escaping_control_flow(target) || contains_escaping_control_flow(value)
         }
 
         ExprKind::Borrow { expr, .. } | ExprKind::AddrOf { expr, .. } | ExprKind::Deref(expr) => {
@@ -772,37 +765,42 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
         }
 
         ExprKind::Range { start, end, .. } => {
-            start.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
-                || end.as_ref().is_some_and(|e| contains_escaping_control_flow(e))
+            start
+                .as_ref()
+                .is_some_and(|e| contains_escaping_control_flow(e))
+                || end
+                    .as_ref()
+                    .is_some_and(|e| contains_escaping_control_flow(e))
         }
 
-        ExprKind::Unsafe(expr) | ExprKind::Heap(expr) | ExprKind::Stack(expr) | ExprKind::Dbg(expr) => {
-            contains_escaping_control_flow(expr)
-        }
-        ExprKind::Unchecked { body, .. } => {
-            contains_escaping_control_flow(body)
-        }
+        ExprKind::Unsafe(expr)
+        | ExprKind::Heap(expr)
+        | ExprKind::Stack(expr)
+        | ExprKind::Dbg(expr) => contains_escaping_control_flow(expr),
+        ExprKind::Unchecked { body, .. } => contains_escaping_control_flow(body),
 
-        ExprKind::Let { init, .. } => {
-            contains_escaping_control_flow(init)
-        }
+        ExprKind::Let { init, .. } => contains_escaping_control_flow(init),
 
-        ExprKind::Variant { fields, .. } => {
-            fields.iter().any(contains_escaping_control_flow)
-        }
+        ExprKind::Variant { fields, .. } => fields.iter().any(contains_escaping_control_flow),
 
-        ExprKind::Record { fields } => {
-            fields.iter().any(|f| contains_escaping_control_flow(&f.value))
-        }
+        ExprKind::Record { fields } => fields
+            .iter()
+            .any(|f| contains_escaping_control_flow(&f.value)),
 
         ExprKind::Assert { condition, message } => {
             contains_escaping_control_flow(condition)
-                || message.as_ref().is_some_and(|m| contains_escaping_control_flow(m))
+                || message
+                    .as_ref()
+                    .is_some_and(|m| contains_escaping_control_flow(m))
         }
 
-        ExprKind::MacroExpansion { args, named_args, .. } => {
+        ExprKind::MacroExpansion {
+            args, named_args, ..
+        } => {
             args.iter().any(contains_escaping_control_flow)
-                || named_args.iter().any(|(_, a)| contains_escaping_control_flow(a))
+                || named_args
+                    .iter()
+                    .any(|(_, a)| contains_escaping_control_flow(a))
         }
 
         ExprKind::MethodFamily { .. } => {
@@ -829,12 +827,8 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
 fn contains_escaping_control_flow_stmt(stmt: &crate::hir::Stmt) -> bool {
     use crate::hir::Stmt;
     match stmt {
-        Stmt::Let { init, .. } => {
-            init.as_ref().is_some_and(contains_escaping_control_flow)
-        }
-        Stmt::Expr(expr) => {
-            contains_escaping_control_flow(expr)
-        }
+        Stmt::Let { init, .. } => init.as_ref().is_some_and(contains_escaping_control_flow),
+        Stmt::Expr(expr) => contains_escaping_control_flow(expr),
         Stmt::Item(_) => false,
     }
 }
@@ -843,10 +837,10 @@ fn contains_escaping_control_flow_stmt(stmt: &crate::hir::Stmt) -> bool {
 // Handler Deduplication Analysis (EFF-OPT-007)
 // ============================================================================
 
-use std::collections::HashMap;
-use crate::hir::DefId;
-use super::types::{StatementKind, BasicBlockId};
 use super::body::MirBody;
+use super::types::{BasicBlockId, StatementKind};
+use crate::hir::DefId;
+use std::collections::HashMap;
 
 /// A handler installation fingerprint for deduplication.
 ///
@@ -952,7 +946,8 @@ pub fn analyze_handler_deduplication(body: &MirBody) -> HandlerDeduplicationResu
 
     // Count deduplicated installations (sites beyond the first in each group)
     let total_count = sites.len();
-    let deduplicated_count = groups.values()
+    let deduplicated_count = groups
+        .values()
         .filter(|indices| indices.len() > 1)
         .map(|indices| indices.len() - 1) // All but first are duplicates
         .sum();
@@ -983,19 +978,13 @@ mod tests {
 
     #[test]
     fn test_literal_is_constant() {
-        let expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let expr = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         assert_eq!(analyze_handler_state(&expr), HandlerStateKind::Constant);
     }
 
     #[test]
     fn test_bool_literal_is_constant() {
-        let expr = make_expr(
-            ExprKind::Literal(LiteralValue::Bool(true)),
-            Type::bool(),
-        );
+        let expr = make_expr(ExprKind::Literal(LiteralValue::Bool(true)), Type::bool());
         assert_eq!(analyze_handler_state(&expr), HandlerStateKind::Constant);
     }
 
@@ -1010,19 +999,16 @@ mod tests {
 
     #[test]
     fn test_tuple_of_literals_is_constant() {
-        let int_expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
-        let bool_expr = make_expr(
-            ExprKind::Literal(LiteralValue::Bool(true)),
-            Type::bool(),
-        );
+        let int_expr = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
+        let bool_expr = make_expr(ExprKind::Literal(LiteralValue::Bool(true)), Type::bool());
         let tuple_expr = make_expr(
             ExprKind::Tuple(vec![int_expr, bool_expr]),
             Type::tuple(vec![Type::i32(), Type::bool()]),
         );
-        assert_eq!(analyze_handler_state(&tuple_expr), HandlerStateKind::Constant);
+        assert_eq!(
+            analyze_handler_state(&tuple_expr),
+            HandlerStateKind::Constant
+        );
     }
 
     #[test]
@@ -1033,10 +1019,7 @@ mod tests {
 
     #[test]
     fn test_zero_literal_is_zero_init() {
-        let expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(0)),
-            Type::i32(),
-        );
+        let expr = make_expr(ExprKind::Literal(LiteralValue::Int(0)), Type::i32());
         // Zero literals are treated as constant, not zero_init
         // The important thing is they're static
         assert!(analyze_handler_state(&expr).is_static());
@@ -1045,10 +1028,7 @@ mod tests {
     #[test]
     fn test_local_is_dynamic() {
         use crate::hir::LocalId;
-        let expr = make_expr(
-            ExprKind::Local(LocalId::new(0)),
-            Type::i32(),
-        );
+        let expr = make_expr(ExprKind::Local(LocalId::new(0)), Type::i32());
         assert_eq!(analyze_handler_state(&expr), HandlerStateKind::Dynamic);
     }
 
@@ -1063,10 +1043,7 @@ mod tests {
 
     #[test]
     fn test_handle_analysis_constant_with_bytes() {
-        let expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let expr = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let analysis = HandleAnalysis::analyze(&expr);
         assert!(analysis.is_static());
         assert_eq!(analysis.state_kind, HandlerStateKind::Constant);
@@ -1097,16 +1074,10 @@ mod tests {
         let default_expr = make_expr(ExprKind::Default, Type::i32());
         assert!(is_default_expr(&default_expr));
 
-        let zero_expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(0)),
-            Type::i32(),
-        );
+        let zero_expr = make_expr(ExprKind::Literal(LiteralValue::Int(0)), Type::i32());
         assert!(is_default_expr(&zero_expr));
 
-        let nonzero_expr = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let nonzero_expr = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         assert!(!is_default_expr(&nonzero_expr));
     }
 
@@ -1117,10 +1088,7 @@ mod tests {
     #[test]
     fn test_literal_body_no_escape() {
         // A literal body has no Perform/Resume, so handler can use stack allocation
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         assert!(!handler_evidence_escapes(&body));
         assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Stack);
     }
@@ -1145,10 +1113,7 @@ mod tests {
     #[test]
     fn test_resume_causes_escape() {
         // A Resume expression causes handler evidence to escape
-        let body = make_expr(
-            ExprKind::Resume { value: None },
-            Type::unit(),
-        );
+        let body = make_expr(ExprKind::Resume { value: None }, Type::unit());
         assert!(handler_evidence_escapes(&body));
         assert_eq!(analyze_handler_allocation_tier(&body), MemoryTier::Region);
     }
@@ -1180,10 +1145,7 @@ mod tests {
     #[test]
     fn test_block_without_effects_no_escape() {
         // A block without Perform/Resume doesn't cause escape
-        let inner = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
+        let inner = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
         let body = make_expr(
             ExprKind::Block {
                 stmts: vec![],
@@ -1199,10 +1161,7 @@ mod tests {
     fn test_if_with_perform_causes_escape() {
         use crate::hir::DefId;
         // An if expression with Perform in either branch causes escape
-        let condition = make_expr(
-            ExprKind::Literal(LiteralValue::Bool(true)),
-            Type::bool(),
-        );
+        let condition = make_expr(ExprKind::Literal(LiteralValue::Bool(true)), Type::bool());
         let then_branch = make_expr(
             ExprKind::Perform {
                 effect_id: DefId::new(0),
@@ -1212,10 +1171,7 @@ mod tests {
             },
             Type::unit(),
         );
-        let else_branch = make_expr(
-            ExprKind::Literal(LiteralValue::Int(0)),
-            Type::i32(),
-        );
+        let else_branch = make_expr(ExprKind::Literal(LiteralValue::Int(0)), Type::i32());
         let body = make_expr(
             ExprKind::If {
                 condition: Box::new(condition),
@@ -1231,18 +1187,9 @@ mod tests {
     #[test]
     fn test_if_without_effects_no_escape() {
         // An if expression without Perform/Resume doesn't cause escape
-        let condition = make_expr(
-            ExprKind::Literal(LiteralValue::Bool(true)),
-            Type::bool(),
-        );
-        let then_branch = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
-        let else_branch = make_expr(
-            ExprKind::Literal(LiteralValue::Int(0)),
-            Type::i32(),
-        );
+        let condition = make_expr(ExprKind::Literal(LiteralValue::Bool(true)), Type::bool());
+        let then_branch = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
+        let else_branch = make_expr(ExprKind::Literal(LiteralValue::Int(0)), Type::i32());
         let body = make_expr(
             ExprKind::If {
                 condition: Box::new(condition),
@@ -1274,14 +1221,8 @@ mod tests {
     #[test]
     fn test_binary_no_escape() {
         // Binary operations on literals don't cause escape
-        let left = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
-        let right = make_expr(
-            ExprKind::Literal(LiteralValue::Int(2)),
-            Type::i32(),
-        );
+        let left = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
+        let right = make_expr(ExprKind::Literal(LiteralValue::Int(2)), Type::i32());
         let body = make_expr(
             ExprKind::Binary {
                 op: crate::ast::BinOp::Add,
@@ -1371,10 +1312,7 @@ mod tests {
     #[test]
     fn test_analyze_inline_mode_simple_body() {
         // Simple literal body with no nesting - should be inline
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::new();
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
         assert_eq!(mode, InlineEvidenceMode::Inline);
@@ -1383,10 +1321,7 @@ mod tests {
     #[test]
     fn test_analyze_inline_mode_region_tier_uses_vector() {
         // Even simple body, region tier forces vector
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::new();
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Region);
         assert_eq!(mode, InlineEvidenceMode::Vector);
@@ -1395,10 +1330,7 @@ mod tests {
     #[test]
     fn test_analyze_inline_mode_closure_context_uses_vector() {
         // Inside closure context forces vector
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::in_closure();
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
         assert_eq!(mode, InlineEvidenceMode::Vector);
@@ -1406,10 +1338,7 @@ mod tests {
 
     #[test]
     fn test_analyze_inline_mode_depth_1_is_inline() {
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::at_depth(0); // after push will be 1
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
         assert_eq!(mode, InlineEvidenceMode::Inline);
@@ -1417,10 +1346,7 @@ mod tests {
 
     #[test]
     fn test_analyze_inline_mode_depth_2_is_pair() {
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::at_depth(1); // after push will be 2
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
         assert_eq!(mode, InlineEvidenceMode::SpecializedPair);
@@ -1428,10 +1354,7 @@ mod tests {
 
     #[test]
     fn test_analyze_inline_mode_depth_3_is_vector() {
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         let ctx = InlineEvidenceContext::at_depth(2); // after push will be 3
         let mode = analyze_inline_evidence_mode(&body, &ctx, MemoryTier::Stack);
         assert_eq!(mode, InlineEvidenceMode::Vector);
@@ -1441,10 +1364,7 @@ mod tests {
     fn test_analyze_inline_mode_nested_handle_forces_vector() {
         use crate::hir::DefId;
         // A body containing a nested handle block forces vector mode
-        let inner_body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
+        let inner_body = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
         let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
         let body = make_expr(
             ExprKind::Handle {
@@ -1477,20 +1397,14 @@ mod tests {
 
     #[test]
     fn test_contains_nested_handle_literal() {
-        let body = make_expr(
-            ExprKind::Literal(LiteralValue::Int(42)),
-            Type::i32(),
-        );
+        let body = make_expr(ExprKind::Literal(LiteralValue::Int(42)), Type::i32());
         assert!(!contains_nested_handle(&body));
     }
 
     #[test]
     fn test_contains_nested_handle_handle_expr() {
         use crate::hir::DefId;
-        let inner = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
+        let inner = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
         let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
         let body = make_expr(
             ExprKind::Handle {
@@ -1506,10 +1420,7 @@ mod tests {
     #[test]
     fn test_contains_nested_handle_in_block() {
         use crate::hir::DefId;
-        let inner = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
+        let inner = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
         let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
         let handle_expr = make_expr(
             ExprKind::Handle {
@@ -1532,14 +1443,8 @@ mod tests {
     #[test]
     fn test_contains_nested_handle_in_if() {
         use crate::hir::DefId;
-        let condition = make_expr(
-            ExprKind::Literal(LiteralValue::Bool(true)),
-            Type::bool(),
-        );
-        let inner = make_expr(
-            ExprKind::Literal(LiteralValue::Int(1)),
-            Type::i32(),
-        );
+        let condition = make_expr(ExprKind::Literal(LiteralValue::Bool(true)), Type::bool());
+        let inner = make_expr(ExprKind::Literal(LiteralValue::Int(1)), Type::i32());
         let handler_instance = make_expr(ExprKind::Tuple(vec![]), Type::unit());
         let handle_expr = make_expr(
             ExprKind::Handle {
@@ -1549,10 +1454,7 @@ mod tests {
             },
             Type::i32(),
         );
-        let else_branch = make_expr(
-            ExprKind::Literal(LiteralValue::Int(0)),
-            Type::i32(),
-        );
+        let else_branch = make_expr(ExprKind::Literal(LiteralValue::Int(0)), Type::i32());
         let body = make_expr(
             ExprKind::If {
                 condition: Box::new(condition),
@@ -1639,8 +1541,8 @@ mod tests {
 
     #[test]
     fn test_handler_dedup_single_handler() {
-        use crate::mir::{MirBody, Statement, StatementKind, Place};
         use crate::hir::LocalId;
+        use crate::mir::{MirBody, Place, Statement, StatementKind};
         use crate::span::Span;
 
         let mut body = MirBody::new(DefId::new(0), Span::dummy());
@@ -1666,40 +1568,49 @@ mod tests {
 
     #[test]
     fn test_handler_dedup_duplicate_handlers() {
-        use crate::mir::{MirBody, Statement, StatementKind, Place};
         use crate::hir::LocalId;
+        use crate::mir::{MirBody, Place, Statement, StatementKind};
         use crate::span::Span;
 
         let mut body = MirBody::new(DefId::new(0), Span::dummy());
 
         // Two blocks each installing the same handler
         let bb1 = body.new_block();
-        body.push_statement(bb1, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(10),
-                state_place: Place::local(LocalId::new(0)),
-                state_kind: HandlerStateKind::Stateless,
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb1,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(10),
+                    state_place: Place::local(LocalId::new(0)),
+                    state_kind: HandlerStateKind::Stateless,
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let bb2 = body.new_block();
-        body.push_statement(bb2, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(10), // Same handler
-                state_place: Place::local(LocalId::new(1)),
-                state_kind: HandlerStateKind::Stateless, // Same state kind
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb2,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(10), // Same handler
+                    state_place: Place::local(LocalId::new(1)),
+                    state_kind: HandlerStateKind::Stateless, // Same state kind
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let results = analyze_handler_deduplication(&body);
         assert_eq!(results.total_count, 2);
-        assert_eq!(results.deduplicated_count, 1, "One of two identical handlers is a duplicate");
+        assert_eq!(
+            results.deduplicated_count, 1,
+            "One of two identical handlers is a duplicate"
+        );
         assert!(results.has_duplicates());
         assert_eq!(results.unique_patterns(), 1);
         assert_eq!(results.potential_savings(), 1);
@@ -1707,35 +1618,41 @@ mod tests {
 
     #[test]
     fn test_handler_dedup_different_handlers_no_dedup() {
-        use crate::mir::{MirBody, Statement, StatementKind, Place};
         use crate::hir::LocalId;
+        use crate::mir::{MirBody, Place, Statement, StatementKind};
         use crate::span::Span;
 
         let mut body = MirBody::new(DefId::new(0), Span::dummy());
 
         let bb1 = body.new_block();
-        body.push_statement(bb1, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(10), // Handler A
-                state_place: Place::local(LocalId::new(0)),
-                state_kind: HandlerStateKind::Stateless,
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb1,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(10), // Handler A
+                    state_place: Place::local(LocalId::new(0)),
+                    state_kind: HandlerStateKind::Stateless,
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let bb2 = body.new_block();
-        body.push_statement(bb2, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(20), // Different handler B
-                state_place: Place::local(LocalId::new(1)),
-                state_kind: HandlerStateKind::Stateless,
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb2,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(20), // Different handler B
+                    state_place: Place::local(LocalId::new(1)),
+                    state_kind: HandlerStateKind::Stateless,
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let results = analyze_handler_deduplication(&body);
         assert_eq!(results.total_count, 2);
@@ -1746,39 +1663,48 @@ mod tests {
 
     #[test]
     fn test_handler_dedup_same_id_different_state_no_dedup() {
-        use crate::mir::{MirBody, Statement, StatementKind, Place};
         use crate::hir::LocalId;
+        use crate::mir::{MirBody, Place, Statement, StatementKind};
         use crate::span::Span;
 
         let mut body = MirBody::new(DefId::new(0), Span::dummy());
 
         let bb1 = body.new_block();
-        body.push_statement(bb1, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(10),
-                state_place: Place::local(LocalId::new(0)),
-                state_kind: HandlerStateKind::Stateless, // Different state kind
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb1,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(10),
+                    state_place: Place::local(LocalId::new(0)),
+                    state_kind: HandlerStateKind::Stateless, // Different state kind
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let bb2 = body.new_block();
-        body.push_statement(bb2, Statement {
-            kind: StatementKind::PushHandler {
-                handler_id: DefId::new(10), // Same handler
-                state_place: Place::local(LocalId::new(1)),
-                state_kind: HandlerStateKind::Dynamic, // Different state kind
-                allocation_tier: MemoryTier::Stack,
-                inline_mode: InlineEvidenceMode::Inline,
+        body.push_statement(
+            bb2,
+            Statement {
+                kind: StatementKind::PushHandler {
+                    handler_id: DefId::new(10), // Same handler
+                    state_place: Place::local(LocalId::new(1)),
+                    state_kind: HandlerStateKind::Dynamic, // Different state kind
+                    allocation_tier: MemoryTier::Stack,
+                    inline_mode: InlineEvidenceMode::Inline,
+                },
+                span: Span::dummy(),
             },
-            span: Span::dummy(),
-        });
+        );
 
         let results = analyze_handler_deduplication(&body);
         assert_eq!(results.total_count, 2);
-        assert_eq!(results.deduplicated_count, 0, "Same handler but different state kinds should not deduplicate");
+        assert_eq!(
+            results.deduplicated_count, 0,
+            "Same handler but different state kinds should not deduplicate"
+        );
         assert!(!results.has_duplicates());
         assert_eq!(results.unique_patterns(), 2);
     }

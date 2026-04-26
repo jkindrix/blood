@@ -119,7 +119,10 @@ pub fn eval_const_expr(expr: &ast::Expr) -> Result<ConstResult, Box<TypeError>> 
 ///
 /// The `lookup` function is called for path expressions to resolve const items.
 /// It receives the path expression and returns the const value if found.
-pub fn eval_const_expr_with_lookup<F>(expr: &ast::Expr, lookup: &F) -> Result<ConstResult, Box<TypeError>>
+pub fn eval_const_expr_with_lookup<F>(
+    expr: &ast::Expr,
+    lookup: &F,
+) -> Result<ConstResult, Box<TypeError>>
 where
     F: Fn(&ast::ExprPath) -> Option<ConstResult>,
 {
@@ -149,7 +152,11 @@ where
 
         ast::ExprKind::Paren(inner) => eval_const_expr_with_lookup(inner, lookup),
 
-        ast::ExprKind::If { condition, then_branch, else_branch } => {
+        ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             let cond = eval_const_expr_with_lookup(condition, lookup)?;
             match cond {
                 ConstResult::Bool(true) => eval_block_with_lookup(then_branch, lookup),
@@ -159,7 +166,8 @@ where
                     } else {
                         Err(Box::new(TypeError::new(
                             TypeErrorKind::ConstEvalError {
-                                reason: "if expression without else branch in const context".to_string(),
+                                reason: "if expression without else branch in const context"
+                                    .to_string(),
                             },
                             expr.span,
                         )))
@@ -225,7 +233,10 @@ fn eval_else_branch(branch: &ast::ElseBranch) -> Result<ConstResult, Box<TypeErr
 }
 
 /// Evaluate an else branch with path lookup support.
-fn eval_else_branch_with_lookup<F>(branch: &ast::ElseBranch, lookup: &F) -> Result<ConstResult, Box<TypeError>>
+fn eval_else_branch_with_lookup<F>(
+    branch: &ast::ElseBranch,
+    lookup: &F,
+) -> Result<ConstResult, Box<TypeError>>
 where
     F: Fn(&ast::ExprPath) -> Option<ConstResult>,
 {
@@ -270,7 +281,8 @@ fn eval_literal(lit: &ast::Literal, span: Span) -> Result<ConstResult, Box<TypeE
         ast::LiteralKind::Bool(b) => Ok(ConstResult::Bool(*b)),
         _ => Err(Box::new(TypeError::new(
             TypeErrorKind::ConstEvalError {
-                reason: "only integer and boolean literals are supported in const contexts".to_string(),
+                reason: "only integer and boolean literals are supported in const contexts"
+                    .to_string(),
             },
             span,
         ))),
@@ -385,16 +397,14 @@ fn eval_binary_op(
         }
     };
 
-    result
-        .map(ConstResult::Int)
-        .ok_or_else(|| {
-            Box::new(TypeError::new(
-                TypeErrorKind::ConstEvalError {
-                    reason: "arithmetic overflow in const expression".to_string(),
-                },
-                span,
-            ))
-        })
+    result.map(ConstResult::Int).ok_or_else(|| {
+        Box::new(TypeError::new(
+            TypeErrorKind::ConstEvalError {
+                reason: "arithmetic overflow in const expression".to_string(),
+            },
+            span,
+        ))
+    })
 }
 
 /// Evaluate a unary operation.
@@ -409,16 +419,14 @@ fn eval_unary_op(op: UnaryOp, val: ConstResult, span: Span) -> Result<ConstResul
                     span,
                 ))
             })?;
-            v.checked_neg()
-                .map(ConstResult::Int)
-                .ok_or_else(|| {
-                    Box::new(TypeError::new(
-                        TypeErrorKind::ConstEvalError {
-                            reason: "arithmetic overflow in const expression".to_string(),
-                        },
-                        span,
-                    ))
-                })
+            v.checked_neg().map(ConstResult::Int).ok_or_else(|| {
+                Box::new(TypeError::new(
+                    TypeErrorKind::ConstEvalError {
+                        reason: "arithmetic overflow in const expression".to_string(),
+                    },
+                    span,
+                ))
+            })
         }
         UnaryOp::Not => match val {
             ConstResult::Bool(b) => Ok(ConstResult::Bool(!b)),
@@ -433,4 +441,3 @@ fn eval_unary_op(op: UnaryOp, val: ConstResult, span: Span) -> Result<ConstResul
         ))),
     }
 }
-

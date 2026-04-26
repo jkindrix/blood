@@ -5,10 +5,10 @@
 //! 1. `src/foo.blood`
 //! 2. `src/foo/mod.blood`
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a module in the module tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -101,7 +101,6 @@ impl ModulePath {
     pub fn is_absolute(&self) -> bool {
         self.segments.first().is_some_and(|s| s == "crate")
     }
-
 }
 
 impl std::fmt::Display for ModulePath {
@@ -235,11 +234,12 @@ impl ModuleTree {
         is_inline: bool,
         visibility: Visibility,
     ) -> Result<ModuleId, ResolveError> {
-        let parent = self.modules.get(&parent_id).ok_or_else(|| {
-            ResolveError::PathError {
+        let parent = self
+            .modules
+            .get(&parent_id)
+            .ok_or_else(|| ResolveError::PathError {
                 message: format!("parent module not found: {:?}", parent_id),
-            }
-        })?;
+            })?;
 
         let child_path = parent.path.child(&name);
 
@@ -473,13 +473,15 @@ mod tests {
     fn test_add_child_module() {
         let mut tree = ModuleTree::new(PathBuf::from("/project/src/lib.blood"), "mylib");
 
-        let child_id = tree.add_child(
-            tree.root(),
-            "utils".to_string(),
-            PathBuf::from("/project/src/utils.blood"),
-            false,
-            Visibility::Public,
-        ).unwrap();
+        let child_id = tree
+            .add_child(
+                tree.root(),
+                "utils".to_string(),
+                PathBuf::from("/project/src/utils.blood"),
+                false,
+                Visibility::Public,
+            )
+            .unwrap();
 
         let child = tree.get(child_id).unwrap();
         assert_eq!(child.name, "utils");
@@ -500,7 +502,8 @@ mod tests {
             PathBuf::from("/project/src/foo.blood"),
             false,
             Visibility::Public,
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = tree.add_child(
             tree.root(),
@@ -549,21 +552,25 @@ mod tests {
     fn test_topological_order() {
         let mut tree = ModuleTree::new(PathBuf::from("/project/src/lib.blood"), "mylib");
 
-        let utils_id = tree.add_child(
-            tree.root(),
-            "utils".to_string(),
-            PathBuf::from("/project/src/utils.blood"),
-            false,
-            Visibility::Public,
-        ).unwrap();
+        let utils_id = tree
+            .add_child(
+                tree.root(),
+                "utils".to_string(),
+                PathBuf::from("/project/src/utils.blood"),
+                false,
+                Visibility::Public,
+            )
+            .unwrap();
 
-        let helpers_id = tree.add_child(
-            utils_id,
-            "helpers".to_string(),
-            PathBuf::from("/project/src/utils/helpers.blood"),
-            false,
-            Visibility::Public,
-        ).unwrap();
+        let helpers_id = tree
+            .add_child(
+                utils_id,
+                "helpers".to_string(),
+                PathBuf::from("/project/src/utils/helpers.blood"),
+                false,
+                Visibility::Public,
+            )
+            .unwrap();
 
         let order = tree.topological_order();
 

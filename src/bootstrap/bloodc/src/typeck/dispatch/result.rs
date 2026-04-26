@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Type};
 use super::types::MethodCandidate;
+use crate::hir::{DefId, Type};
 
 /// Result of dispatch resolution.
 #[derive(Debug)]
@@ -41,10 +41,7 @@ pub struct AmbiguityError {
 impl AmbiguityError {
     /// Check if this is a diamond conflict (candidates from different traits).
     pub fn is_diamond_conflict(&self) -> bool {
-        let trait_ids: Vec<_> = self.candidates
-            .iter()
-            .filter_map(|c| c.trait_id)
-            .collect();
+        let trait_ids: Vec<_> = self.candidates.iter().filter_map(|c| c.trait_id).collect();
 
         // Diamond conflict if there are multiple distinct traits involved
         if trait_ids.len() < 2 {
@@ -58,10 +55,7 @@ impl AmbiguityError {
 
     /// Get the conflicting trait IDs for diamond resolution.
     pub fn conflicting_trait_ids(&self) -> Vec<DefId> {
-        let mut trait_ids: Vec<_> = self.candidates
-            .iter()
-            .filter_map(|c| c.trait_id)
-            .collect();
+        let mut trait_ids: Vec<_> = self.candidates.iter().filter_map(|c| c.trait_id).collect();
         trait_ids.sort_by_key(|id| id.index);
         trait_ids.dedup();
         trait_ids

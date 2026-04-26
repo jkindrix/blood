@@ -107,8 +107,8 @@ impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
             num_workers: num_cpus(),
-            initial_stack_size: 8 * 1024,      // 8 KB
-            max_stack_size: 1024 * 1024,       // 1 MB
+            initial_stack_size: 8 * 1024, // 8 KB
+            max_stack_size: 1024 * 1024,  // 1 MB
             work_stealing: true,
         }
     }
@@ -427,7 +427,11 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "invalid configuration for '{}': {}", field, message)
             }
             ConfigError::EnvParseError { var, message } => {
-                write!(f, "failed to parse environment variable '{}': {}", var, message)
+                write!(
+                    f,
+                    "failed to parse environment variable '{}': {}",
+                    var, message
+                )
             }
         }
     }
@@ -572,13 +576,13 @@ fn parse_env_usize(name: &str) -> Option<usize> {
 
 /// Parse an environment variable as bool.
 fn parse_env_bool(name: &str) -> Option<bool> {
-    env::var(name).ok().and_then(|s| {
-        match s.to_lowercase().as_str() {
+    env::var(name)
+        .ok()
+        .and_then(|s| match s.to_lowercase().as_str() {
             "true" | "1" | "yes" | "on" => Some(true),
             "false" | "0" | "no" | "off" => Some(false),
             _ => None,
-        }
-    })
+        })
 }
 
 /// Get the number of available CPUs.
@@ -617,15 +621,16 @@ mod tests {
 
         assert_eq!(config.scheduler.num_workers, 4);
         assert_eq!(config.memory.max_heap_size, 1024 * 1024 * 1024);
-        assert_eq!(config.timeout.default_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(
+            config.timeout.default_timeout,
+            Some(Duration::from_secs(30))
+        );
         assert_eq!(config.log.level, LogLevel::Debug);
     }
 
     #[test]
     fn test_builder_validation() {
-        let result = RuntimeConfig::builder()
-            .num_workers(0)
-            .build();
+        let result = RuntimeConfig::builder().num_workers(0).build();
 
         assert!(result.is_err());
     }
@@ -643,9 +648,7 @@ mod tests {
 
     #[test]
     fn test_validation_initial_stack_too_small() {
-        let result = RuntimeConfig::builder()
-            .initial_stack_size(1024)
-            .build();
+        let result = RuntimeConfig::builder().initial_stack_size(1024).build();
 
         assert!(result.is_err());
     }

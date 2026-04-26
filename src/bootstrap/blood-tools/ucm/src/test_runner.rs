@@ -189,10 +189,14 @@ impl<'a> TestRunner<'a> {
 
     /// Runs a single test by reference.
     pub fn run_test(&self, def_ref: &DefRef) -> UcmResult<TestResult> {
-        let info = self.codebase.find(def_ref)?
+        let info = self
+            .codebase
+            .find(def_ref)?
             .ok_or_else(|| UcmError::NameNotFound("test not found".into()))?;
 
-        let name = info.names.first()
+        let name = info
+            .names
+            .first()
             .cloned()
             .unwrap_or_else(|| Name::new(info.hash.short()));
 
@@ -202,7 +206,9 @@ impl<'a> TestRunner<'a> {
     /// Runs a single test and returns the result.
     fn run_single_test(&self, name: &Name, hash: &Hash) -> UcmResult<TestResult> {
         // Get the test source
-        let info = self.codebase.find(&DefRef::Hash(hash.clone()))?
+        let info = self
+            .codebase
+            .find(&DefRef::Hash(hash.clone()))?
             .ok_or_else(|| UcmError::HashNotFound(hash.to_string()))?;
 
         let start = Instant::now();
@@ -254,7 +260,8 @@ impl<'a> TestRunner<'a> {
                     }
                     Err(errors) => {
                         // Type errors in test
-                        let message: String = errors.iter()
+                        let message: String = errors
+                            .iter()
                             .map(|e| e.message.clone())
                             .collect::<Vec<_>>()
                             .join("\n");
@@ -265,11 +272,9 @@ impl<'a> TestRunner<'a> {
                     }
                 }
             }
-            Err(e) => {
-                TestOutcome::Error {
-                    message: format!("Parse error: {:?}", e),
-                }
-            }
+            Err(e) => TestOutcome::Error {
+                message: format!("Parse error: {:?}", e),
+            },
         }
     }
 }
@@ -340,13 +345,12 @@ impl TestDiscovery {
 
         for (name, hash) in tests {
             // Extract category from namespace (e.g., "tests.unit.math" -> "tests.unit")
-            let category = name.parent()
+            let category = name
+                .parent()
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "default".to_string());
 
-            by_category.entry(category)
-                .or_default()
-                .push((name, hash));
+            by_category.entry(category).or_default().push((name, hash));
         }
 
         let total = by_category.values().map(|v| v.len()).sum();
@@ -373,7 +377,9 @@ mod tests {
             TestResult {
                 name: Name::new("test1"),
                 hash: Hash::of_str("test1"),
-                outcome: TestOutcome::Passed { duration: Duration::from_millis(10) },
+                outcome: TestOutcome::Passed {
+                    duration: Duration::from_millis(10),
+                },
             },
             TestResult {
                 name: Name::new("test2"),
@@ -386,7 +392,9 @@ mod tests {
             TestResult {
                 name: Name::new("test3"),
                 hash: Hash::of_str("test3"),
-                outcome: TestOutcome::Skipped { reason: "not implemented".to_string() },
+                outcome: TestOutcome::Skipped {
+                    reason: "not implemented".to_string(),
+                },
             },
         ];
 
@@ -400,7 +408,9 @@ mod tests {
 
     #[test]
     fn test_outcome_predicates() {
-        let passed = TestOutcome::Passed { duration: Duration::from_secs(1) };
+        let passed = TestOutcome::Passed {
+            duration: Duration::from_secs(1),
+        };
         assert!(passed.is_passed());
         assert!(!passed.is_failed());
 

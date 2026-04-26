@@ -32,7 +32,7 @@
 
 use std::fmt;
 use std::io::Write;
-use std::sync::atomic::{AtomicU8, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -313,7 +313,11 @@ impl LogEntry {
                 if i > 0 {
                     output.push(',');
                 }
-                output.push_str(&format!("\"{}\":{}", escape_json(&field.key), field.value.to_json()));
+                output.push_str(&format!(
+                    "\"{}\":{}",
+                    escape_json(&field.key),
+                    field.value.to_json()
+                ));
             }
             output.push('}');
         }
@@ -426,7 +430,8 @@ pub fn is_enabled() -> bool {
 
 /// Check if a log level would be logged.
 pub fn would_log(level: LogLevel) -> bool {
-    is_enabled() && level >= LogLevel::from_u8(MIN_LEVEL.load(Ordering::SeqCst)).unwrap_or(LogLevel::Info)
+    is_enabled()
+        && level >= LogLevel::from_u8(MIN_LEVEL.load(Ordering::SeqCst)).unwrap_or(LogLevel::Info)
 }
 
 /// Emit a log entry.

@@ -25,21 +25,60 @@ pub mod expr;
 pub mod item;
 pub mod ty;
 
-use std::collections::HashMap;
-pub use def::{DefId, LocalId, DefKind, Res, PrimTyRes, IntTy, UintTy, FloatTy};
-pub use expr::{Expr, ExprKind, Body, Local, BodyId, Stmt, LiteralValue, MatchArm, Pattern, PatternKind, FieldPattern, LoopId, Capture, FieldExpr, RecordFieldExpr, InlineOpHandler};
+pub use def::{DefId, DefKind, FloatTy, IntTy, LocalId, PrimTyRes, Res, UintTy};
+pub use expr::{
+    Body, BodyId, Capture, Expr, ExprKind, FieldExpr, FieldPattern, InlineOpHandler, LiteralValue,
+    Local, LoopId, MatchArm, Pattern, PatternKind, RecordFieldExpr, Stmt,
+};
 pub use item::{
-    Item, ItemKind, FnSig, FnDef, StructDef, StructKind, FieldDef, EnumDef, Variant,
-    Generics, GenericParam, GenericParamKind, VarianceAnnotation, TraitRef, WherePredicate,
-    TraitItem, TraitItemKind, ImplItem, ImplItemKind,
-    EffectOp, HandlerState, HandlerOp, ReturnClause, FinallyClause, HandlerKind,
+    BridgeDef,
+    BridgeTypeAlias,
+    EffectOp,
+    EnumDef,
     // FFI types
-    ExternFnDef, BridgeDef, LinkSpec, LinkKind, ExternFnItem, OpaqueType,
-    BridgeTypeAlias, FfiStruct, FfiField, FfiEnum, FfiEnumVariant, FfiUnion, FfiConst, FfiCallback,
+    ExternFnDef,
+    ExternFnItem,
+    FfiCallback,
+    FfiConst,
+    FfiEnum,
+    FfiEnumVariant,
+    FfiField,
+    FfiStruct,
+    FfiUnion,
+    FieldDef,
+    FinallyClause,
+    FnDef,
+    FnSig,
+    GenericParam,
+    GenericParamKind,
+    Generics,
+    HandlerKind,
+    HandlerOp,
+    HandlerState,
+    ImplItem,
+    ImplItemKind,
+    Item,
+    ItemKind,
+    LinkKind,
+    LinkSpec,
     // Module
     ModuleDef,
+    OpaqueType,
+    ReturnClause,
+    StructDef,
+    StructKind,
+    TraitItem,
+    TraitItemKind,
+    TraitRef,
+    VarianceAnnotation,
+    Variant,
+    WherePredicate,
 };
-pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField, FnEffect};
+use std::collections::HashMap;
+pub use ty::{
+    ConstParamId, ConstValue, FnEffect, GenericArg, LifetimeId, PrimitiveTy, RecordField,
+    RecordRowVarId, TyVarId, Type, TypeKind,
+};
 
 /// Information about a trait implementation, used for vtable generation.
 #[derive(Debug, Clone)]

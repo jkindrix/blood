@@ -3,15 +3,26 @@
 //! Run with: cargo bench --bench memory_bench
 
 use blood_runtime::memory::{
-    BloodPtr, PointerMetadata, MemoryTier,
-    Slot, Region, GenerationSnapshot,
-    generation,
-    // Persistent tier (Tier 2)
-    persistent_allocator, persistent_alloc, persistent_increment, persistent_decrement,
+    collect_cycles,
     // Cycle collection
-    cycle_collector, collect_cycles,
+    cycle_collector,
+    generation,
+    persistent_alloc,
+    // Persistent tier (Tier 2)
+    persistent_allocator,
+    persistent_decrement,
+    persistent_increment,
+    tier2_alloc,
     // Tier2 allocator
-    tier2_allocator, tier2_alloc, tier2_increment, tier2_decrement,
+    tier2_allocator,
+    tier2_decrement,
+    tier2_increment,
+    BloodPtr,
+    GenerationSnapshot,
+    MemoryTier,
+    PointerMetadata,
+    Region,
+    Slot,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::alloc::Layout;
@@ -20,28 +31,20 @@ fn bench_blood_ptr_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("blood_ptr_creation");
 
     group.bench_function("null_ptr", |b| {
-        b.iter(|| {
-            black_box(BloodPtr::null())
-        });
+        b.iter(|| black_box(BloodPtr::null()));
     });
 
     group.bench_function("with_generation", |b| {
         let gen = generation::FIRST;
-        b.iter(|| {
-            black_box(BloodPtr::new(0x1000, gen, PointerMetadata::NONE))
-        });
+        b.iter(|| black_box(BloodPtr::new(0x1000, gen, PointerMetadata::NONE)));
     });
 
     group.bench_function("metadata_none", |b| {
-        b.iter(|| {
-            black_box(PointerMetadata::NONE)
-        });
+        b.iter(|| black_box(PointerMetadata::NONE));
     });
 
     group.bench_function("metadata_stack", |b| {
-        b.iter(|| {
-            black_box(PointerMetadata::STACK)
-        });
+        b.iter(|| black_box(PointerMetadata::STACK));
     });
 
     group.finish();
@@ -54,21 +57,15 @@ fn bench_blood_ptr_operations(c: &mut Criterion) {
     let ptr = BloodPtr::new(0x1000, gen, PointerMetadata::HEAP);
 
     group.bench_function("address", |b| {
-        b.iter(|| {
-            black_box(ptr.address())
-        });
+        b.iter(|| black_box(ptr.address()));
     });
 
     group.bench_function("generation", |b| {
-        b.iter(|| {
-            black_box(ptr.generation())
-        });
+        b.iter(|| black_box(ptr.generation()));
     });
 
     group.bench_function("is_null", |b| {
-        b.iter(|| {
-            black_box(ptr.is_null())
-        });
+        b.iter(|| black_box(ptr.is_null()));
     });
 
     group.bench_function("metadata_contains", |b| {
@@ -86,42 +83,32 @@ fn bench_slot_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("slot_operations");
 
     group.bench_function("creation", |b| {
-        b.iter(|| {
-            black_box(Slot::new())
-        });
+        b.iter(|| black_box(Slot::new()));
     });
 
     group.bench_function("generation", |b| {
         let slot = Slot::new();
-        b.iter(|| {
-            black_box(slot.generation())
-        });
+        b.iter(|| black_box(slot.generation()));
     });
 
     group.bench_function("is_occupied", |b| {
         let slot = Slot::new();
-        b.iter(|| {
-            black_box(slot.is_occupied())
-        });
+        b.iter(|| black_box(slot.is_occupied()));
     });
 
     group.bench_function("validate_generation", |b| {
         let slot = Slot::new();
         let gen = slot.generation();
-        b.iter(|| {
-            black_box(slot.validate(gen))
-        });
+        b.iter(|| black_box(slot.validate(gen)));
     });
 
     group.bench_function("allocate_deallocate_cycle", |b| {
         let slot = Slot::new();
         let layout = Layout::from_size_align(64, 8).unwrap();
-        b.iter(|| {
-            unsafe {
-                let ptr = slot.allocate(layout);
-                black_box(ptr);
-                slot.deallocate();
-            }
+        b.iter(|| unsafe {
+            let ptr = slot.allocate(layout);
+            black_box(ptr);
+            slot.deallocate();
         });
     });
 
@@ -133,9 +120,7 @@ fn bench_region_operations(c: &mut Criterion) {
 
     // Region creation
     group.bench_function("creation", |b| {
-        b.iter(|| {
-            black_box(Region::new(4096, 1024 * 1024))
-        });
+        b.iter(|| black_box(Region::new(4096, 1024 * 1024)));
     });
 
     // Single allocation
@@ -156,9 +141,7 @@ fn bench_region_operations(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let mut region = Region::new(1024 * 1024, 1024 * 1024);
-                    let ptrs: Vec<_> = (0..count)
-                        .filter_map(|_| region.allocate(64, 8))
-                        .collect();
+                    let ptrs: Vec<_> = (0..count).filter_map(|_| region.allocate(64, 8)).collect();
                     black_box(ptrs)
                 });
             },
@@ -184,16 +167,12 @@ fn bench_region_operations(c: &mut Criterion) {
         for _ in 0..10 {
             region.allocate(64, 8);
         }
-        b.iter(|| {
-            black_box(region.used())
-        });
+        b.iter(|| black_box(region.used()));
     });
 
     group.bench_function("capacity", |b| {
         let region = Region::new(4096, 1024 * 1024);
-        b.iter(|| {
-            black_box(region.capacity())
-        });
+        b.iter(|| black_box(region.capacity()));
     });
 
     group.finish();
@@ -203,9 +182,7 @@ fn bench_generation_snapshot(c: &mut Criterion) {
     let mut group = c.benchmark_group("generation_snapshot");
 
     group.bench_function("creation", |b| {
-        b.iter(|| {
-            black_box(GenerationSnapshot::new())
-        });
+        b.iter(|| black_box(GenerationSnapshot::new()));
     });
 
     group.bench_function("add_pointer", |b| {
@@ -227,9 +204,7 @@ fn bench_generation_snapshot(c: &mut Criterion) {
                 let ptrs: Vec<BloodPtr> = (0..count)
                     .map(|i| BloodPtr::new(i * 64, generation::FIRST, PointerMetadata::HEAP))
                     .collect();
-                b.iter(|| {
-                    black_box(GenerationSnapshot::capture(&ptrs))
-                });
+                b.iter(|| black_box(GenerationSnapshot::capture(&ptrs)));
             },
         );
     }
@@ -255,29 +230,21 @@ fn bench_pointer_metadata(c: &mut Criterion) {
     let mut group = c.benchmark_group("pointer_metadata");
 
     group.bench_function("from_bits", |b| {
-        b.iter(|| {
-            black_box(PointerMetadata::from_bits(0b1111))
-        });
+        b.iter(|| black_box(PointerMetadata::from_bits(0b1111)));
     });
 
     group.bench_function("bits", |b| {
         let meta = PointerMetadata::HEAP.union(PointerMetadata::LINEAR);
-        b.iter(|| {
-            black_box(meta.bits())
-        });
+        b.iter(|| black_box(meta.bits()));
     });
 
     group.bench_function("union", |b| {
-        b.iter(|| {
-            black_box(PointerMetadata::HEAP.union(PointerMetadata::LINEAR))
-        });
+        b.iter(|| black_box(PointerMetadata::HEAP.union(PointerMetadata::LINEAR)));
     });
 
     group.bench_function("contains", |b| {
         let meta = PointerMetadata::HEAP.union(PointerMetadata::LINEAR);
-        b.iter(|| {
-            black_box(meta.contains(PointerMetadata::HEAP))
-        });
+        b.iter(|| black_box(meta.contains(PointerMetadata::HEAP)));
     });
 
     group.finish();
@@ -353,17 +320,13 @@ fn bench_atomic_operations(c: &mut Criterion) {
     // Atomic increment (baseline for rc_increment)
     group.bench_function("atomic_increment", |b| {
         let counter = AtomicUsize::new(0);
-        b.iter(|| {
-            black_box(counter.fetch_add(1, Ordering::Relaxed))
-        });
+        b.iter(|| black_box(counter.fetch_add(1, Ordering::Relaxed)));
     });
 
     // Atomic decrement (baseline for rc_decrement)
     group.bench_function("atomic_decrement", |b| {
         let counter = AtomicUsize::new(1000000);
-        b.iter(|| {
-            black_box(counter.fetch_sub(1, Ordering::Relaxed))
-        });
+        b.iter(|| black_box(counter.fetch_sub(1, Ordering::Relaxed)));
     });
 
     // Atomic compare-exchange (for generation updates)
@@ -413,16 +376,12 @@ fn bench_persistent_allocation(c: &mut Criterion) {
 
     group.bench_function("region_alloc_64", |b| {
         let mut region = Region::new(1024 * 1024, 1024 * 1024);
-        b.iter(|| {
-            black_box(region.allocate(64, 8))
-        });
+        b.iter(|| black_box(region.allocate(64, 8)));
     });
 
     // Persistent allocator stats
     group.bench_function("allocator_stats", |b| {
-        b.iter(|| {
-            black_box(persistent_allocator().stats())
-        });
+        b.iter(|| black_box(persistent_allocator().stats()));
     });
 
     group.finish();
@@ -437,9 +396,7 @@ fn bench_refcount_operations(c: &mut Criterion) {
 
     // Increment benchmark
     group.bench_function("increment", |b| {
-        b.iter(|| {
-            black_box(persistent_increment(id))
-        });
+        b.iter(|| black_box(persistent_increment(id)));
     });
 
     // Note: decrement is tested in a way that doesn't free the slot
@@ -474,17 +431,13 @@ fn bench_tier2_operations(c: &mut Criterion) {
 
     // Tier2 stats
     group.bench_function("tier2_stats", |b| {
-        b.iter(|| {
-            black_box(tier2_allocator().stats())
-        });
+        b.iter(|| black_box(tier2_allocator().stats()));
     });
 
     // Pre-allocate for refcount tests
     if let Some((id, _ptr)) = tier2_alloc(64, 8, 0xCAFE) {
         group.bench_function("tier2_increment", |b| {
-            b.iter(|| {
-                black_box(tier2_increment(id))
-            });
+            b.iter(|| black_box(tier2_increment(id)));
         });
 
         group.bench_function("tier2_inc_dec_cycle", |b| {
@@ -508,9 +461,7 @@ fn bench_cycle_collection(c: &mut Criterion) {
 
     // Empty collection (baseline)
     group.bench_function("empty_collect", |b| {
-        b.iter(|| {
-            black_box(collect_cycles(&[]))
-        });
+        b.iter(|| black_box(collect_cycles(&[])));
     });
 
     // Collection with roots
@@ -523,9 +474,7 @@ fn bench_cycle_collection(c: &mut Criterion) {
             }
         }
 
-        b.iter(|| {
-            black_box(collect_cycles(&roots))
-        });
+        b.iter(|| black_box(collect_cycles(&roots)));
 
         // Clean up
         for id in roots {
@@ -535,9 +484,7 @@ fn bench_cycle_collection(c: &mut Criterion) {
 
     // Collector threshold check
     group.bench_function("should_collect", |b| {
-        b.iter(|| {
-            black_box(cycle_collector().should_collect())
-        });
+        b.iter(|| black_box(cycle_collector().should_collect()));
     });
 
     group.finish();
@@ -553,9 +500,7 @@ fn bench_gen_vs_rc_overhead(c: &mut Criterion) {
     let gen = slot.generation();
 
     group.bench_function("generation_check", |b| {
-        b.iter(|| {
-            black_box(slot.validate(gen))
-        });
+        b.iter(|| black_box(slot.validate(gen)));
     });
 
     // Reference counting (Persistent tier) - increment/decrement pair
@@ -569,9 +514,7 @@ fn bench_gen_vs_rc_overhead(c: &mut Criterion) {
 
         // Single increment (approximates read cost with atomic)
         group.bench_function("refcount_increment_only", |b| {
-            b.iter(|| {
-                black_box(persistent_increment(id))
-            });
+            b.iter(|| black_box(persistent_increment(id)));
         });
 
         drop(group);
@@ -639,23 +582,32 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
     // Linked list node sizes
     let raw_list_size = std::mem::size_of::<RawLinkedNode64>();
     let blood_list_size = std::mem::size_of::<BloodLinkedNode128>();
-    println!("Linked List Node: 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
-        raw_list_size, blood_list_size,
-        ((blood_list_size as f64 / raw_list_size as f64) - 1.0) * 100.0);
+    println!(
+        "Linked List Node: 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
+        raw_list_size,
+        blood_list_size,
+        ((blood_list_size as f64 / raw_list_size as f64) - 1.0) * 100.0
+    );
 
     // Binary tree node sizes
     let raw_tree_size = std::mem::size_of::<RawTreeNode64>();
     let blood_tree_size = std::mem::size_of::<BloodTreeNode128>();
-    println!("Binary Tree Node: 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
-        raw_tree_size, blood_tree_size,
-        ((blood_tree_size as f64 / raw_tree_size as f64) - 1.0) * 100.0);
+    println!(
+        "Binary Tree Node: 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
+        raw_tree_size,
+        blood_tree_size,
+        ((blood_tree_size as f64 / raw_tree_size as f64) - 1.0) * 100.0
+    );
 
     // Graph node sizes (4 neighbors)
     let raw_graph_size = std::mem::size_of::<RawGraphNode64>();
     let blood_graph_size = std::mem::size_of::<BloodGraphNode128>();
-    println!("Graph Node (4 nbrs): 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
-        raw_graph_size, blood_graph_size,
-        ((blood_graph_size as f64 / raw_graph_size as f64) - 1.0) * 100.0);
+    println!(
+        "Graph Node (4 nbrs): 64-bit={} bytes, 128-bit={} bytes, overhead={}%",
+        raw_graph_size,
+        blood_graph_size,
+        ((blood_graph_size as f64 / raw_graph_size as f64) - 1.0) * 100.0
+    );
 
     // ---- Allocation Benchmarks ----
 
@@ -700,7 +652,8 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
                     // Link them together using BloodPtr
                     for i in 0..count - 1 {
                         let next_addr = nodes[i + 1].as_ref() as *const _ as usize;
-                        nodes[i].next = BloodPtr::new(next_addr, generation::FIRST, PointerMetadata::HEAP);
+                        nodes[i].next =
+                            BloodPtr::new(next_addr, generation::FIRST, PointerMetadata::HEAP);
                     }
                     black_box(nodes)
                 });
@@ -718,11 +671,13 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let nodes: Vec<Box<RawTreeNode64>> = (0..count)
-                        .map(|_| Box::new(RawTreeNode64 {
-                            data: 42,
-                            left: std::ptr::null_mut(),
-                            right: std::ptr::null_mut(),
-                        }))
+                        .map(|_| {
+                            Box::new(RawTreeNode64 {
+                                data: 42,
+                                left: std::ptr::null_mut(),
+                                right: std::ptr::null_mut(),
+                            })
+                        })
                         .collect();
                     black_box(nodes)
                 });
@@ -735,11 +690,13 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let nodes: Vec<Box<BloodTreeNode128>> = (0..count)
-                        .map(|_| Box::new(BloodTreeNode128 {
-                            data: 42,
-                            left: BloodPtr::null(),
-                            right: BloodPtr::null(),
-                        }))
+                        .map(|_| {
+                            Box::new(BloodTreeNode128 {
+                                data: 42,
+                                left: BloodPtr::null(),
+                                right: BloodPtr::null(),
+                            })
+                        })
                         .collect();
                     black_box(nodes)
                 });
@@ -757,10 +714,12 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let nodes: Vec<Box<RawGraphNode64>> = (0..count)
-                        .map(|_| Box::new(RawGraphNode64 {
-                            data: 42,
-                            neighbors: [std::ptr::null_mut(); 4],
-                        }))
+                        .map(|_| {
+                            Box::new(RawGraphNode64 {
+                                data: 42,
+                                neighbors: [std::ptr::null_mut(); 4],
+                            })
+                        })
                         .collect();
                     black_box(nodes)
                 });
@@ -773,10 +732,12 @@ fn bench_pointer_heavy_memory(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let nodes: Vec<Box<BloodGraphNode128>> = (0..count)
-                        .map(|_| Box::new(BloodGraphNode128 {
-                            data: 42,
-                            neighbors: [BloodPtr::null(); 4],
-                        }))
+                        .map(|_| {
+                            Box::new(BloodGraphNode128 {
+                                data: 42,
+                                neighbors: [BloodPtr::null(); 4],
+                            })
+                        })
                         .collect();
                     black_box(nodes)
                 });
@@ -809,24 +770,62 @@ fn bench_memory_overhead_analysis(c: &mut Criterion) {
     }
 
     let structures = [
-        DataStructure { name: "Linked List Node", data_bytes: 8, num_pointers: 1 },
-        DataStructure { name: "Doubly-Linked Node", data_bytes: 8, num_pointers: 2 },
-        DataStructure { name: "Binary Tree Node", data_bytes: 8, num_pointers: 2 },
-        DataStructure { name: "Quad Tree Node", data_bytes: 8, num_pointers: 4 },
-        DataStructure { name: "Graph Node (8 edges)", data_bytes: 8, num_pointers: 8 },
-        DataStructure { name: "Skip List Node (4 lvl)", data_bytes: 8, num_pointers: 4 },
-        DataStructure { name: "B-Tree Node (16 keys)", data_bytes: 128, num_pointers: 17 },
-        DataStructure { name: "Trie Node (26 children)", data_bytes: 8, num_pointers: 26 },
+        DataStructure {
+            name: "Linked List Node",
+            data_bytes: 8,
+            num_pointers: 1,
+        },
+        DataStructure {
+            name: "Doubly-Linked Node",
+            data_bytes: 8,
+            num_pointers: 2,
+        },
+        DataStructure {
+            name: "Binary Tree Node",
+            data_bytes: 8,
+            num_pointers: 2,
+        },
+        DataStructure {
+            name: "Quad Tree Node",
+            data_bytes: 8,
+            num_pointers: 4,
+        },
+        DataStructure {
+            name: "Graph Node (8 edges)",
+            data_bytes: 8,
+            num_pointers: 8,
+        },
+        DataStructure {
+            name: "Skip List Node (4 lvl)",
+            data_bytes: 8,
+            num_pointers: 4,
+        },
+        DataStructure {
+            name: "B-Tree Node (16 keys)",
+            data_bytes: 128,
+            num_pointers: 17,
+        },
+        DataStructure {
+            name: "Trie Node (26 children)",
+            data_bytes: 8,
+            num_pointers: 26,
+        },
     ];
 
-    println!("\n{:<25} {:>12} {:>12} {:>12}", "Structure", "64-bit", "128-bit", "Overhead");
+    println!(
+        "\n{:<25} {:>12} {:>12} {:>12}",
+        "Structure", "64-bit", "128-bit", "Overhead"
+    );
     println!("{:-<25} {:->12} {:->12} {:->12}", "", "", "", "");
 
     for s in &structures {
         let size_64 = s.data_bytes + s.num_pointers * raw_ptr_size;
         let size_128 = s.data_bytes + s.num_pointers * blood_ptr_size;
         let overhead = ((size_128 as f64 / size_64 as f64) - 1.0) * 100.0;
-        println!("{:<25} {:>10} B {:>10} B {:>10.1}%", s.name, size_64, size_128, overhead);
+        println!(
+            "{:<25} {:>10} B {:>10} B {:>10.1}%",
+            s.name, size_64, size_128, overhead
+        );
     }
 
     // Benchmark: Measure actual allocation time vs size
@@ -841,9 +840,7 @@ fn bench_memory_overhead_analysis(c: &mut Criterion) {
 
     group.bench_function("raw_ptr_array_1000", |b| {
         b.iter(|| {
-            let arr: Vec<*const ()> = (0..1000usize)
-                .map(|i| i as *const ())
-                .collect();
+            let arr: Vec<*const ()> = (0..1000usize).map(|i| i as *const ()).collect();
             black_box(arr)
         });
     });
@@ -860,9 +857,7 @@ fn bench_memory_overhead_analysis(c: &mut Criterion) {
     });
 
     group.bench_function("copy_raw_ptrs_1000", |b| {
-        let src: Vec<*const ()> = (0..1000)
-            .map(|i| i as *const ())
-            .collect();
+        let src: Vec<*const ()> = (0..1000).map(|i| i as *const ()).collect();
         b.iter(|| {
             let dst = src.clone();
             black_box(dst)
@@ -887,9 +882,7 @@ fn bench_cache_effects(c: &mut Criterion) {
             BenchmarkId::new("sequential_64bit", count),
             &count,
             |b, &count| {
-                let ptrs: Vec<*const ()> = (0..count)
-                    .map(|i| i as *const ())
-                    .collect();
+                let ptrs: Vec<*const ()> = (0..count).map(|i| i as *const ()).collect();
                 b.iter(|| {
                     let mut sum = 0usize;
                     for p in &ptrs {
@@ -932,9 +925,7 @@ fn bench_cache_effects(c: &mut Criterion) {
             BenchmarkId::new("random_64bit", count),
             &count,
             |b, &count| {
-                let ptrs: Vec<*const ()> = (0..count)
-                    .map(|i| i as *const ())
-                    .collect();
+                let ptrs: Vec<*const ()> = (0..count).map(|i| i as *const ()).collect();
                 b.iter(|| {
                     let mut sum = 0usize;
                     for &idx in &indices {
@@ -1034,22 +1025,18 @@ fn bench_memory_pressure_churn(c: &mut Criterion) {
 
     // Scenario: Rapid alloc/dealloc cycles typical of real programs
     for size in [16, 64, 256, 1024] {
-        group.bench_with_input(
-            BenchmarkId::new("slot_churn", size),
-            &size,
-            |b, &size| {
-                let slot = Slot::new();
-                let layout = Layout::from_size_align(size, 8).unwrap();
-                b.iter(|| {
-                    unsafe {
-                        // Allocate and immediately deallocate - simulates temporary objects
-                        let ptr = slot.allocate(layout);
-                        black_box(ptr);
-                        slot.deallocate();
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("slot_churn", size), &size, |b, &size| {
+            let slot = Slot::new();
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            b.iter(|| {
+                unsafe {
+                    // Allocate and immediately deallocate - simulates temporary objects
+                    let ptr = slot.allocate(layout);
+                    black_box(ptr);
+                    slot.deallocate();
+                }
+            });
+        });
     }
 
     // Mixed size allocation pattern (more realistic)
@@ -1083,13 +1070,16 @@ fn bench_memory_pressure_generation_checks(c: &mut Criterion) {
     for ptr_count in [100, 1000, 10000] {
         // Create many slots and pointers
         let slots: Vec<Slot> = (0..ptr_count).map(|_| Slot::new()).collect();
-        let ptrs: Vec<BloodPtr> = slots.iter()
+        let ptrs: Vec<BloodPtr> = slots
+            .iter()
             .enumerate()
-            .map(|(i, slot)| BloodPtr::new(
-                i * 1000,  // Simulated address
-                slot.generation(),
-                PointerMetadata::HEAP,
-            ))
+            .map(|(i, slot)| {
+                BloodPtr::new(
+                    i * 1000, // Simulated address
+                    slot.generation(),
+                    PointerMetadata::HEAP,
+                )
+            })
             .collect();
 
         group.throughput(Throughput::Elements(ptr_count as u64));

@@ -69,7 +69,8 @@ fn format_expected_list(items: &[&str]) -> String {
         2 => format!("{} or {}", items[0], items[1]),
         _ => {
             // Safe: we're in the _ arm so items.len() >= 3, meaning split_last() returns Some
-            let (last, rest) = items.split_last()
+            let (last, rest) = items
+                .split_last()
                 .expect("BUG: items.len() >= 3 but split_last() returned None");
             format!("{}, or {}", rest.join(", "), last)
         }
@@ -152,7 +153,10 @@ impl<'src> Parser<'src> {
             }
         }
 
-        let has_errors = self.errors.iter().any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
+        let has_errors = self
+            .errors
+            .iter()
+            .any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
         if has_errors {
             Err(std::mem::take(&mut self.errors))
         } else {
@@ -171,7 +175,10 @@ impl<'src> Parser<'src> {
     pub fn parse_expr_for_macro(&mut self) -> Result<crate::ast::Expr, Vec<Diagnostic>> {
         let expr = self.parse_expr();
 
-        let has_errors = self.errors.iter().any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
+        let has_errors = self
+            .errors
+            .iter()
+            .any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
         if has_errors {
             Err(std::mem::take(&mut self.errors))
         } else {
@@ -443,7 +450,10 @@ impl<'src> Parser<'src> {
                 // Advance past the `>>` token
                 self.current = self.next.clone();
                 self.next = self.lexer.next().unwrap_or_else(|| {
-                    Token::new(TokenKind::Eof, Span::new(self.source.len(), self.source.len(), 0, 0))
+                    Token::new(
+                        TokenKind::Eof,
+                        Span::new(self.source.len(), self.source.len(), 0, 0),
+                    )
                 });
                 Some(first_span)
             }
@@ -650,8 +660,14 @@ impl<'src> Parser<'src> {
                     return;
                 }
                 // Start of new statement
-                TokenKind::Let | TokenKind::Return | TokenKind::If | TokenKind::While
-                | TokenKind::For | TokenKind::Loop | TokenKind::Break | TokenKind::Continue
+                TokenKind::Let
+                | TokenKind::Return
+                | TokenKind::If
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Loop
+                | TokenKind::Break
+                | TokenKind::Continue
                 | TokenKind::Match => {
                     return;
                 }
@@ -1023,7 +1039,10 @@ impl<'src> Parser<'src> {
             }
             TokenKind::FloatLit => {
                 let (value, suffix) = self.parse_float_literal(text, span);
-                LiteralKind::Float { value: value.into(), suffix }
+                LiteralKind::Float {
+                    value: value.into(),
+                    suffix,
+                }
             }
             TokenKind::StringLit => {
                 let s = self.parse_string_literal(text, span);
@@ -1068,7 +1087,23 @@ impl<'src> Parser<'src> {
         let text = text.replace('_', "");
 
         // Check for suffix
-        let (num_text, suffix) = if let Some(pos) = text.find(|c: char| c.is_alphabetic() && c != 'x' && c != 'o' && c != 'b' && c != 'a' && c != 'c' && c != 'd' && c != 'e' && c != 'f' && c != 'A' && c != 'B' && c != 'C' && c != 'D' && c != 'E' && c != 'F') {
+        let (num_text, suffix) = if let Some(pos) = text.find(|c: char| {
+            c.is_alphabetic()
+                && c != 'x'
+                && c != 'o'
+                && c != 'b'
+                && c != 'a'
+                && c != 'c'
+                && c != 'd'
+                && c != 'e'
+                && c != 'f'
+                && c != 'A'
+                && c != 'B'
+                && c != 'C'
+                && c != 'D'
+                && c != 'E'
+                && c != 'F'
+        }) {
             let (n, s) = text.split_at(pos);
             let suffix = match s {
                 "i8" => Some(IntSuffix::I8),
@@ -1084,7 +1119,11 @@ impl<'src> Parser<'src> {
                 "u128" => Some(IntSuffix::U128),
                 "usize" => Some(IntSuffix::Usize),
                 _ => {
-                    self.error_at(span, &format!("invalid integer suffix '{}'", s), ErrorCode::InvalidInteger);
+                    self.error_at(
+                        span,
+                        &format!("invalid integer suffix '{}'", s),
+                        ErrorCode::InvalidInteger,
+                    );
                     None
                 }
             };
@@ -1097,7 +1136,11 @@ impl<'src> Parser<'src> {
             match u128::from_str_radix(&num_text[2..], 16) {
                 Ok(v) => v,
                 Err(_) => {
-                    self.error_at(span, "invalid hexadecimal integer literal", ErrorCode::InvalidInteger);
+                    self.error_at(
+                        span,
+                        "invalid hexadecimal integer literal",
+                        ErrorCode::InvalidInteger,
+                    );
                     0
                 }
             }
@@ -1105,7 +1148,11 @@ impl<'src> Parser<'src> {
             match u128::from_str_radix(&num_text[2..], 8) {
                 Ok(v) => v,
                 Err(_) => {
-                    self.error_at(span, "invalid octal integer literal", ErrorCode::InvalidInteger);
+                    self.error_at(
+                        span,
+                        "invalid octal integer literal",
+                        ErrorCode::InvalidInteger,
+                    );
                     0
                 }
             }
@@ -1113,7 +1160,11 @@ impl<'src> Parser<'src> {
             match u128::from_str_radix(&num_text[2..], 2) {
                 Ok(v) => v,
                 Err(_) => {
-                    self.error_at(span, "invalid binary integer literal", ErrorCode::InvalidInteger);
+                    self.error_at(
+                        span,
+                        "invalid binary integer literal",
+                        ErrorCode::InvalidInteger,
+                    );
                     0
                 }
             }
@@ -1121,7 +1172,11 @@ impl<'src> Parser<'src> {
             match num_text.parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    self.error_at(span, "invalid decimal integer literal", ErrorCode::InvalidInteger);
+                    self.error_at(
+                        span,
+                        "invalid decimal integer literal",
+                        ErrorCode::InvalidInteger,
+                    );
                     0
                 }
             }
@@ -1144,7 +1199,11 @@ impl<'src> Parser<'src> {
         let value = match num_text.parse() {
             Ok(v) => v,
             Err(_) => {
-                self.error_at(span, "invalid floating-point literal", ErrorCode::InvalidFloat);
+                self.error_at(
+                    span,
+                    "invalid floating-point literal",
+                    ErrorCode::InvalidFloat,
+                );
                 0.0
             }
         };
@@ -1189,8 +1248,11 @@ impl<'src> Parser<'src> {
                                     break;
                                 }
                                 // Safe: we just peeked Some(&c), so next() must return Some(c)
-                                hex.push(chars.next()
-                                    .expect("BUG: peek() returned Some but next() returned None"));
+                                hex.push(
+                                    chars.next().expect(
+                                        "BUG: peek() returned Some but next() returned None",
+                                    ),
+                                );
                             }
                             if let Ok(n) = u32::from_str_radix(&hex, 16) {
                                 if let Some(c) = char::from_u32(n) {
@@ -1201,10 +1263,8 @@ impl<'src> Parser<'src> {
                     }
                     Some(c) => {
                         self.errors.push(
-                            Diagnostic::error(
-                                &format!("unknown escape sequence `\\{c}`"),
-                                span,
-                            ).with_error_code(ErrorCode::InvalidEscape),
+                            Diagnostic::error(&format!("unknown escape sequence `\\{c}`"), span)
+                                .with_error_code(ErrorCode::InvalidEscape),
                         );
                         result.push(c);
                     }
@@ -1249,10 +1309,8 @@ impl<'src> Parser<'src> {
                     }
                     Some(c) if c.is_ascii() => {
                         self.errors.push(
-                            Diagnostic::error(
-                                &format!("unknown escape sequence `\\{c}`"),
-                                span,
-                            ).with_error_code(ErrorCode::InvalidEscape),
+                            Diagnostic::error(&format!("unknown escape sequence `\\{c}`"), span)
+                                .with_error_code(ErrorCode::InvalidEscape),
                         );
                         result.push(c as u8);
                     }
@@ -1273,7 +1331,7 @@ impl<'src> Parser<'src> {
         // Strip the r prefix, hash delimiters, and quotes
         // No escape sequence processing - content is taken literally
         let prefix_len = 1 + hash_count + 1; // r + hashes + opening quote
-        let suffix_len = 1 + hash_count;     // closing quote + hashes
+        let suffix_len = 1 + hash_count; // closing quote + hashes
         let inner = &text[prefix_len..text.len() - suffix_len];
         inner.to_string()
     }
@@ -1326,10 +1384,8 @@ impl<'src> Parser<'src> {
                 }
                 Some(c) => {
                     self.errors.push(
-                        Diagnostic::error(
-                            &format!("unknown escape sequence `\\{c}`"),
-                            span,
-                        ).with_error_code(ErrorCode::InvalidEscape),
+                        Diagnostic::error(&format!("unknown escape sequence `\\{c}`"), span)
+                            .with_error_code(ErrorCode::InvalidEscape),
                     );
                     c
                 }

@@ -144,13 +144,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    let filter = if cli.verbose {
-        "debug"
-    } else {
-        "info"
-    };
+    let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)),
+        )
         .init();
 
     let codebase_path = cli
@@ -212,12 +210,19 @@ fn cmd_find(path: &PathBuf, query: &str) -> Result<()> {
                 print_def_info(info);
             }
             n => {
-                println!("Ambiguous hash prefix '{}' matches {} definitions:", hash_str, n);
+                println!(
+                    "Ambiguous hash prefix '{}' matches {} definitions:",
+                    hash_str, n
+                );
                 for info in &matches {
                     let names_str = if info.names.is_empty() {
                         "(unnamed)".to_string()
                     } else {
-                        info.names.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+                        info.names
+                            .iter()
+                            .map(|n| n.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     };
                     println!("  {} ({}) - {}", info.hash, info.kind.as_str(), names_str);
                 }
@@ -244,7 +249,11 @@ fn print_def_info(info: &blood_ucm::DefInfo) {
     let names_str = if info.names.is_empty() {
         "(unnamed)".to_string()
     } else {
-        info.names.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+        info.names
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     println!("Names: {}", names_str);
     println!("Dependencies: {}", info.dependencies.len());
@@ -286,7 +295,11 @@ fn cmd_deps(path: &PathBuf, query: &str, reverse: bool) -> Result<()> {
         codebase.dependencies(&DefRef::name(query))?
     };
 
-    let label = if reverse { "Dependents" } else { "Dependencies" };
+    let label = if reverse {
+        "Dependents"
+    } else {
+        "Dependencies"
+    };
     println!("{}:", label);
     for (hash, names) in deps {
         let name_str = names.join(", ");
@@ -339,7 +352,7 @@ fn cmd_run(path: &PathBuf, expr: &str) -> Result<()> {
 }
 
 fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
-    use blood_ucm::test_runner::{TestRunner, TestOutcome, TestSummary};
+    use blood_ucm::test_runner::{TestOutcome, TestRunner, TestSummary};
 
     let codebase = Codebase::open(path)?;
     let runner = TestRunner::new(&codebase);
@@ -353,7 +366,11 @@ fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
                 format!("ok ({:.2}ms)", duration.as_secs_f64() * 1000.0)
             }
             TestOutcome::Failed { message, duration } => {
-                format!("FAILED ({:.2}ms)\n    {}", duration.as_secs_f64() * 1000.0, message)
+                format!(
+                    "FAILED ({:.2}ms)\n    {}",
+                    duration.as_secs_f64() * 1000.0,
+                    message
+                )
             }
             TestOutcome::Skipped { reason } => {
                 format!("skipped: {}", reason)
@@ -369,11 +386,7 @@ fn cmd_test(path: &PathBuf, filter: Option<&str>) -> Result<()> {
     println!();
     println!(
         "{} passed, {} failed, {} skipped, {} errors (total: {})",
-        summary.passed,
-        summary.failed,
-        summary.skipped,
-        summary.errors,
-        summary.total
+        summary.passed, summary.failed, summary.skipped, summary.errors, summary.total
     );
 
     if !summary.all_passed() {
@@ -547,7 +560,9 @@ fn cmd_repl(path: &PathBuf) -> Result<()> {
                     println!("  :list [prefix]    List definitions");
                     println!("  :find <name>      Find a definition");
                     println!("  :view <name>      View source of a definition");
-                    println!("  :add <name>       Add a definition (enter source, then blank line)");
+                    println!(
+                        "  :add <name>       Add a definition (enter source, then blank line)"
+                    );
                     println!("  :stats            Show codebase statistics");
                     println!();
                     println!("Or type an expression to evaluate.");
@@ -605,8 +620,10 @@ fn cmd_repl(path: &PathBuf) -> Result<()> {
                 }
                 Some("stats") => {
                     let stats = codebase.stats()?;
-                    println!("Terms: {}, Types: {}, Effects: {}, Handlers: {}, Tests: {}",
-                        stats.terms, stats.types, stats.effects, stats.handlers, stats.tests);
+                    println!(
+                        "Terms: {}, Types: {}, Effects: {}, Handlers: {}, Tests: {}",
+                        stats.terms, stats.types, stats.effects, stats.handlers, stats.tests
+                    );
                 }
                 Some(cmd) => {
                     println!("Unknown command: :{}", cmd);
@@ -625,8 +642,8 @@ fn cmd_repl(path: &PathBuf) -> Result<()> {
 
 /// Evaluate an expression in the REPL.
 fn evaluate_expression(input: &str, codebase: &Codebase) {
-    use bloodc::Parser;
     use bloodc::typeck::const_eval;
+    use bloodc::Parser;
 
     // First, check if the input is a name in the codebase
     if let Ok(Some(info)) = codebase.find(&DefRef::name(input.trim())) {
@@ -649,13 +666,11 @@ fn evaluate_expression(input: &str, codebase: &Codebase) {
 
     // Try compile-time constant evaluation
     match const_eval::eval_const_expr(&expr) {
-        Ok(result) => {
-            match result {
-                const_eval::ConstResult::Int(v) => println!("= {} : Int", v),
-                const_eval::ConstResult::Uint(v) => println!("= {} : UInt", v),
-                const_eval::ConstResult::Bool(v) => println!("= {} : Bool", v),
-            }
-        }
+        Ok(result) => match result {
+            const_eval::ConstResult::Int(v) => println!("= {} : Int", v),
+            const_eval::ConstResult::Uint(v) => println!("= {} : UInt", v),
+            const_eval::ConstResult::Bool(v) => println!("= {} : Bool", v),
+        },
         Err(_) => {
             // Non-constant expression - provide helpful message
             println!("Parsed: {:?}", expr.kind);

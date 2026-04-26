@@ -870,159 +870,177 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        assert_eq!(lex("fn let if else match"), vec![
-            TokenKind::Fn,
-            TokenKind::Let,
-            TokenKind::If,
-            TokenKind::Else,
-            TokenKind::Match,
-        ]);
+        assert_eq!(
+            lex("fn let if else match"),
+            vec![
+                TokenKind::Fn,
+                TokenKind::Let,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::Match,
+            ]
+        );
     }
 
     #[test]
     fn test_identifiers() {
-        assert_eq!(lex("foo Bar _baz"), vec![
-            TokenKind::Ident,
-            TokenKind::TypeIdent,
-            TokenKind::Ident,
-        ]);
+        assert_eq!(
+            lex("foo Bar _baz"),
+            vec![TokenKind::Ident, TokenKind::TypeIdent, TokenKind::Ident,]
+        );
     }
 
     #[test]
     fn test_literals() {
-        assert_eq!(lex("42 3.14 0xFF 0b1010 0o77"), vec![
-            TokenKind::IntLit,
-            TokenKind::FloatLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-        ]);
+        assert_eq!(
+            lex("42 3.14 0xFF 0b1010 0o77"),
+            vec![
+                TokenKind::IntLit,
+                TokenKind::FloatLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+            ]
+        );
     }
 
     #[test]
     fn test_strings() {
-        assert_eq!(lex(r#""hello" "world\n""#), vec![
-            TokenKind::StringLit,
-            TokenKind::StringLit,
-        ]);
+        assert_eq!(
+            lex(r#""hello" "world\n""#),
+            vec![TokenKind::StringLit, TokenKind::StringLit,]
+        );
     }
 
     #[test]
     fn test_chars() {
-        assert_eq!(lex("'a' '\\n' '\\''"), vec![
-            TokenKind::CharLit,
-            TokenKind::CharLit,
-            TokenKind::CharLit,
-        ]);
+        assert_eq!(
+            lex("'a' '\\n' '\\''"),
+            vec![TokenKind::CharLit, TokenKind::CharLit, TokenKind::CharLit,]
+        );
     }
 
     #[test]
     fn test_operators() {
-        assert_eq!(lex("+ - * / % == != < > <= >="), vec![
-            TokenKind::Plus,
-            TokenKind::Minus,
-            TokenKind::Star,
-            TokenKind::Slash,
-            TokenKind::Percent,
-            TokenKind::EqEq,
-            TokenKind::NotEq,
-            TokenKind::Lt,
-            TokenKind::Gt,
-            TokenKind::LtEq,
-            TokenKind::GtEq,
-        ]);
+        assert_eq!(
+            lex("+ - * / % == != < > <= >="),
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Percent,
+                TokenKind::EqEq,
+                TokenKind::NotEq,
+                TokenKind::Lt,
+                TokenKind::Gt,
+                TokenKind::LtEq,
+                TokenKind::GtEq,
+            ]
+        );
     }
 
     #[test]
     fn test_punctuation() {
-        assert_eq!(lex("( ) { } [ ] , ; : :: . .. ..= -> =>"), vec![
-            TokenKind::LParen,
-            TokenKind::RParen,
-            TokenKind::LBrace,
-            TokenKind::RBrace,
-            TokenKind::LBracket,
-            TokenKind::RBracket,
-            TokenKind::Comma,
-            TokenKind::Semi,
-            TokenKind::Colon,
-            TokenKind::ColonColon,
-            TokenKind::Dot,
-            TokenKind::DotDot,
-            TokenKind::DotDotEq,
-            TokenKind::Arrow,
-            TokenKind::FatArrow,
-        ]);
+        assert_eq!(
+            lex("( ) { } [ ] , ; : :: . .. ..= -> =>"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::Comma,
+                TokenKind::Semi,
+                TokenKind::Colon,
+                TokenKind::ColonColon,
+                TokenKind::Dot,
+                TokenKind::DotDot,
+                TokenKind::DotDotEq,
+                TokenKind::Arrow,
+                TokenKind::FatArrow,
+            ]
+        );
     }
 
     #[test]
     fn test_lifetimes() {
-        assert_eq!(lex("'a 'static '_"), vec![
-            TokenKind::Lifetime,
-            TokenKind::Lifetime,
-            TokenKind::Lifetime,
-        ]);
+        assert_eq!(
+            lex("'a 'static '_"),
+            vec![
+                TokenKind::Lifetime,
+                TokenKind::Lifetime,
+                TokenKind::Lifetime,
+            ]
+        );
     }
 
     #[test]
     fn test_comments() {
         // Line comments should be skipped
-        assert_eq!(lex("fn // comment\nlet"), vec![
-            TokenKind::Fn,
-            TokenKind::Let,
-        ]);
+        assert_eq!(
+            lex("fn // comment\nlet"),
+            vec![TokenKind::Fn, TokenKind::Let,]
+        );
 
         // Block comments should be skipped
-        assert_eq!(lex("fn /* comment */ let"), vec![
-            TokenKind::Fn,
-            TokenKind::Let,
-        ]);
+        assert_eq!(
+            lex("fn /* comment */ let"),
+            vec![TokenKind::Fn, TokenKind::Let,]
+        );
 
         // Nested block comments
-        assert_eq!(lex("fn /* outer /* inner */ outer */ let"), vec![
-            TokenKind::Fn,
-            TokenKind::Let,
-        ]);
+        assert_eq!(
+            lex("fn /* outer /* inner */ outer */ let"),
+            vec![TokenKind::Fn, TokenKind::Let,]
+        );
     }
 
     #[test]
     fn test_effect_keywords() {
-        assert_eq!(lex("effect handler perform resume with handle"), vec![
-            TokenKind::Effect,
-            TokenKind::Handler,
-            TokenKind::Perform,
-            TokenKind::Resume,
-            TokenKind::With,
-            TokenKind::Handle,
-        ]);
+        assert_eq!(
+            lex("effect handler perform resume with handle"),
+            vec![
+                TokenKind::Effect,
+                TokenKind::Handler,
+                TokenKind::Perform,
+                TokenKind::Resume,
+                TokenKind::With,
+                TokenKind::Handle,
+            ]
+        );
     }
 
     #[test]
     fn test_special_tokens() {
-        assert_eq!(lex("@unsafe @heap @stack"), vec![
-            TokenKind::AtUnsafe,
-            TokenKind::AtHeap,
-            TokenKind::AtStack,
-        ]);
+        assert_eq!(
+            lex("@unsafe @heap @stack"),
+            vec![TokenKind::AtUnsafe, TokenKind::AtHeap, TokenKind::AtStack,]
+        );
     }
 
     #[test]
     fn test_function_signature() {
         let tokens = lex("fn main() -> i32 / {IO} { 0 }");
-        assert_eq!(tokens, vec![
-            TokenKind::Fn,
-            TokenKind::Ident,
-            TokenKind::LParen,
-            TokenKind::RParen,
-            TokenKind::Arrow,
-            TokenKind::Ident,
-            TokenKind::Slash,
-            TokenKind::LBrace,
-            TokenKind::TypeIdent,
-            TokenKind::RBrace,
-            TokenKind::LBrace,
-            TokenKind::IntLit,
-            TokenKind::RBrace,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                TokenKind::Fn,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Ident,
+                TokenKind::Slash,
+                TokenKind::LBrace,
+                TokenKind::TypeIdent,
+                TokenKind::RBrace,
+                TokenKind::LBrace,
+                TokenKind::IntLit,
+                TokenKind::RBrace,
+            ]
+        );
     }
 
     #[test]
@@ -1040,17 +1058,17 @@ mod tests {
     fn test_unclosed_block_comment() {
         // Unclosed block comment should produce UnclosedBlockComment token
         let tokens = lex("fn /* unclosed comment");
-        assert_eq!(tokens, vec![
-            TokenKind::Fn,
-            TokenKind::UnclosedBlockComment,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![TokenKind::Fn, TokenKind::UnclosedBlockComment,]
+        );
 
         // Unclosed nested block comment
         let tokens = lex("fn /* outer /* inner */");
-        assert_eq!(tokens, vec![
-            TokenKind::Fn,
-            TokenKind::UnclosedBlockComment,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![TokenKind::Fn, TokenKind::UnclosedBlockComment,]
+        );
     }
 
     #[test]
@@ -1079,30 +1097,33 @@ mod tests {
 
     #[test]
     fn test_ownership_keywords() {
-        assert_eq!(lex("linear affine"), vec![
-            TokenKind::Linear,
-            TokenKind::Affine,
-        ]);
+        assert_eq!(
+            lex("linear affine"),
+            vec![TokenKind::Linear, TokenKind::Affine,]
+        );
     }
 
     #[test]
     fn test_reserved_keywords() {
-        assert_eq!(lex("abstract final virtual yield"), vec![
-            TokenKind::Abstract,
-            TokenKind::Final,
-            TokenKind::Virtual,
-            TokenKind::Yield,
-        ]);
+        assert_eq!(
+            lex("abstract final virtual yield"),
+            vec![
+                TokenKind::Abstract,
+                TokenKind::Final,
+                TokenKind::Virtual,
+                TokenKind::Yield,
+            ]
+        );
     }
 
     #[test]
     fn test_byte_string_literals() {
         assert_eq!(lex(r#"b"hello""#), vec![TokenKind::ByteStringLit]);
         assert_eq!(lex(r#"b"hello\n""#), vec![TokenKind::ByteStringLit]);
-        assert_eq!(lex(r#"b"" b"x""#), vec![
-            TokenKind::ByteStringLit,
-            TokenKind::ByteStringLit,
-        ]);
+        assert_eq!(
+            lex(r#"b"" b"x""#),
+            vec![TokenKind::ByteStringLit, TokenKind::ByteStringLit,]
+        );
     }
 
     #[test]
@@ -1123,24 +1144,30 @@ mod tests {
         assert_eq!(lex("0o777i32"), vec![TokenKind::IntLit]);
 
         // All suffix types
-        assert_eq!(lex("1i8 2i16 3i32 4i64 5i128"), vec![
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-        ]);
-        assert_eq!(lex("1u8 2u16 3u32 4u64 5u128"), vec![
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-        ]);
-        assert_eq!(lex("1isize 2usize"), vec![
-            TokenKind::IntLit,
-            TokenKind::IntLit,
-        ]);
+        assert_eq!(
+            lex("1i8 2i16 3i32 4i64 5i128"),
+            vec![
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+            ]
+        );
+        assert_eq!(
+            lex("1u8 2u16 3u32 4u64 5u128"),
+            vec![
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+                TokenKind::IntLit,
+            ]
+        );
+        assert_eq!(
+            lex("1isize 2usize"),
+            vec![TokenKind::IntLit, TokenKind::IntLit,]
+        );
 
         // Mixed with underscores
         assert_eq!(lex("1_000_000i64"), vec![TokenKind::IntLit]);
@@ -1149,26 +1176,25 @@ mod tests {
     #[test]
     fn test_doc_comments() {
         // Basic doc comment
-        assert_eq!(lex("/// This is a doc comment"), vec![TokenKind::DocComment]);
+        assert_eq!(
+            lex("/// This is a doc comment"),
+            vec![TokenKind::DocComment]
+        );
 
         // Doc comment followed by code
-        assert_eq!(lex("/// Doc comment\nfn foo"), vec![
-            TokenKind::DocComment,
-            TokenKind::Fn,
-            TokenKind::Ident,
-        ]);
+        assert_eq!(
+            lex("/// Doc comment\nfn foo"),
+            vec![TokenKind::DocComment, TokenKind::Fn, TokenKind::Ident,]
+        );
 
         // Multiple doc comments
-        assert_eq!(lex("/// First line\n/// Second line"), vec![
-            TokenKind::DocComment,
-            TokenKind::DocComment,
-        ]);
+        assert_eq!(
+            lex("/// First line\n/// Second line"),
+            vec![TokenKind::DocComment, TokenKind::DocComment,]
+        );
 
         // Empty doc comment (just ///)
-        assert_eq!(lex("///\nfn"), vec![
-            TokenKind::DocComment,
-            TokenKind::Fn,
-        ]);
+        assert_eq!(lex("///\nfn"), vec![TokenKind::DocComment, TokenKind::Fn,]);
 
         // Doc comment with space
         assert_eq!(lex("/// "), vec![TokenKind::DocComment]);
@@ -1186,9 +1212,9 @@ mod tests {
         assert_eq!(lex("///// also not a doc comment\nfn"), vec![TokenKind::Fn]);
 
         // Three slashes IS a doc comment
-        assert_eq!(lex("/// this IS a doc comment\nfn"), vec![
-            TokenKind::DocComment,
-            TokenKind::Fn,
-        ]);
+        assert_eq!(
+            lex("/// this IS a doc comment\nfn"),
+            vec![TokenKind::DocComment, TokenKind::Fn,]
+        );
     }
 }

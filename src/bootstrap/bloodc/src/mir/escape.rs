@@ -55,12 +55,12 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::hir::{DefId, LocalId};
 use super::body::MirBody;
 use super::ptr::MemoryTier;
 use super::types::{
     AggregateKind, Operand, Place, PlaceElem, Rvalue, StatementKind, TerminatorKind,
 };
+use crate::hir::{DefId, LocalId};
 
 // ============================================================================
 // Escape State
@@ -132,13 +132,14 @@ impl EscapeState {
     pub fn recommended_tier(self) -> MemoryTier {
         match self {
             EscapeState::NoEscape | EscapeState::EffectLocal => MemoryTier::Stack,
-            EscapeState::ArgEscape | EscapeState::EffectCapture
-            | EscapeState::HeapEscape | EscapeState::EffectEscape => MemoryTier::Region,
+            EscapeState::ArgEscape
+            | EscapeState::EffectCapture
+            | EscapeState::HeapEscape
+            | EscapeState::EffectEscape => MemoryTier::Region,
             EscapeState::GlobalEscape => MemoryTier::Persistent,
         }
     }
 }
-
 
 // ============================================================================
 // Escape Results
@@ -171,7 +172,10 @@ impl EscapeResults {
 
     /// Get the escape state for a local.
     pub fn get(&self, local: LocalId) -> EscapeState {
-        self.states.get(&local).copied().unwrap_or(EscapeState::NoEscape)
+        self.states
+            .get(&local)
+            .copied()
+            .unwrap_or(EscapeState::NoEscape)
     }
 
     /// Check if a local can be stack-allocated.
@@ -198,7 +202,8 @@ impl EscapeResults {
 
     /// Get the closures that capture a specific local.
     pub fn capturing_closures(&self, local: LocalId) -> Vec<LocalId> {
-        self.closure_captures.iter()
+        self.closure_captures
+            .iter()
             .filter(|(_, captures)| captures.contains(&local))
             .map(|(closure, _)| *closure)
             .collect()
@@ -445,31 +450,38 @@ impl EscapeStatistics {
 
         report.push_str(&format!(
             "║  NoEscape:                     {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.no_escape, pct(self.by_state.no_escape)
+            self.by_state.no_escape,
+            pct(self.by_state.no_escape)
         ));
         report.push_str(&format!(
             "║  EffectLocal:                  {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.effect_local, pct(self.by_state.effect_local)
+            self.by_state.effect_local,
+            pct(self.by_state.effect_local)
         ));
         report.push_str(&format!(
             "║  ArgEscape:                    {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.arg_escape, pct(self.by_state.arg_escape)
+            self.by_state.arg_escape,
+            pct(self.by_state.arg_escape)
         ));
         report.push_str(&format!(
             "║  EffectCapture:                {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.effect_capture, pct(self.by_state.effect_capture)
+            self.by_state.effect_capture,
+            pct(self.by_state.effect_capture)
         ));
         report.push_str(&format!(
             "║  HeapEscape:                   {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.heap_escape, pct(self.by_state.heap_escape)
+            self.by_state.heap_escape,
+            pct(self.by_state.heap_escape)
         ));
         report.push_str(&format!(
             "║  EffectEscape:                 {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.effect_escape, pct(self.by_state.effect_escape)
+            self.by_state.effect_escape,
+            pct(self.by_state.effect_escape)
         ));
         report.push_str(&format!(
             "║  GlobalEscape:                 {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.global_escape, pct(self.by_state.global_escape)
+            self.by_state.global_escape,
+            pct(self.by_state.global_escape)
         ));
         report.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
         report.push_str("║  SPECIAL CAPTURES                                                ║\n");
@@ -591,7 +603,8 @@ impl EscapeAnalyzer {
         }
 
         // Return place always escapes (returned to caller)
-        self.states.insert(body.return_place(), EscapeState::ArgEscape);
+        self.states
+            .insert(body.return_place(), EscapeState::ArgEscape);
 
         // Parameters start as NoEscape and only escape if they're:
         // - Stored into a global or field of something that escapes
@@ -643,7 +656,9 @@ impl EscapeAnalyzer {
             //
             // This is O(n) because each closure is processed at most once per outer iteration,
             // and the outer loop runs at most 3 times (bounded by escape state levels).
-            let mut worklist: VecDeque<LocalId> = self.closure_captures.keys()
+            let mut worklist: VecDeque<LocalId> = self
+                .closure_captures
+                .keys()
                 .filter(|c| {
                     self.states.get(c).copied().unwrap_or(EscapeState::NoEscape)
                         != EscapeState::NoEscape
@@ -659,7 +674,10 @@ impl EscapeAnalyzer {
                 }
                 processed.insert(closure);
 
-                let closure_state = self.states.get(&closure).copied()
+                let closure_state = self
+                    .states
+                    .get(&closure)
+                    .copied()
                     .unwrap_or(EscapeState::NoEscape);
 
                 // Only propagate if closure escapes
@@ -696,9 +714,8 @@ impl EscapeAnalyzer {
 
         // Determine stack-promotable allocations
         // Build a map from LocalId to type for efficient lookup
-        let local_types: HashMap<LocalId, &crate::hir::Type> = body.locals.iter()
-            .map(|l| (l.id, &l.ty))
-            .collect();
+        let local_types: HashMap<LocalId, &crate::hir::Type> =
+            body.locals.iter().map(|l| (l.id, &l.ty)).collect();
 
         let mut stack_promotable = HashSet::new();
         for (local, state) in &self.states {
@@ -737,7 +754,10 @@ impl EscapeAnalyzer {
 
         for (closure_local, captures) in &self.closure_captures {
             if captures.contains(&local) {
-                let closure_state = self.states.get(closure_local).copied()
+                let closure_state = self
+                    .states
+                    .get(closure_local)
+                    .copied()
                     .unwrap_or(EscapeState::NoEscape);
                 if closure_state != EscapeState::NoEscape {
                     return true;
@@ -750,9 +770,15 @@ impl EscapeAnalyzer {
 
     /// Collect closure capture information from an assignment.
     fn collect_closure_captures(&mut self, place: &Place, rvalue: &Rvalue) {
-        if let Rvalue::Aggregate { kind: AggregateKind::Closure { .. }, operands } = rvalue {
+        if let Rvalue::Aggregate {
+            kind: AggregateKind::Closure { .. },
+            operands,
+        } = rvalue
+        {
             // Only track closure captures for local-based places
-            let Some(closure_local) = place.as_local() else { return };
+            let Some(closure_local) = place.as_local() else {
+                return;
+            };
             let mut captures = Vec::with_capacity(operands.len());
 
             for operand in operands {
@@ -772,9 +798,7 @@ impl EscapeAnalyzer {
     /// Analyze a statement, returning true if state changed.
     fn analyze_statement(&mut self, kind: &StatementKind) -> bool {
         match kind {
-            StatementKind::Assign(place, rvalue) => {
-                self.analyze_assignment(place, rvalue)
-            }
+            StatementKind::Assign(place, rvalue) => self.analyze_assignment(place, rvalue),
             StatementKind::CaptureSnapshot(local) => {
                 // Effect snapshots capture references — mark as EffectEscape
                 self.update_state(*local, EscapeState::EffectEscape)
@@ -791,7 +815,11 @@ impl EscapeAnalyzer {
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) | StatementKind::Nop => {
                 false
             }
-            StatementKind::PushHandler { .. } | StatementKind::PushInlineHandler { .. } | StatementKind::PopHandler | StatementKind::CallReturnClause { .. } | StatementKind::CallFinallyClause { .. } => {
+            StatementKind::PushHandler { .. }
+            | StatementKind::PushInlineHandler { .. }
+            | StatementKind::PopHandler
+            | StatementKind::CallReturnClause { .. }
+            | StatementKind::CallFinallyClause { .. } => {
                 // Effect handler statements don't affect escape state
                 false
             }
@@ -799,9 +827,7 @@ impl EscapeAnalyzer {
                 // Unchecked blocks don't affect escape analysis
                 false
             }
-            StatementKind::Safepoint => {
-                false
-            }
+            StatementKind::Safepoint => false,
         }
     }
 
@@ -816,7 +842,12 @@ impl EscapeAnalyzer {
             Rvalue::Use(operand) => {
                 changed |= self.propagate_to_operand(operand, target_state);
             }
-            Rvalue::Ref { place: ref_place, .. } | Rvalue::AddressOf { place: ref_place, .. } => {
+            Rvalue::Ref {
+                place: ref_place, ..
+            }
+            | Rvalue::AddressOf {
+                place: ref_place, ..
+            } => {
                 // Creating a reference: if the reference escapes, the referent escapes
                 // Only track escape state for locals, not statics
                 if let Some(local) = ref_place.as_local() {
@@ -835,14 +866,21 @@ impl EscapeAnalyzer {
                     changed |= self.propagate_to_operand(op, target_state);
                 }
             }
-            Rvalue::Discriminant(p) | Rvalue::Len(p) | Rvalue::VecLen(p) | Rvalue::ReadGeneration(p) => {
+            Rvalue::Discriminant(p)
+            | Rvalue::Len(p)
+            | Rvalue::VecLen(p)
+            | Rvalue::ReadGeneration(p) => {
                 // Reading properties doesn't cause escape
                 let _ = p;
             }
             Rvalue::NullCheck(op) => {
                 let _ = op;
             }
-            Rvalue::MakeGenPtr { address, generation, metadata } => {
+            Rvalue::MakeGenPtr {
+                address,
+                generation,
+                metadata,
+            } => {
                 // Creating a pointer might cause escape
                 changed |= self.propagate_to_operand(address, target_state);
                 let _ = generation;
@@ -912,7 +950,11 @@ impl EscapeAnalyzer {
         let Some(local) = place.as_local() else {
             return EscapeState::GlobalEscape;
         };
-        let base_state = self.states.get(&local).copied().unwrap_or(EscapeState::NoEscape);
+        let base_state = self
+            .states
+            .get(&local)
+            .copied()
+            .unwrap_or(EscapeState::NoEscape);
 
         // If we're dereferencing, the value is stored through a pointer into
         // heap-allocated memory. This is HeapEscape (Tier 1 / Region), not
@@ -944,7 +986,11 @@ impl EscapeAnalyzer {
 
     /// Update the escape state of a local, returning true if changed.
     fn update_state(&mut self, local: LocalId, new_state: EscapeState) -> bool {
-        let current = self.states.get(&local).copied().unwrap_or(EscapeState::NoEscape);
+        let current = self
+            .states
+            .get(&local)
+            .copied()
+            .unwrap_or(EscapeState::NoEscape);
         let joined = current.join(new_state);
 
         if joined != current {
@@ -968,13 +1014,13 @@ impl Default for EscapeAnalyzer {
 
 #[cfg(test)]
 mod tests {
+    use super::super::body::{LocalKind, MirBody};
+    use super::super::types::{
+        AggregateKind, Constant, ConstantKind, Statement, Terminator, TerminatorKind,
+    };
     use super::*;
     use crate::hir::Type;
     use crate::span::Span;
-    use super::super::body::{MirBody, LocalKind};
-    use super::super::types::{
-        AggregateKind, Statement, Terminator, TerminatorKind, Constant, ConstantKind,
-    };
 
     fn dummy_def_id() -> DefId {
         DefId::new(0)
@@ -1024,8 +1070,14 @@ mod tests {
     #[test]
     fn test_escape_state_recommended_tier() {
         assert_eq!(EscapeState::NoEscape.recommended_tier(), MemoryTier::Stack);
-        assert_eq!(EscapeState::ArgEscape.recommended_tier(), MemoryTier::Region);
-        assert_eq!(EscapeState::GlobalEscape.recommended_tier(), MemoryTier::Persistent);
+        assert_eq!(
+            EscapeState::ArgEscape.recommended_tier(),
+            MemoryTier::Region
+        );
+        assert_eq!(
+            EscapeState::GlobalEscape.recommended_tier(),
+            MemoryTier::Persistent
+        );
     }
 
     #[test]
@@ -1038,7 +1090,9 @@ mod tests {
     #[test]
     fn test_escape_results_get() {
         let mut results = EscapeResults::new();
-        results.states.insert(LocalId::new(0), EscapeState::ArgEscape);
+        results
+            .states
+            .insert(LocalId::new(0), EscapeState::ArgEscape);
 
         assert_eq!(results.get(LocalId::new(0)), EscapeState::ArgEscape);
         assert_eq!(results.get(LocalId::new(1)), EscapeState::NoEscape); // default
@@ -1086,31 +1140,45 @@ mod tests {
 
         // Create block with just an assignment to the struct (no escape)
         let bb = body.new_block();
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(struct_local),
-                Rvalue::Aggregate { kind: AggregateKind::Tuple, operands: vec![] },
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(struct_local),
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Tuple,
+                        operands: vec![],
+                    },
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
         let mut analyzer = EscapeAnalyzer::new();
         let results = analyzer.analyze(&body);
 
         // The struct local should be NoEscape
-        assert_eq!(results.get(struct_local), EscapeState::NoEscape,
-            "Non-escaping struct should have NoEscape state");
+        assert_eq!(
+            results.get(struct_local),
+            EscapeState::NoEscape,
+            "Non-escaping struct should have NoEscape state"
+        );
 
         // CRITICAL: Non-escaping struct MUST be stack-promotable
-        assert!(results.can_stack_allocate(struct_local),
+        assert!(
+            results.can_stack_allocate(struct_local),
             "Non-escaping struct should be stack-promotable! \
              This is critical for performance - structs that don't escape \
-             should use stack allocation, not blood_alloc_or_abort.");
+             should use stack allocation, not blood_alloc_or_abort."
+        );
 
         // Verify the recommended tier is Stack
-        assert_eq!(results.recommended_tier(struct_local), MemoryTier::Stack,
-            "Non-escaping struct should recommend Stack tier");
+        assert_eq!(
+            results.recommended_tier(struct_local),
+            MemoryTier::Stack,
+            "Non-escaping struct should recommend Stack tier"
+        );
     }
 
     #[test]
@@ -1128,13 +1196,16 @@ mod tests {
         let bb = body.new_block();
 
         // _0 = _1 (temp escapes via return)
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(LocalId::new(0)),
-                Rvalue::Use(Operand::Copy(Place::local(temp))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(LocalId::new(0)),
+                    Rvalue::Use(Operand::Copy(Place::local(temp))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -1159,16 +1230,22 @@ mod tests {
         let bb = body.new_block();
 
         // call foo(_1)
-        body.set_terminator(bb, Terminator::new(
-            TerminatorKind::Call {
-                func: Operand::Constant(Constant::new(Type::unit(), ConstantKind::FnDef(DefId::new(1)))),
-                args: vec![Operand::Copy(Place::local(temp))],
-                destination: Place::local(LocalId::new(0)),
-                target: None,
-                unwind: None,
-            },
-            Span::dummy(),
-        ));
+        body.set_terminator(
+            bb,
+            Terminator::new(
+                TerminatorKind::Call {
+                    func: Operand::Constant(Constant::new(
+                        Type::unit(),
+                        ConstantKind::FnDef(DefId::new(1)),
+                    )),
+                    args: vec![Operand::Copy(Place::local(temp))],
+                    destination: Place::local(LocalId::new(0)),
+                    target: None,
+                    unwind: None,
+                },
+                Span::dummy(),
+            ),
+        );
 
         let mut analyzer = EscapeAnalyzer::new();
         let results = analyzer.analyze(&body);
@@ -1191,17 +1268,20 @@ mod tests {
         let target_bb = body.new_block();
 
         // perform Effect.op(_1)
-        body.set_terminator(bb, Terminator::new(
-            TerminatorKind::Perform {
-                effect_id: DefId::new(1),
-                op_index: 0,
-                args: vec![Operand::Copy(Place::local(temp))],
-                destination: Place::local(LocalId::new(0)),
-                target: target_bb,
-                is_tail_resumptive: true,
-            },
-            Span::dummy(),
-        ));
+        body.set_terminator(
+            bb,
+            Terminator::new(
+                TerminatorKind::Perform {
+                    effect_id: DefId::new(1),
+                    op_index: 0,
+                    args: vec![Operand::Copy(Place::local(temp))],
+                    destination: Place::local(LocalId::new(0)),
+                    target: target_bb,
+                    is_tail_resumptive: true,
+                },
+                Span::dummy(),
+            ),
+        );
 
         let mut analyzer = EscapeAnalyzer::new();
         let results = analyzer.analyze(&body);
@@ -1217,24 +1297,43 @@ mod tests {
         let mut results = EscapeResults::new();
 
         // No escape -> Stack
-        results.states.insert(LocalId::new(0), EscapeState::NoEscape);
+        results
+            .states
+            .insert(LocalId::new(0), EscapeState::NoEscape);
         results.stack_promotable.insert(LocalId::new(0));
         assert_eq!(results.recommended_tier(LocalId::new(0)), MemoryTier::Stack);
 
         // Arg escape -> Region
-        results.states.insert(LocalId::new(1), EscapeState::ArgEscape);
-        assert_eq!(results.recommended_tier(LocalId::new(1)), MemoryTier::Region);
+        results
+            .states
+            .insert(LocalId::new(1), EscapeState::ArgEscape);
+        assert_eq!(
+            results.recommended_tier(LocalId::new(1)),
+            MemoryTier::Region
+        );
 
         // EffectEscape -> Region
-        results.states.insert(LocalId::new(2), EscapeState::EffectEscape);
-        assert_eq!(results.recommended_tier(LocalId::new(2)), MemoryTier::Region);
+        results
+            .states
+            .insert(LocalId::new(2), EscapeState::EffectEscape);
+        assert_eq!(
+            results.recommended_tier(LocalId::new(2)),
+            MemoryTier::Region
+        );
 
         // EffectCapture -> Region
-        results.states.insert(LocalId::new(3), EscapeState::EffectCapture);
-        assert_eq!(results.recommended_tier(LocalId::new(3)), MemoryTier::Region);
+        results
+            .states
+            .insert(LocalId::new(3), EscapeState::EffectCapture);
+        assert_eq!(
+            results.recommended_tier(LocalId::new(3)),
+            MemoryTier::Region
+        );
 
         // EffectLocal -> Stack
-        results.states.insert(LocalId::new(4), EscapeState::EffectLocal);
+        results
+            .states
+            .insert(LocalId::new(4), EscapeState::EffectLocal);
         results.stack_promotable.insert(LocalId::new(4));
         assert_eq!(results.recommended_tier(LocalId::new(4)), MemoryTier::Stack);
     }
@@ -1244,7 +1343,9 @@ mod tests {
         let mut results = EscapeResults::new();
 
         // Set up closure captures: closure at local 2 captures locals 0 and 1
-        results.closure_captures.insert(LocalId::new(2), vec![LocalId::new(0), LocalId::new(1)]);
+        results
+            .closure_captures
+            .insert(LocalId::new(2), vec![LocalId::new(0), LocalId::new(1)]);
         results.captured_by_closure.insert(LocalId::new(0));
         results.captured_by_closure.insert(LocalId::new(1));
 
@@ -1271,22 +1372,37 @@ mod tests {
 
         // Local 0 captured by closure at local 2
         // Local 1 captured by closure at local 3
-        results.closure_captures.insert(LocalId::new(2), vec![LocalId::new(0)]);
-        results.closure_captures.insert(LocalId::new(3), vec![LocalId::new(1)]);
+        results
+            .closure_captures
+            .insert(LocalId::new(2), vec![LocalId::new(0)]);
+        results
+            .closure_captures
+            .insert(LocalId::new(3), vec![LocalId::new(1)]);
         results.captured_by_closure.insert(LocalId::new(0));
         results.captured_by_closure.insert(LocalId::new(1));
 
         // Closure 2 doesn't escape, closure 3 does
-        results.states.insert(LocalId::new(0), EscapeState::NoEscape);
-        results.states.insert(LocalId::new(1), EscapeState::NoEscape);
-        results.states.insert(LocalId::new(2), EscapeState::NoEscape);
-        results.states.insert(LocalId::new(3), EscapeState::ArgEscape);
+        results
+            .states
+            .insert(LocalId::new(0), EscapeState::NoEscape);
+        results
+            .states
+            .insert(LocalId::new(1), EscapeState::NoEscape);
+        results
+            .states
+            .insert(LocalId::new(2), EscapeState::NoEscape);
+        results
+            .states
+            .insert(LocalId::new(3), EscapeState::ArgEscape);
 
         // Local 0: captured by non-escaping closure -> can use stack
         assert_eq!(results.recommended_tier(LocalId::new(0)), MemoryTier::Stack);
 
         // Local 1: captured by escaping closure -> must use Region
-        assert_eq!(results.recommended_tier(LocalId::new(1)), MemoryTier::Region);
+        assert_eq!(
+            results.recommended_tier(LocalId::new(1)),
+            MemoryTier::Region
+        );
     }
 
     #[test]
@@ -1303,16 +1419,21 @@ mod tests {
         let bb = body.new_block();
 
         // _2 = Closure { _1 } (create closure capturing _1)
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(closure),
-                Rvalue::Aggregate {
-                    kind: AggregateKind::Closure { def_id: DefId::new(100) },
-                    operands: vec![Operand::Copy(Place::local(captured))],
-                },
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(closure),
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Closure {
+                            def_id: DefId::new(100),
+                        },
+                        operands: vec![Operand::Copy(Place::local(captured))],
+                    },
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -1341,25 +1462,33 @@ mod tests {
         let bb = body.new_block();
 
         // _2 = Closure { _1 }
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(closure),
-                Rvalue::Aggregate {
-                    kind: AggregateKind::Closure { def_id: DefId::new(100) },
-                    operands: vec![Operand::Copy(Place::local(captured))],
-                },
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(closure),
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Closure {
+                            def_id: DefId::new(100),
+                        },
+                        operands: vec![Operand::Copy(Place::local(captured))],
+                    },
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         // _0 = _2 (return the closure - makes it escape)
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(LocalId::new(0)),
-                Rvalue::Use(Operand::Copy(Place::local(closure))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(LocalId::new(0)),
+                    Rvalue::Use(Operand::Copy(Place::local(closure))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -1390,25 +1519,36 @@ mod tests {
         let bb = body.new_block();
 
         // _2 = Closure { _1 }
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(closure),
-                Rvalue::Aggregate {
-                    kind: AggregateKind::Closure { def_id: DefId::new(100) },
-                    operands: vec![Operand::Copy(Place::local(captured))],
-                },
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(closure),
+                    Rvalue::Aggregate {
+                        kind: AggregateKind::Closure {
+                            def_id: DefId::new(100),
+                        },
+                        operands: vec![Operand::Copy(Place::local(captured))],
+                    },
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         // Don't return or use the closure, just return a constant
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(LocalId::new(0)),
-                Rvalue::Use(Operand::Constant(Constant::new(Type::i32(), ConstantKind::Int(42)))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(LocalId::new(0)),
+                    Rvalue::Use(Operand::Constant(Constant::new(
+                        Type::i32(),
+                        ConstantKind::Int(42),
+                    ))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -1445,7 +1585,10 @@ mod tests {
                     a.join(b),
                     b.join(a),
                     "join is not commutative: {:?}.join({:?}) != {:?}.join({:?})",
-                    a, b, b, a
+                    a,
+                    b,
+                    b,
+                    a
                 );
             }
         }
@@ -1461,7 +1604,12 @@ mod tests {
                         a.join(b).join(c),
                         a.join(b.join(c)),
                         "join is not associative: ({:?} ⊔ {:?}) ⊔ {:?} != {:?} ⊔ ({:?} ⊔ {:?})",
-                        a, b, c, a, b, c
+                        a,
+                        b,
+                        c,
+                        a,
+                        b,
+                        c
                     );
                 }
             }
@@ -1476,7 +1624,9 @@ mod tests {
                 a.join(a),
                 a,
                 "join is not idempotent: {:?}.join({:?}) != {:?}",
-                a, a, a
+                a,
+                a,
+                a
             );
         }
     }
@@ -1489,7 +1639,8 @@ mod tests {
                 a.join(EscapeState::NoEscape),
                 a,
                 "NoEscape is not identity: {:?}.join(NoEscape) != {:?}",
-                a, a
+                a,
+                a
             );
         }
     }
@@ -1503,12 +1654,18 @@ mod tests {
                 assert!(
                     a <= joined,
                     "join is not monotonic: {:?} > {:?}.join({:?}) = {:?}",
-                    a, a, b, joined
+                    a,
+                    a,
+                    b,
+                    joined
                 );
                 assert!(
                     b <= joined,
                     "join is not monotonic: {:?} > {:?}.join({:?}) = {:?}",
-                    b, a, b, joined
+                    b,
+                    a,
+                    b,
+                    joined
                 );
             }
         }
@@ -1522,7 +1679,8 @@ mod tests {
                 assert!(
                     a <= b || b <= a,
                     "escape states don't form total order: {:?} and {:?} are incomparable",
-                    a, b
+                    a,
+                    b
                 );
             }
         }
@@ -1577,19 +1735,25 @@ mod tests {
         let target_bb = body.new_block();
 
         // Perform effect with first temp as argument
-        body.set_terminator(bb, Terminator::new(
-            TerminatorKind::Perform {
-                effect_id: DefId::new(1),
-                op_index: 0,
-                args: vec![Operand::Copy(Place::local(temps[0]))],
-                destination: Place::local(LocalId::new(0)),
-                target: target_bb,
-                is_tail_resumptive: true,
-            },
-            Span::dummy(),
-        ));
+        body.set_terminator(
+            bb,
+            Terminator::new(
+                TerminatorKind::Perform {
+                    effect_id: DefId::new(1),
+                    op_index: 0,
+                    args: vec![Operand::Copy(Place::local(temps[0]))],
+                    destination: Place::local(LocalId::new(0)),
+                    target: target_bb,
+                    is_tail_resumptive: true,
+                },
+                Span::dummy(),
+            ),
+        );
 
-        body.set_terminator(target_bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
+        body.set_terminator(
+            target_bb,
+            Terminator::new(TerminatorKind::Return, Span::dummy()),
+        );
 
         let mut analyzer = EscapeAnalyzer::new();
         let results = analyzer.analyze(&body);
@@ -1651,9 +1815,13 @@ mod tests {
             // recommended_tier matches the state
             let tier = state.recommended_tier();
             match state {
-                EscapeState::NoEscape | EscapeState::EffectLocal => assert_eq!(tier, MemoryTier::Stack),
-                EscapeState::ArgEscape | EscapeState::EffectCapture
-                | EscapeState::HeapEscape | EscapeState::EffectEscape => assert_eq!(tier, MemoryTier::Region),
+                EscapeState::NoEscape | EscapeState::EffectLocal => {
+                    assert_eq!(tier, MemoryTier::Stack)
+                }
+                EscapeState::ArgEscape
+                | EscapeState::EffectCapture
+                | EscapeState::HeapEscape
+                | EscapeState::EffectEscape => assert_eq!(tier, MemoryTier::Region),
                 EscapeState::GlobalEscape => assert_eq!(tier, MemoryTier::Persistent),
             }
         }
@@ -1673,13 +1841,16 @@ mod tests {
 
         // Create some assignments
         for i in 0..temps.len() - 1 {
-            body.push_statement(bb, Statement::new(
-                StatementKind::Assign(
-                    Place::local(temps[i + 1]),
-                    Rvalue::Use(Operand::Copy(Place::local(temps[i]))),
+            body.push_statement(
+                bb,
+                Statement::new(
+                    StatementKind::Assign(
+                        Place::local(temps[i + 1]),
+                        Rvalue::Use(Operand::Copy(Place::local(temps[i]))),
+                    ),
+                    Span::dummy(),
                 ),
-                Span::dummy(),
-            ));
+            );
         }
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
@@ -1758,7 +1929,8 @@ mod tests {
         for &arg in &[arg1, arg2] {
             let state = results.get(arg);
             assert_eq!(
-                state, EscapeState::NoEscape,
+                state,
+                EscapeState::NoEscape,
                 "unused arg {:?} has state {:?}, expected NoEscape",
                 arg,
                 state
@@ -1796,13 +1968,16 @@ mod tests {
         // _1 = _2, _2 = _3, _3 = _4, _4 = _5, _5 = _1 (cycle)
         for i in 0..temps.len() {
             let next = (i + 1) % temps.len();
-            body.push_statement(bb, Statement::new(
-                StatementKind::Assign(
-                    Place::local(temps[i]),
-                    Rvalue::Use(Operand::Copy(Place::local(temps[next]))),
+            body.push_statement(
+                bb,
+                Statement::new(
+                    StatementKind::Assign(
+                        Place::local(temps[i]),
+                        Rvalue::Use(Operand::Copy(Place::local(temps[next]))),
+                    ),
+                    Span::dummy(),
                 ),
-                Span::dummy(),
-            ));
+            );
         }
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
@@ -1898,39 +2073,54 @@ mod tests {
             let bb = body.new_block();
 
             // First closure captures captured_locals[0]
-            body.push_statement(bb, Statement::new(
-                StatementKind::Assign(
-                    Place::local(closure_locals[0]),
-                    Rvalue::Aggregate {
-                        kind: AggregateKind::Closure { def_id: DefId::new(100) },
-                        operands: vec![Operand::Copy(Place::local(captured_locals[0]))],
-                    },
-                ),
-                Span::dummy(),
-            ));
-
-            // Each subsequent closure captures the previous closure
-            for i in 1..chain_length {
-                body.push_statement(bb, Statement::new(
+            body.push_statement(
+                bb,
+                Statement::new(
                     StatementKind::Assign(
-                        Place::local(closure_locals[i]),
+                        Place::local(closure_locals[0]),
                         Rvalue::Aggregate {
-                            kind: AggregateKind::Closure { def_id: DefId::new(100 + i as u32) },
-                            operands: vec![Operand::Copy(Place::local(closure_locals[i - 1]))],
+                            kind: AggregateKind::Closure {
+                                def_id: DefId::new(100),
+                            },
+                            operands: vec![Operand::Copy(Place::local(captured_locals[0]))],
                         },
                     ),
                     Span::dummy(),
-                ));
+                ),
+            );
+
+            // Each subsequent closure captures the previous closure
+            for i in 1..chain_length {
+                body.push_statement(
+                    bb,
+                    Statement::new(
+                        StatementKind::Assign(
+                            Place::local(closure_locals[i]),
+                            Rvalue::Aggregate {
+                                kind: AggregateKind::Closure {
+                                    def_id: DefId::new(100 + i as u32),
+                                },
+                                operands: vec![Operand::Copy(Place::local(closure_locals[i - 1]))],
+                            },
+                        ),
+                        Span::dummy(),
+                    ),
+                );
             }
 
             // Make the LAST closure escape (return it)
-            body.push_statement(bb, Statement::new(
-                StatementKind::Assign(
-                    Place::local(LocalId::new(0)),
-                    Rvalue::Use(Operand::Copy(Place::local(closure_locals[chain_length - 1]))),
+            body.push_statement(
+                bb,
+                Statement::new(
+                    StatementKind::Assign(
+                        Place::local(LocalId::new(0)),
+                        Rvalue::Use(Operand::Copy(Place::local(
+                            closure_locals[chain_length - 1],
+                        ))),
+                    ),
+                    Span::dummy(),
                 ),
-                Span::dummy(),
-            ));
+            );
 
             body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -1942,9 +2132,12 @@ mod tests {
             for (i, &closure) in closure_locals.iter().enumerate() {
                 let state = results.get(closure);
                 assert_eq!(
-                    state, EscapeState::ArgEscape,
+                    state,
+                    EscapeState::ArgEscape,
                     "Closure {} in chain of {} should escape (got {:?})",
-                    i, chain_length, state
+                    i,
+                    chain_length,
+                    state
                 );
             }
 
@@ -1952,7 +2145,8 @@ mod tests {
             // (it's captured by the first closure which escapes transitively)
             let first_captured_state = results.get(captured_locals[0]);
             assert_eq!(
-                first_captured_state, EscapeState::ArgEscape,
+                first_captured_state,
+                EscapeState::ArgEscape,
                 "First captured local should escape (got {:?})",
                 first_captured_state
             );
@@ -1981,26 +2175,34 @@ mod tests {
 
         // All three closures capture the same local
         for (closure, def_id) in [(closure1, 100), (closure2, 101), (closure3, 102)] {
-            body.push_statement(bb, Statement::new(
-                StatementKind::Assign(
-                    Place::local(closure),
-                    Rvalue::Aggregate {
-                        kind: AggregateKind::Closure { def_id: DefId::new(def_id) },
-                        operands: vec![Operand::Copy(Place::local(shared_local))],
-                    },
+            body.push_statement(
+                bb,
+                Statement::new(
+                    StatementKind::Assign(
+                        Place::local(closure),
+                        Rvalue::Aggregate {
+                            kind: AggregateKind::Closure {
+                                def_id: DefId::new(def_id),
+                            },
+                            operands: vec![Operand::Copy(Place::local(shared_local))],
+                        },
+                    ),
+                    Span::dummy(),
                 ),
-                Span::dummy(),
-            ));
+            );
         }
 
         // Only closure2 escapes
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(LocalId::new(0)),
-                Rvalue::Use(Operand::Copy(Place::local(closure2))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(LocalId::new(0)),
+                    Rvalue::Use(Operand::Copy(Place::local(closure2))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -2047,39 +2249,54 @@ mod tests {
 
         // First closure captures a dummy local
         let captured = body.new_local(Type::i32(), LocalKind::Temp, Span::dummy());
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(closure_locals[0]),
-                Rvalue::Aggregate {
-                    kind: AggregateKind::Closure { def_id: DefId::new(100) },
-                    operands: vec![Operand::Copy(Place::local(captured))],
-                },
-            ),
-            Span::dummy(),
-        ));
-
-        // Chain: each closure captures the previous one
-        for i in 1..chain_length {
-            body.push_statement(bb, Statement::new(
+        body.push_statement(
+            bb,
+            Statement::new(
                 StatementKind::Assign(
-                    Place::local(closure_locals[i]),
+                    Place::local(closure_locals[0]),
                     Rvalue::Aggregate {
-                        kind: AggregateKind::Closure { def_id: DefId::new(100 + i as u32) },
-                        operands: vec![Operand::Copy(Place::local(closure_locals[i - 1]))],
+                        kind: AggregateKind::Closure {
+                            def_id: DefId::new(100),
+                        },
+                        operands: vec![Operand::Copy(Place::local(captured))],
                     },
                 ),
                 Span::dummy(),
-            ));
+            ),
+        );
+
+        // Chain: each closure captures the previous one
+        for i in 1..chain_length {
+            body.push_statement(
+                bb,
+                Statement::new(
+                    StatementKind::Assign(
+                        Place::local(closure_locals[i]),
+                        Rvalue::Aggregate {
+                            kind: AggregateKind::Closure {
+                                def_id: DefId::new(100 + i as u32),
+                            },
+                            operands: vec![Operand::Copy(Place::local(closure_locals[i - 1]))],
+                        },
+                    ),
+                    Span::dummy(),
+                ),
+            );
         }
 
         // Make last closure escape
-        body.push_statement(bb, Statement::new(
-            StatementKind::Assign(
-                Place::local(LocalId::new(0)),
-                Rvalue::Use(Operand::Copy(Place::local(closure_locals[chain_length - 1]))),
+        body.push_statement(
+            bb,
+            Statement::new(
+                StatementKind::Assign(
+                    Place::local(LocalId::new(0)),
+                    Rvalue::Use(Operand::Copy(Place::local(
+                        closure_locals[chain_length - 1],
+                    ))),
+                ),
+                Span::dummy(),
             ),
-            Span::dummy(),
-        ));
+        );
 
         body.set_terminator(bb, Terminator::new(TerminatorKind::Return, Span::dummy()));
 
@@ -2090,7 +2307,10 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Verify correctness
-        assert_eq!(results.get(closure_locals[chain_length - 1]), EscapeState::ArgEscape);
+        assert_eq!(
+            results.get(closure_locals[chain_length - 1]),
+            EscapeState::ArgEscape
+        );
         assert_eq!(results.get(closure_locals[0]), EscapeState::ArgEscape);
 
         // Performance assertion: should complete in <100ms even on slow machines

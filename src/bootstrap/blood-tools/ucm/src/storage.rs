@@ -126,12 +126,7 @@ impl Storage {
     }
 
     /// Stores a definition.
-    pub fn store_definition(
-        &self,
-        hash: &Hash,
-        kind: DefKind,
-        source: &str,
-    ) -> StorageResult<()> {
+    pub fn store_definition(&self, hash: &Hash, kind: DefKind, source: &str) -> StorageResult<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO definitions (hash, kind, source) VALUES (?1, ?2, ?3)",
             params![hash.as_bytes().as_slice(), kind.as_str(), source],
@@ -156,11 +151,16 @@ impl Storage {
                         "handler" => DefKind::Handler,
                         "test" => DefKind::Test,
                         "doc" => DefKind::Doc,
-                        other => return Err(rusqlite::Error::FromSqlConversionFailure(
-                            0,
-                            rusqlite::types::Type::Text,
-                            Box::new(StorageError::Other(format!("invalid DefKind in database: {}", other))),
-                        )),
+                        other => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(StorageError::Other(format!(
+                                    "invalid DefKind in database: {}",
+                                    other
+                                ))),
+                            ))
+                        }
                     };
                     Ok((kind, source))
                 },
@@ -223,11 +223,11 @@ impl Storage {
     /// Lists all names with optional prefix filter.
     pub fn list_names(&self, prefix: Option<&str>) -> StorageResult<Vec<(Name, Hash)>> {
         let mut stmt = if prefix.is_some() {
-            self.conn.prepare(
-                "SELECT name, hash FROM names WHERE name LIKE ?1 ORDER BY name",
-            )?
+            self.conn
+                .prepare("SELECT name, hash FROM names WHERE name LIKE ?1 ORDER BY name")?
         } else {
-            self.conn.prepare("SELECT name, hash FROM names ORDER BY name")?
+            self.conn
+                .prepare("SELECT name, hash FROM names ORDER BY name")?
         };
 
         let mut results = Vec::new();
@@ -416,7 +416,9 @@ impl Storage {
 
     /// Lists all definitions with their kind.
     pub fn list_definitions(&self) -> StorageResult<Vec<(Hash, DefKind)>> {
-        let mut stmt = self.conn.prepare("SELECT hash, kind FROM definitions ORDER BY created_at DESC")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT hash, kind FROM definitions ORDER BY created_at DESC")?;
 
         let mut results = Vec::new();
         let rows = stmt.query_map([], |row| {
@@ -431,11 +433,16 @@ impl Storage {
                 "handler" => DefKind::Handler,
                 "test" => DefKind::Test,
                 "doc" => DefKind::Doc,
-                other => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(StorageError::Other(format!("invalid DefKind in database: {}", other))),
-                )),
+                other => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(StorageError::Other(format!(
+                            "invalid DefKind in database: {}",
+                            other
+                        ))),
+                    ))
+                }
             };
             Ok((Hash::from_bytes(arr), kind))
         })?;
@@ -460,7 +467,7 @@ impl Storage {
             SELECT d.hash FROM definitions d
             WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.hash = d.hash)
               AND NOT EXISTS (SELECT 1 FROM dependencies dep WHERE dep.to_hash = d.hash)
-            "#
+            "#,
         )?;
 
         let mut results = Vec::new();

@@ -50,9 +50,9 @@
 
 use super::row::EffectRef;
 use crate::hir::DefId;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// An evidence entry for a single effect.
 ///
@@ -279,7 +279,8 @@ pub struct HandlerPattern {
 impl HandlerPattern {
     /// Create a new handler pattern from an evidence vector.
     pub fn from_evidence(ev: &EvidenceVector) -> Self {
-        let bindings: Vec<_> = ev.iter()
+        let bindings: Vec<_> = ev
+            .iter()
             .map(|entry| (entry.effect.def_id, entry.handler_id))
             .collect();
         Self { bindings }
@@ -287,7 +288,9 @@ impl HandlerPattern {
 
     /// Create a new empty handler pattern.
     pub fn empty() -> Self {
-        Self { bindings: Vec::new() }
+        Self {
+            bindings: Vec::new(),
+        }
     }
 
     /// Add a handler binding to the pattern.
@@ -428,7 +431,11 @@ impl EvidenceCache {
     /// Insert an evidence vector for a pattern.
     ///
     /// Returns the previous evidence vector if one was cached for this pattern.
-    pub fn insert(&mut self, pattern: &HandlerPattern, evidence: EvidenceVector) -> Option<EvidenceVector> {
+    pub fn insert(
+        &mut self,
+        pattern: &HandlerPattern,
+        evidence: EvidenceVector,
+    ) -> Option<EvidenceVector> {
         let hash = pattern.hash_value();
         let prev = self.cache.insert(hash, evidence);
         self.stats.cached_patterns = self.cache.len();
@@ -674,7 +681,11 @@ impl StaticEvidenceRegistry {
     /// Register a static evidence pattern, returning its ID.
     ///
     /// If an identical pattern already exists, returns the existing ID.
-    pub fn register(&mut self, pattern: &HandlerPattern, evidence: StaticEvidence) -> StaticEvidenceId {
+    pub fn register(
+        &mut self,
+        pattern: &HandlerPattern,
+        evidence: StaticEvidence,
+    ) -> StaticEvidenceId {
         let hash = pattern.hash_value();
 
         if let Some(&id) = self.pattern_lookup.get(&hash) {
@@ -1045,7 +1056,8 @@ mod tests {
     #[test]
     fn test_static_evidence_entry_with_constant() {
         let state = vec![1, 2, 3, 4];
-        let entry = StaticEvidenceEntry::with_constant(DefId::new(1), DefId::new(10), state.clone());
+        let entry =
+            StaticEvidenceEntry::with_constant(DefId::new(1), DefId::new(10), state.clone());
         assert_eq!(entry.state_kind, HandlerStateKind::Constant);
         assert_eq!(entry.constant_state, Some(state));
     }
@@ -1076,12 +1088,18 @@ mod tests {
     fn test_static_evidence_add_entry() {
         let mut ev = StaticEvidence::new(StaticEvidenceId::new(0));
 
-        ev.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        ev.add_entry(StaticEvidenceEntry::stateless(
+            DefId::new(1),
+            DefId::new(10),
+        ));
         assert_eq!(ev.len(), 1);
         assert!(ev.fully_static);
         assert!(ev.can_emit_static());
 
-        ev.add_entry(StaticEvidenceEntry::zero_init(DefId::new(2), DefId::new(20)));
+        ev.add_entry(StaticEvidenceEntry::zero_init(
+            DefId::new(2),
+            DefId::new(20),
+        ));
         assert_eq!(ev.len(), 2);
         assert!(ev.fully_static);
         assert!(ev.can_emit_static());
@@ -1091,7 +1109,10 @@ mod tests {
     fn test_static_evidence_becomes_dynamic() {
         let mut ev = StaticEvidence::new(StaticEvidenceId::new(0));
 
-        ev.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        ev.add_entry(StaticEvidenceEntry::stateless(
+            DefId::new(1),
+            DefId::new(10),
+        ));
         assert!(ev.fully_static);
 
         // Adding a dynamic entry makes the whole evidence non-static
@@ -1115,7 +1136,10 @@ mod tests {
         pattern.add(DefId::new(1), DefId::new(10));
 
         let mut evidence = StaticEvidence::new(StaticEvidenceId::new(0));
-        evidence.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        evidence.add_entry(StaticEvidenceEntry::stateless(
+            DefId::new(1),
+            DefId::new(10),
+        ));
 
         let id = registry.register(&pattern, evidence);
         assert_eq!(id.index(), 0);
@@ -1151,7 +1175,10 @@ mod tests {
         pattern.add(DefId::new(1), DefId::new(10));
 
         let mut evidence = StaticEvidence::new(StaticEvidenceId::new(0));
-        evidence.add_entry(StaticEvidenceEntry::stateless(DefId::new(1), DefId::new(10)));
+        evidence.add_entry(StaticEvidenceEntry::stateless(
+            DefId::new(1),
+            DefId::new(10),
+        ));
 
         let id = registry.register(&pattern, evidence);
 

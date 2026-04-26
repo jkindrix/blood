@@ -856,21 +856,13 @@ pub enum TypeKind {
     },
 
     /// Pointer: `*const T`, `*mut T`
-    Pointer {
-        mutable: bool,
-        inner: Box<Type>,
-    },
+    Pointer { mutable: bool, inner: Box<Type> },
 
     /// Array: `[T; N]`
-    Array {
-        element: Box<Type>,
-        size: Box<Expr>,
-    },
+    Array { element: Box<Type>, size: Box<Expr> },
 
     /// Slice: `[T]`
-    Slice {
-        element: Box<Type>,
-    },
+    Slice { element: Box<Type> },
 
     /// Tuple: `()`, `(T,)`, `(T, U)`
     Tuple(Vec<Type>),
@@ -1008,10 +1000,7 @@ pub enum ExprKind {
     },
 
     /// Unary operation: `!x`, `-x`, `*x`, `&x`
-    Unary {
-        op: UnaryOp,
-        operand: Box<Expr>,
-    },
+    Unary { op: UnaryOp, operand: Box<Expr> },
 
     /// Function call: `f(x, y)`
     Call {
@@ -1028,16 +1017,10 @@ pub enum ExprKind {
     },
 
     /// Field access: `x.field`, `x.0`
-    Field {
-        base: Box<Expr>,
-        field: FieldAccess,
-    },
+    Field { base: Box<Expr>, field: FieldAccess },
 
     /// Index: `x[i]`
-    Index {
-        base: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { base: Box<Expr>, index: Box<Expr> },
 
     /// Tuple: `()`, `(x,)`, `(x, y)`
     Tuple(Vec<Expr>),
@@ -1060,22 +1043,13 @@ pub enum ExprKind {
     },
 
     /// Containment: `x in lo..hi`
-    Containment {
-        value: Box<Expr>,
-        range: Box<Expr>,
-    },
+    Containment { value: Box<Expr>, range: Box<Expr> },
 
     /// Cast: `x as T`
-    Cast {
-        expr: Box<Expr>,
-        ty: Type,
-    },
+    Cast { expr: Box<Expr>, ty: Type },
 
     /// Assignment: `x = y`
-    Assign {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
+    Assign { target: Box<Expr>, value: Box<Expr> },
 
     /// Compound assignment: `x += y`
     AssignOp {
@@ -1147,9 +1121,7 @@ pub enum ExprKind {
     },
 
     /// Continue: `continue 'label`
-    Continue {
-        label: Option<Spanned<Symbol>>,
-    },
+    Continue { label: Option<Spanned<Symbol>> },
 
     /// Closure: `|x| x + 1`, `move |x| { x }`
     Closure {
@@ -1161,10 +1133,7 @@ pub enum ExprKind {
     },
 
     /// With-handle: `with handler handle { }`
-    WithHandle {
-        handler: Box<Expr>,
-        body: Box<Expr>,
-    },
+    WithHandle { handler: Box<Expr>, body: Box<Expr> },
 
     /// Perform: `perform Effect.op(args)`
     Perform {
@@ -1234,10 +1203,7 @@ pub enum ExprKind {
     Default,
 
     /// Macro call: `name!(args)`, `name![args]`, `name!{args}`
-    MacroCall {
-        path: ExprPath,
-        kind: MacroCallKind,
-    },
+    MacroCall { path: ExprPath, kind: MacroCallKind },
 }
 
 /// A specific runtime check that can be disabled via `unchecked(check) { ... }`.
@@ -1522,10 +1488,7 @@ pub enum PatternKind {
     },
 
     /// Reference pattern: `&x`, `&mut x`
-    Ref {
-        mutable: bool,
-        inner: Box<Pattern>,
-    },
+    Ref { mutable: bool, inner: Box<Pattern> },
 
     /// Struct pattern: `Point { x, y: 0 }`
     Struct {
@@ -1599,10 +1562,7 @@ pub enum Statement {
     },
 
     /// Expression statement: `foo();`
-    Expr {
-        expr: Expr,
-        has_semi: bool,
-    },
+    Expr { expr: Expr, has_semi: bool },
 
     /// Item (function, struct, etc. inside a block)
     Item(Declaration),
@@ -1626,10 +1586,8 @@ impl Statement {
 ///
 /// Each macro expansion gets a unique hygiene ID to prevent
 /// accidental variable capture (hygienic macros).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct HygieneId(pub u32);
-
 
 /// A token with hygiene information for macro expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1824,10 +1782,7 @@ pub enum MacroExpansionPart {
     /// Literal tokens to emit
     Tokens(Vec<MacroToken>),
     /// Substitution: `$name`
-    Substitution {
-        name: Spanned<Symbol>,
-        span: Span,
-    },
+    Substitution { name: Spanned<Symbol>, span: Span },
     /// Repetition: `$(...)*`
     Repetition {
         parts: Vec<MacroExpansionPart>,

@@ -219,10 +219,7 @@ impl Codebase {
 
         // Update dependency graph
         for dep_hash in &record.references {
-            self.dependents
-                .entry(*dep_hash)
-                .or_default()
-                .insert(hash);
+            self.dependents.entry(*dep_hash).or_default().insert(hash);
         }
 
         self.definitions.insert(hash, record);
@@ -426,20 +423,25 @@ pub struct PersistentCodebase {
 impl PersistentCodebase {
     /// Open or create a persistent codebase at the given path.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StorageError> {
-        let db = sled::open(path.as_ref())
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        let db = sled::open(path.as_ref()).map_err(|e| StorageError::IoError(e.to_string()))?;
 
-        let definitions = db.open_tree("definitions")
+        let definitions = db
+            .open_tree("definitions")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
-        let types = db.open_tree("types")
+        let types = db
+            .open_tree("types")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
-        let effects = db.open_tree("effects")
+        let effects = db
+            .open_tree("effects")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
-        let compiled = db.open_tree("compiled")
+        let compiled = db
+            .open_tree("compiled")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
-        let dependents = db.open_tree("dependents")
+        let dependents = db
+            .open_tree("dependents")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
-        let names = db.open_tree("names")
+        let names = db
+            .open_tree("names")
             .map_err(|e| StorageError::IoError(e.to_string()))?;
 
         Ok(Self {
@@ -460,8 +462,7 @@ impl PersistentCodebase {
             .join("blood")
             .join("codebase");
 
-        std::fs::create_dir_all(&cache_dir)
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        std::fs::create_dir_all(&cache_dir).map_err(|e| StorageError::IoError(e.to_string()))?;
 
         Self::open(cache_dir)
     }
@@ -472,7 +473,9 @@ impl PersistentCodebase {
         let key = hash.as_bytes();
 
         // Check for collision
-        if let Some(existing_data) = self.definitions.get(key)
+        if let Some(existing_data) = self
+            .definitions
+            .get(key)
             .map_err(|e| StorageError::IoError(e.to_string()))?
         {
             if let Ok(existing) = Self::deserialize_record(&existing_data) {
@@ -490,7 +493,8 @@ impl PersistentCodebase {
 
         // Serialize and store
         let data = Self::serialize_record(record);
-        self.definitions.insert(key, data)
+        self.definitions
+            .insert(key, data)
             .map_err(|e| StorageError::IoError(e.to_string()))?;
 
         // Update dependency graph
@@ -503,26 +507,31 @@ impl PersistentCodebase {
 
     /// Get a definition by hash.
     pub fn get(&self, hash: ContentHash) -> Option<DefinitionRecord> {
-        self.definitions.get(hash.as_bytes())
+        self.definitions
+            .get(hash.as_bytes())
             .ok()?
             .and_then(|data| Self::deserialize_record(&data).ok())
     }
 
     /// Check if a definition exists.
     pub fn contains(&self, hash: ContentHash) -> bool {
-        self.definitions.contains_key(hash.as_bytes()).unwrap_or(false)
+        self.definitions
+            .contains_key(hash.as_bytes())
+            .unwrap_or(false)
     }
 
     /// Store compiled code for a definition.
     pub fn store_compiled(&self, hash: ContentHash, code: &[u8]) -> Result<(), StorageError> {
-        self.compiled.insert(hash.as_bytes(), code)
+        self.compiled
+            .insert(hash.as_bytes(), code)
             .map_err(|e| StorageError::IoError(e.to_string()))?;
         Ok(())
     }
 
     /// Get compiled code for a definition.
     pub fn get_compiled(&self, hash: ContentHash) -> Option<Vec<u8>> {
-        self.compiled.get(hash.as_bytes())
+        self.compiled
+            .get(hash.as_bytes())
             .ok()?
             .map(|data| data.to_vec())
     }
@@ -534,27 +543,32 @@ impl PersistentCodebase {
 
     /// Map a name to a hash.
     pub fn set_name(&self, name: &str, hash: ContentHash) -> Result<(), StorageError> {
-        self.names.insert(name.as_bytes(), hash.as_bytes())
+        self.names
+            .insert(name.as_bytes(), hash.as_bytes())
             .map_err(|e| StorageError::IoError(e.to_string()))?;
         Ok(())
     }
 
     /// Get the hash for a name.
     pub fn get_name(&self, name: &str) -> Option<ContentHash> {
-        self.names.get(name.as_bytes())
-            .ok()?
-            .and_then(|data| {
-                let bytes: [u8; 32] = data.as_ref().try_into().ok()?;
-                Some(ContentHash::from_bytes(bytes))
-            })
+        self.names.get(name.as_bytes()).ok()?.and_then(|data| {
+            let bytes: [u8; 32] = data.as_ref().try_into().ok()?;
+            Some(ContentHash::from_bytes(bytes))
+        })
     }
 
     /// Add a dependent relationship.
-    fn add_dependent(&self, dependency: ContentHash, dependent: ContentHash) -> Result<(), StorageError> {
+    fn add_dependent(
+        &self,
+        dependency: ContentHash,
+        dependent: ContentHash,
+    ) -> Result<(), StorageError> {
         let key = dependency.as_bytes();
 
         // Load existing dependents
-        let mut deps: Vec<ContentHash> = self.dependents.get(key)
+        let mut deps: Vec<ContentHash> = self
+            .dependents
+            .get(key)
             .map_err(|e| StorageError::IoError(e.to_string()))?
             .map(|data| Self::deserialize_hashes(&data))
             .unwrap_or_default();
@@ -563,7 +577,8 @@ impl PersistentCodebase {
         if !deps.contains(&dependent) {
             deps.push(dependent);
             let data = Self::serialize_hashes(&deps);
-            self.dependents.insert(key, data)
+            self.dependents
+                .insert(key, data)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
         }
 
@@ -572,7 +587,8 @@ impl PersistentCodebase {
 
     /// Get all definitions that depend on a given hash.
     pub fn get_dependents(&self, hash: ContentHash) -> Vec<ContentHash> {
-        self.dependents.get(hash.as_bytes())
+        self.dependents
+            .get(hash.as_bytes())
             .ok()
             .flatten()
             .map(|data| Self::deserialize_hashes(&data))
@@ -591,7 +607,8 @@ impl PersistentCodebase {
 
     /// Flush all pending writes to disk.
     pub fn flush(&self) -> Result<(), StorageError> {
-        self.db.flush()
+        self.db
+            .flush()
             .map_err(|e| StorageError::IoError(e.to_string()))?;
         Ok(())
     }
@@ -604,7 +621,9 @@ impl PersistentCodebase {
             effect_count: self.effects.len(),
             compiled_count: self.compiled.len(),
             total_ast_size: 0,
-            total_compiled_size: self.compiled.iter()
+            total_compiled_size: self
+                .compiled
+                .iter()
                 .filter_map(|r| r.ok())
                 .map(|(_, v)| v.len())
                 .sum(),
@@ -675,21 +694,25 @@ impl PersistentCodebase {
         let mut pos = 0;
 
         // Hash
-        let hash_bytes: [u8; 32] = data[pos..pos + 32].try_into()
+        let hash_bytes: [u8; 32] = data[pos..pos + 32]
+            .try_into()
             .map_err(|_| StorageError::InvalidFormat("Invalid hash bytes".to_string()))?;
         let hash = ContentHash::from_bytes(hash_bytes);
         pos += 32;
 
         // AST length
         let ast_len = u32::from_le_bytes(
-            data[pos..pos + 4].try_into()
-                .map_err(|_| StorageError::InvalidFormat("Invalid AST length bytes".to_string()))?
+            data[pos..pos + 4]
+                .try_into()
+                .map_err(|_| StorageError::InvalidFormat("Invalid AST length bytes".to_string()))?,
         ) as usize;
         pos += 4;
 
         // Validate AST data bounds before reading
         if data.len() < pos + ast_len {
-            return Err(StorageError::InvalidFormat("AST data truncated".to_string()));
+            return Err(StorageError::InvalidFormat(
+                "AST data truncated".to_string(),
+            ));
         }
         let _ast_str = String::from_utf8_lossy(&data[pos..pos + ast_len]);
         pos += ast_len;
@@ -703,7 +726,8 @@ impl PersistentCodebase {
         pos += 1;
         let type_hash = if has_type && data.len() >= pos + 32 {
             // SAFETY: Bounds check above guarantees exactly 32 bytes available
-            let bytes: [u8; 32] = data[pos..pos + 32].try_into()
+            let bytes: [u8; 32] = data[pos..pos + 32]
+                .try_into()
                 .expect("bounds checked: 32 bytes available");
             pos += 32;
             Some(ContentHash::from_bytes(bytes))
@@ -716,7 +740,8 @@ impl PersistentCodebase {
         pos += 1;
         let effect_hash = if has_effect && data.len() >= pos + 32 {
             // SAFETY: Bounds check above guarantees exactly 32 bytes available
-            let bytes: [u8; 32] = data[pos..pos + 32].try_into()
+            let bytes: [u8; 32] = data[pos..pos + 32]
+                .try_into()
                 .expect("bounds checked: 32 bytes available");
             pos += 32;
             Some(ContentHash::from_bytes(bytes))
@@ -727,8 +752,11 @@ impl PersistentCodebase {
         // References
         let ref_count = if data.len() >= pos + 4 {
             // SAFETY: Bounds check above guarantees exactly 4 bytes available
-            u32::from_le_bytes(data[pos..pos + 4].try_into()
-                .expect("bounds checked: 4 bytes available")) as usize
+            u32::from_le_bytes(
+                data[pos..pos + 4]
+                    .try_into()
+                    .expect("bounds checked: 4 bytes available"),
+            ) as usize
         } else {
             0
         };
@@ -738,7 +766,8 @@ impl PersistentCodebase {
         for _ in 0..ref_count {
             if data.len() >= pos + 32 {
                 // SAFETY: Bounds check above guarantees exactly 32 bytes available
-                let bytes: [u8; 32] = data[pos..pos + 32].try_into()
+                let bytes: [u8; 32] = data[pos..pos + 32]
+                    .try_into()
                     .expect("bounds checked: 32 bytes available");
                 references.push(ContentHash::from_bytes(bytes));
                 pos += 32;
@@ -749,15 +778,22 @@ impl PersistentCodebase {
         let mut names = Vec::new();
         if data.len() >= pos + 4 {
             // SAFETY: Bounds check above guarantees exactly 4 bytes available
-            let name_count = u32::from_le_bytes(data[pos..pos + 4].try_into()
-                .expect("bounds checked: 4 bytes available")) as usize;
+            let name_count = u32::from_le_bytes(
+                data[pos..pos + 4]
+                    .try_into()
+                    .expect("bounds checked: 4 bytes available"),
+            ) as usize;
             pos += 4;
 
-            for _ in 0..name_count.min(1024) { // Cap iterations for safety
+            for _ in 0..name_count.min(1024) {
+                // Cap iterations for safety
                 if data.len() >= pos + 4 {
                     // SAFETY: Bounds check above guarantees exactly 4 bytes available
-                    let name_len = u32::from_le_bytes(data[pos..pos + 4].try_into()
-                        .expect("bounds checked: 4 bytes available")) as usize;
+                    let name_len = u32::from_le_bytes(
+                        data[pos..pos + 4]
+                            .try_into()
+                            .expect("bounds checked: 4 bytes available"),
+                    ) as usize;
                     pos += 4;
                     if data.len() >= pos + name_len {
                         names.push(String::from_utf8_lossy(&data[pos..pos + name_len]).to_string());
@@ -795,15 +831,19 @@ impl PersistentCodebase {
         }
 
         // SAFETY: Bounds check above guarantees at least 4 bytes available
-        let count = u32::from_le_bytes(data[0..4].try_into()
-            .expect("bounds checked: 4 bytes available")) as usize;
+        let count = u32::from_le_bytes(
+            data[0..4]
+                .try_into()
+                .expect("bounds checked: 4 bytes available"),
+        ) as usize;
         let mut hashes = Vec::with_capacity(count.min(1024)); // Cap allocation
         let mut pos = 4;
 
         for _ in 0..count {
             if data.len() >= pos + 32 {
                 // SAFETY: Bounds check above guarantees exactly 32 bytes available
-                let bytes: [u8; 32] = data[pos..pos + 32].try_into()
+                let bytes: [u8; 32] = data[pos..pos + 32]
+                    .try_into()
                     .expect("bounds checked: 32 bytes available");
                 hashes.push(ContentHash::from_bytes(bytes));
                 pos += 32;

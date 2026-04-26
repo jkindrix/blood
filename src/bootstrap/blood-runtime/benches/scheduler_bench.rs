@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo bench --bench scheduler_bench
 
-use blood_runtime::scheduler::Scheduler;
 use blood_runtime::fiber::{Fiber, FiberConfig, FiberState};
+use blood_runtime::scheduler::Scheduler;
 use blood_runtime::SchedulerConfig;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,9 +21,14 @@ fn bench_fiber_creation(c: &mut Criterion) {
             |b, &count| {
                 b.iter(|| {
                     let fibers: Vec<Fiber> = (0..count)
-                        .map(|i| Fiber::new(move || {
-                            black_box(i);
-                        }, FiberConfig::default()))
+                        .map(|i| {
+                            Fiber::new(
+                                move || {
+                                    black_box(i);
+                                },
+                                FiberConfig::default(),
+                            )
+                        })
                         .collect();
                     black_box(fibers)
                 });
@@ -58,9 +63,11 @@ fn bench_scheduler_spawn(c: &mut Criterion) {
                 let scheduler = Scheduler::new(SchedulerConfig::default());
                 b.iter(|| {
                     let ids: Vec<_> = (0..batch_size)
-                        .map(|i| scheduler.spawn(move || {
-                            black_box(i);
-                        }))
+                        .map(|i| {
+                            scheduler.spawn(move || {
+                                black_box(i);
+                            })
+                        })
                         .collect();
                     black_box(ids)
                 });

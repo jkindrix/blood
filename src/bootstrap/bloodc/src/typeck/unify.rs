@@ -37,7 +37,7 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{PrimitiveTy, Type, TypeKind, TyVarId, RecordRowVarId, RecordField, FnEffect};
+use crate::hir::{FnEffect, PrimitiveTy, RecordField, RecordRowVarId, TyVarId, Type, TypeKind};
 
 use super::error::{TypeError, TypeErrorKind};
 use crate::span::Span;
@@ -148,9 +148,16 @@ impl Unifier {
             (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) if p1 == p2 => Ok(()),
 
             // Same ADT with unifiable arguments
-            (TypeKind::Adt { def_id: d1, args: a1 }, TypeKind::Adt { def_id: d2, args: a2 })
-                if d1 == d2 =>
-            {
+            (
+                TypeKind::Adt {
+                    def_id: d1,
+                    args: a1,
+                },
+                TypeKind::Adt {
+                    def_id: d2,
+                    args: a2,
+                },
+            ) if d1 == d2 => {
                 if a1.len() != a2.len() {
                     return Err(Box::new(TypeError::new(
                         TypeErrorKind::Mismatch {
@@ -176,8 +183,14 @@ impl Unifier {
 
             // Arrays with same size or const param size
             (
-                TypeKind::Array { element: e1, size: s1 },
-                TypeKind::Array { element: e2, size: s2 },
+                TypeKind::Array {
+                    element: e1,
+                    size: s1,
+                },
+                TypeKind::Array {
+                    element: e2,
+                    size: s2,
+                },
             ) if s1 == s2 || s1.is_param() || s2.is_param() => self.unify(e1, e2, span),
 
             // Slices
@@ -187,32 +200,55 @@ impl Unifier {
 
             // References with same mutability
             (
-                TypeKind::Ref { inner: i1, mutable: m1 },
-                TypeKind::Ref { inner: i2, mutable: m2 },
+                TypeKind::Ref {
+                    inner: i1,
+                    mutable: m1,
+                },
+                TypeKind::Ref {
+                    inner: i2,
+                    mutable: m2,
+                },
             ) if m1 == m2 => {
                 // Try to unify inner types, with coercion for &[T; N] -> &[T]
                 let i1_res = self.resolve(i1);
                 let i2_res = self.resolve(i2);
                 match (i1_res.kind(), i2_res.kind()) {
                     // Coercion: expected &[T], found &[T; N]
-                    (TypeKind::Slice { element: elem1 }, TypeKind::Array { element: elem2, .. }) => {
-                        self.unify(elem1, elem2, span)
-                    }
+                    (
+                        TypeKind::Slice { element: elem1 },
+                        TypeKind::Array { element: elem2, .. },
+                    ) => self.unify(elem1, elem2, span),
                     // Otherwise, unify inner types normally
-                    _ => self.unify(i1, i2, span)
+                    _ => self.unify(i1, i2, span),
                 }
             }
 
             // Pointers with same mutability
             (
-                TypeKind::Ptr { inner: i1, mutable: m1 },
-                TypeKind::Ptr { inner: i2, mutable: m2 },
+                TypeKind::Ptr {
+                    inner: i1,
+                    mutable: m1,
+                },
+                TypeKind::Ptr {
+                    inner: i2,
+                    mutable: m2,
+                },
             ) if m1 == m2 => self.unify(i1, i2, span),
 
             // Functions — unify params, return type, and effect compatibility
             (
-                TypeKind::Fn { params: p1, ret: r1, effects: e1, .. },
-                TypeKind::Fn { params: p2, ret: r2, effects: e2, .. },
+                TypeKind::Fn {
+                    params: p1,
+                    ret: r1,
+                    effects: e1,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: p2,
+                    ret: r2,
+                    effects: e2,
+                    ..
+                },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
@@ -226,8 +262,16 @@ impl Unifier {
             // Closure types - unify based on param and return types
             // Two closures unify if their signatures match (def_id is irrelevant for unification)
             (
-                TypeKind::Closure { params: p1, ret: r1, .. },
-                TypeKind::Closure { params: p2, ret: r2, .. },
+                TypeKind::Closure {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                TypeKind::Closure {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
@@ -237,11 +281,28 @@ impl Unifier {
 
             // Closure can unify with compatible function type
             (
-                TypeKind::Closure { params: p1, ret: r1, .. },
-                TypeKind::Fn { params: p2, ret: r2, .. },
-            ) | (
-                TypeKind::Fn { params: p1, ret: r1, .. },
-                TypeKind::Closure { params: p2, ret: r2, .. },
+                TypeKind::Closure {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
+            )
+            | (
+                TypeKind::Fn {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                TypeKind::Closure {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
@@ -251,11 +312,15 @@ impl Unifier {
 
             // Range types
             (
-                TypeKind::Range { element: e1, inclusive: i1 },
-                TypeKind::Range { element: e2, inclusive: i2 },
-            ) if i1 == i2 => {
-                self.unify(e1, e2, span)
-            }
+                TypeKind::Range {
+                    element: e1,
+                    inclusive: i1,
+                },
+                TypeKind::Range {
+                    element: e2,
+                    inclusive: i2,
+                },
+            ) if i1 == i2 => self.unify(e1, e2, span),
 
             // Never type unifies with anything
             (TypeKind::Never, _) | (_, TypeKind::Never) => Ok(()),
@@ -272,49 +337,54 @@ impl Unifier {
             // These should unify successfully.
             (TypeKind::Primitive(PrimitiveTy::Unit), TypeKind::Tuple(ts))
             | (TypeKind::Tuple(ts), TypeKind::Primitive(PrimitiveTy::Unit))
-                if ts.is_empty() => Ok(()),
+                if ts.is_empty() =>
+            {
+                Ok(())
+            }
 
             // Same inference variable - trivially equal
             (TypeKind::Infer(id1), TypeKind::Infer(id2)) if id1 == id2 => Ok(()),
 
             // Inference variable - bind it
-            (TypeKind::Infer(id), _) => {
-                self.bind(*id, t2.clone(), span)
-            }
-            (_, TypeKind::Infer(id)) => {
-                self.bind(*id, t1.clone(), span)
-            }
+            (TypeKind::Infer(id), _) => self.bind(*id, t2.clone(), span),
+            (_, TypeKind::Infer(id)) => self.bind(*id, t1.clone(), span),
 
             // Type parameter - for now, treat as error (needs constraint solving)
             (TypeKind::Param(id1), TypeKind::Param(id2)) if id1 == id2 => Ok(()),
 
             // Record types - row polymorphism
             (
-                TypeKind::Record { fields: f1, row_var: rv1 },
-                TypeKind::Record { fields: f2, row_var: rv2 },
+                TypeKind::Record {
+                    fields: f1,
+                    row_var: rv1,
+                },
+                TypeKind::Record {
+                    fields: f2,
+                    row_var: rv2,
+                },
             ) => self.unify_records(f1, *rv1, f2, *rv2, span),
 
             // Forall types - higher-rank polymorphism
             // Two forall types unify if they have the same number of params
             // and their bodies unify under alpha-renaming
             (
-                TypeKind::Forall { params: p1, body: b1 },
-                TypeKind::Forall { params: p2, body: b2 },
+                TypeKind::Forall {
+                    params: p1,
+                    body: b1,
+                },
+                TypeKind::Forall {
+                    params: p2,
+                    body: b2,
+                },
             ) if p1.len() == p2.len() => {
                 // For alpha-equivalence, we instantiate both with the same fresh variables
                 // and check if the bodies unify
-                let fresh_vars: Vec<Type> = (0..p1.len())
-                    .map(|_| self.fresh_var())
-                    .collect();
+                let fresh_vars: Vec<Type> = (0..p1.len()).map(|_| self.fresh_var()).collect();
 
-                let subst1: std::collections::HashMap<TyVarId, Type> = p1.iter()
-                    .cloned()
-                    .zip(fresh_vars.iter().cloned())
-                    .collect();
-                let subst2: std::collections::HashMap<TyVarId, Type> = p2.iter()
-                    .cloned()
-                    .zip(fresh_vars.iter().cloned())
-                    .collect();
+                let subst1: std::collections::HashMap<TyVarId, Type> =
+                    p1.iter().cloned().zip(fresh_vars.iter().cloned()).collect();
+                let subst2: std::collections::HashMap<TyVarId, Type> =
+                    p2.iter().cloned().zip(fresh_vars.iter().cloned()).collect();
 
                 let b1_inst = self.substitute_forall_params(b1, &subst1);
                 let b2_inst = self.substitute_forall_params(b2, &subst2);
@@ -326,11 +396,10 @@ impl Unifier {
             // This handles cases like: forall<T>. T -> T  vs  i32 -> i32
             (TypeKind::Forall { params, body }, _) => {
                 // Instantiate with fresh inference variables
-                let fresh_vars: Vec<Type> = (0..params.len())
-                    .map(|_| self.fresh_var())
-                    .collect();
+                let fresh_vars: Vec<Type> = (0..params.len()).map(|_| self.fresh_var()).collect();
 
-                let subst: std::collections::HashMap<TyVarId, Type> = params.iter()
+                let subst: std::collections::HashMap<TyVarId, Type> = params
+                    .iter()
                     .cloned()
                     .zip(fresh_vars.iter().cloned())
                     .collect();
@@ -342,11 +411,10 @@ impl Unifier {
             // When unifying a non-forall with a forall on the right
             (_, TypeKind::Forall { params, body }) => {
                 // Instantiate with fresh inference variables
-                let fresh_vars: Vec<Type> = (0..params.len())
-                    .map(|_| self.fresh_var())
-                    .collect();
+                let fresh_vars: Vec<Type> = (0..params.len()).map(|_| self.fresh_var()).collect();
 
-                let subst: std::collections::HashMap<TyVarId, Type> = params.iter()
+                let subst: std::collections::HashMap<TyVarId, Type> = params
+                    .iter()
                     .cloned()
                     .zip(fresh_vars.iter().cloned())
                     .collect();
@@ -357,46 +425,71 @@ impl Unifier {
 
             // Ownership types - must have same qualifier
             (
-                TypeKind::Ownership { qualifier: q1, inner: i1 },
-                TypeKind::Ownership { qualifier: q2, inner: i2 },
+                TypeKind::Ownership {
+                    qualifier: q1,
+                    inner: i1,
+                },
+                TypeKind::Ownership {
+                    qualifier: q2,
+                    inner: i2,
+                },
             ) if q1 == q2 => self.unify(i1, i2, span),
 
             // Coercion: linear T -> affine T
             // Linear is stricter than affine, so we can relax linear to affine
             (
-                TypeKind::Ownership { qualifier: crate::hir::ty::OwnershipQualifier::Affine, inner: i1 },
-                TypeKind::Ownership { qualifier: crate::hir::ty::OwnershipQualifier::Linear, inner: i2 },
+                TypeKind::Ownership {
+                    qualifier: crate::hir::ty::OwnershipQualifier::Affine,
+                    inner: i1,
+                },
+                TypeKind::Ownership {
+                    qualifier: crate::hir::ty::OwnershipQualifier::Linear,
+                    inner: i2,
+                },
             ) => self.unify(i1, i2, span),
 
             // Coercion: T -> linear T or T -> affine T
             // A plain type can be promoted to an ownership-qualified type
             // (Only when the found type is NOT an ownership type)
-            (TypeKind::Ownership { inner, .. }, found) if !matches!(found, TypeKind::Ownership { .. }) => {
+            (TypeKind::Ownership { inner, .. }, found)
+                if !matches!(found, TypeKind::Ownership { .. }) =>
+            {
                 self.unify(inner, &t2, span)
             }
 
             // Coercion: &[T; N] -> &[T] (array reference to slice reference)
             // This allows using a reference to a fixed-size array where a slice reference is expected.
             (
-                TypeKind::Ref { inner: i1, mutable: m1 },
-                TypeKind::Ref { inner: i2, mutable: m2 },
+                TypeKind::Ref {
+                    inner: i1,
+                    mutable: m1,
+                },
+                TypeKind::Ref {
+                    inner: i2,
+                    mutable: m2,
+                },
             ) if m1 == m2 => {
                 let i1_res = self.resolve(i1);
                 let i2_res = self.resolve(i2);
                 match (i1_res.kind(), i2_res.kind()) {
                     // Expected: &[T], Found: &[T; N]
-                    (TypeKind::Slice { element: elem1 }, TypeKind::Array { element: elem2, .. }) => {
-                        self.unify(elem1, elem2, span)
-                    }
+                    (
+                        TypeKind::Slice { element: elem1 },
+                        TypeKind::Array { element: elem2, .. },
+                    ) => self.unify(elem1, elem2, span),
                     // Otherwise, unify inner types normally
-                    _ => self.unify(&i1_res, &i2_res, span)
+                    _ => self.unify(&i1_res, &i2_res, span),
                 }
             }
 
             // DynTrait types: same trait_id means they unify
             (
-                TypeKind::DynTrait { trait_id: t1_id, .. },
-                TypeKind::DynTrait { trait_id: t2_id, .. },
+                TypeKind::DynTrait {
+                    trait_id: t1_id, ..
+                },
+                TypeKind::DynTrait {
+                    trait_id: t2_id, ..
+                },
             ) if t1_id == t2_id => Ok(()),
 
             // No match
@@ -437,32 +530,37 @@ impl Unifier {
         }
 
         // Find fields only in record 1
-        let only_in_1: Vec<_> = fields1.iter()
+        let only_in_1: Vec<_> = fields1
+            .iter()
             .filter(|f| !map2.contains_key(&f.name))
             .cloned()
             .collect();
 
         // Find fields only in record 2
-        let only_in_2: Vec<_> = fields2.iter()
+        let only_in_2: Vec<_> = fields2
+            .iter()
             .filter(|f| !map1.contains_key(&f.name))
             .cloned()
             .collect();
 
         // Handle row polymorphism
-        match (row_var1, row_var2, only_in_1.is_empty(), only_in_2.is_empty()) {
+        match (
+            row_var1,
+            row_var2,
+            only_in_1.is_empty(),
+            only_in_2.is_empty(),
+        ) {
             // Both closed, no extra fields - OK
             (None, None, true, true) => Ok(()),
 
             // Both closed but have extra fields - mismatch
-            (None, None, false, _) | (None, None, _, false) => {
-                Err(Box::new(TypeError::new(
-                    TypeErrorKind::Mismatch {
-                        expected: Type::record(fields1.to_vec(), row_var1),
-                        found: Type::record(fields2.to_vec(), row_var2),
-                    },
-                    span,
-                )))
-            }
+            (None, None, false, _) | (None, None, _, false) => Err(Box::new(TypeError::new(
+                TypeErrorKind::Mismatch {
+                    expected: Type::record(fields1.to_vec(), row_var1),
+                    found: Type::record(fields2.to_vec(), row_var2),
+                },
+                span,
+            ))),
 
             // Record 1 is open - bind its row var to record 2's extra fields
             (Some(rv1), None, _, false) | (Some(rv1), None, _, true) => {
@@ -514,8 +612,10 @@ impl Unifier {
                 } else {
                     // Create a fresh row variable for the remainder
                     let fresh_rv = self.fresh_row_var();
-                    self.row_substitutions.insert(rv1, (combined.clone(), Some(fresh_rv)));
-                    self.row_substitutions.insert(rv2, (combined, Some(fresh_rv)));
+                    self.row_substitutions
+                        .insert(rv1, (combined.clone(), Some(fresh_rv)));
+                    self.row_substitutions
+                        .insert(rv2, (combined, Some(fresh_rv)));
                 }
                 Ok(())
             }
@@ -540,8 +640,12 @@ impl Unifier {
             return Ok(());
         }
         // Check if one set is a subset of the other (by def_id)
-        let e1_sub_e2 = e1.iter().all(|eff| e2.iter().any(|e| e.def_id == eff.def_id));
-        let e2_sub_e1 = e2.iter().all(|eff| e1.iter().any(|e| e.def_id == eff.def_id));
+        let e1_sub_e2 = e1
+            .iter()
+            .all(|eff| e2.iter().any(|e| e.def_id == eff.def_id));
+        let e2_sub_e1 = e2
+            .iter()
+            .all(|eff| e1.iter().any(|e| e.def_id == eff.def_id));
         if e1_sub_e2 || e2_sub_e1 {
             Ok(())
         } else {
@@ -574,17 +678,13 @@ impl Unifier {
             TypeKind::Tuple(tys) => tys.iter().any(|t| self.occurs_in(var, t)),
             TypeKind::Array { element, .. } => self.occurs_in(var, element),
             TypeKind::Slice { element } => self.occurs_in(var, element),
-            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
-                self.occurs_in(var, inner)
-            }
+            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => self.occurs_in(var, inner),
             TypeKind::Fn { params, ret, .. } => {
                 params.iter().any(|t| self.occurs_in(var, t)) || self.occurs_in(var, ret)
             }
             TypeKind::Adt { args, .. } => args.iter().any(|t| self.occurs_in(var, t)),
             TypeKind::Range { element, .. } => self.occurs_in(var, element),
-            TypeKind::Record { fields, .. } => {
-                fields.iter().any(|f| self.occurs_in(var, &f.ty))
-            }
+            TypeKind::Record { fields, .. } => fields.iter().any(|f| self.occurs_in(var, &f.ty)),
             TypeKind::Forall { params, body } => {
                 // Don't check if var is in params (they're bound)
                 // Only check body if var is not one of the bound params
@@ -600,7 +700,9 @@ impl Unifier {
             TypeKind::DynTrait { .. } => false, // DynTrait contains only DefId, no type vars
             TypeKind::Ownership { inner, .. } => self.occurs_in(var, inner),
             // Leaf types with no nested types
-            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Param(_) => false,
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Param(_) => {
+                false
+            }
         }
     }
 
@@ -614,29 +716,31 @@ impl Unifier {
                     ty.clone()
                 }
             }
-            TypeKind::Tuple(tys) => {
-                Type::tuple(tys.iter().map(|t| self.resolve(t)).collect())
-            }
+            TypeKind::Tuple(tys) => Type::tuple(tys.iter().map(|t| self.resolve(t)).collect()),
             TypeKind::Array { element, size } => {
                 Type::array_with_const(self.resolve(element), size.clone())
             }
             TypeKind::Slice { element } => Type::slice(self.resolve(element)),
-            TypeKind::Ref { inner, mutable } => {
-                Type::reference(self.resolve(inner), *mutable)
-            }
-            TypeKind::Ptr { inner, mutable } => {
-                Type::new(TypeKind::Ptr {
-                    inner: self.resolve(inner),
-                    mutable: *mutable,
-                })
-            }
-            TypeKind::Fn { params, ret, effects, const_args } => {
+            TypeKind::Ref { inner, mutable } => Type::reference(self.resolve(inner), *mutable),
+            TypeKind::Ptr { inner, mutable } => Type::new(TypeKind::Ptr {
+                inner: self.resolve(inner),
+                mutable: *mutable,
+            }),
+            TypeKind::Fn {
+                params,
+                ret,
+                effects,
+                const_args,
+            } => {
                 // Resolve params, ret, and also resolve type args in effect annotations
-                let resolved_effects: Vec<FnEffect> = effects.iter()
-                    .map(|eff| FnEffect::new(
-                        eff.def_id,
-                        eff.type_args.iter().map(|arg| self.resolve(arg)).collect(),
-                    ))
+                let resolved_effects: Vec<FnEffect> = effects
+                    .iter()
+                    .map(|eff| {
+                        FnEffect::new(
+                            eff.def_id,
+                            eff.type_args.iter().map(|arg| self.resolve(arg)).collect(),
+                        )
+                    })
                     .collect();
                 Type::function_with_const_args(
                     params.iter().map(|t| self.resolve(t)).collect(),
@@ -645,17 +749,17 @@ impl Unifier {
                     const_args.clone(),
                 )
             }
-            TypeKind::Adt { def_id, args } => Type::adt(
-                *def_id,
-                args.iter().map(|t| self.resolve(t)).collect(),
-            ),
+            TypeKind::Adt { def_id, args } => {
+                Type::adt(*def_id, args.iter().map(|t| self.resolve(t)).collect())
+            }
             TypeKind::Range { element, inclusive } => Type::new(TypeKind::Range {
                 element: self.resolve(element),
                 inclusive: *inclusive,
             }),
             TypeKind::Record { fields, row_var } => {
                 // Resolve field types
-                let mut resolved_fields: Vec<RecordField> = fields.iter()
+                let mut resolved_fields: Vec<RecordField> = fields
+                    .iter()
                     .map(|f| RecordField {
                         name: f.name,
                         ty: self.resolve(&f.ty),
@@ -689,19 +793,24 @@ impl Unifier {
                 // Resolve body but keep params intact (they're bound)
                 Type::forall(params.clone(), self.resolve(body))
             }
-            TypeKind::Closure { def_id, params, ret } => {
-                Type::new(TypeKind::Closure {
-                    def_id: *def_id,
-                    params: params.iter().map(|t| self.resolve(t)).collect(),
-                    ret: self.resolve(ret),
-                })
-            }
+            TypeKind::Closure {
+                def_id,
+                params,
+                ret,
+            } => Type::new(TypeKind::Closure {
+                def_id: *def_id,
+                params: params.iter().map(|t| self.resolve(t)).collect(),
+                ret: self.resolve(ret),
+            }),
             TypeKind::Ownership { qualifier, inner } => {
                 Type::ownership(*qualifier, self.resolve(inner))
             }
             // Types with no nested type variables
-            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |
-            TypeKind::Param(_) | TypeKind::DynTrait { .. } => ty.clone(),
+            TypeKind::Primitive(_)
+            | TypeKind::Never
+            | TypeKind::Error
+            | TypeKind::Param(_)
+            | TypeKind::DynTrait { .. } => ty.clone(),
         }
     }
 
@@ -728,13 +837,11 @@ impl Unifier {
                     ty.clone()
                 }
             }
-            TypeKind::Tuple(tys) => {
-                Type::tuple(
-                    tys.iter()
-                        .map(|t| self.substitute_forall_params(t, subst))
-                        .collect(),
-                )
-            }
+            TypeKind::Tuple(tys) => Type::tuple(
+                tys.iter()
+                    .map(|t| self.substitute_forall_params(t, subst))
+                    .collect(),
+            ),
             TypeKind::Array { element, size } => {
                 Type::array_with_const(self.substitute_forall_params(element, subst), size.clone())
             }
@@ -744,35 +851,27 @@ impl Unifier {
             TypeKind::Ref { inner, mutable } => {
                 Type::reference(self.substitute_forall_params(inner, subst), *mutable)
             }
-            TypeKind::Ptr { inner, mutable } => {
-                Type::new(TypeKind::Ptr {
-                    inner: self.substitute_forall_params(inner, subst),
-                    mutable: *mutable,
-                })
-            }
-            TypeKind::Fn { params, ret, .. } => {
-                Type::function(
-                    params
-                        .iter()
-                        .map(|t| self.substitute_forall_params(t, subst))
-                        .collect(),
-                    self.substitute_forall_params(ret, subst),
-                )
-            }
-            TypeKind::Adt { def_id, args } => {
-                Type::adt(
-                    *def_id,
-                    args.iter()
-                        .map(|t| self.substitute_forall_params(t, subst))
-                        .collect(),
-                )
-            }
-            TypeKind::Range { element, inclusive } => {
-                Type::new(TypeKind::Range {
-                    element: self.substitute_forall_params(element, subst),
-                    inclusive: *inclusive,
-                })
-            }
+            TypeKind::Ptr { inner, mutable } => Type::new(TypeKind::Ptr {
+                inner: self.substitute_forall_params(inner, subst),
+                mutable: *mutable,
+            }),
+            TypeKind::Fn { params, ret, .. } => Type::function(
+                params
+                    .iter()
+                    .map(|t| self.substitute_forall_params(t, subst))
+                    .collect(),
+                self.substitute_forall_params(ret, subst),
+            ),
+            TypeKind::Adt { def_id, args } => Type::adt(
+                *def_id,
+                args.iter()
+                    .map(|t| self.substitute_forall_params(t, subst))
+                    .collect(),
+            ),
+            TypeKind::Range { element, inclusive } => Type::new(TypeKind::Range {
+                element: self.substitute_forall_params(element, subst),
+                inclusive: *inclusive,
+            }),
             TypeKind::Record { fields, row_var } => {
                 let new_fields: Vec<RecordField> = fields
                     .iter()
@@ -783,7 +882,10 @@ impl Unifier {
                     .collect();
                 Type::record(new_fields, *row_var)
             }
-            TypeKind::Forall { params: inner_params, body } => {
+            TypeKind::Forall {
+                params: inner_params,
+                body,
+            } => {
                 // Avoid capturing: skip substitution for inner-bound params
                 let filtered_subst: std::collections::HashMap<TyVarId, Type> = subst
                     .iter()
@@ -795,22 +897,26 @@ impl Unifier {
                     self.substitute_forall_params(body, &filtered_subst),
                 )
             }
-            TypeKind::Closure { def_id, params, ret } => {
-                Type::new(TypeKind::Closure {
-                    def_id: *def_id,
-                    params: params
-                        .iter()
-                        .map(|t| self.substitute_forall_params(t, subst))
-                        .collect(),
-                    ret: self.substitute_forall_params(ret, subst),
-                })
-            }
+            TypeKind::Closure {
+                def_id,
+                params,
+                ret,
+            } => Type::new(TypeKind::Closure {
+                def_id: *def_id,
+                params: params
+                    .iter()
+                    .map(|t| self.substitute_forall_params(t, subst))
+                    .collect(),
+                ret: self.substitute_forall_params(ret, subst),
+            }),
             TypeKind::Ownership { qualifier, inner } => {
                 Type::ownership(*qualifier, self.substitute_forall_params(inner, subst))
             }
             // Types without nested type parameters
-            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error |
-            TypeKind::DynTrait { .. } => ty.clone(),
+            TypeKind::Primitive(_)
+            | TypeKind::Never
+            | TypeKind::Error
+            | TypeKind::DynTrait { .. } => ty.clone(),
         }
     }
 
@@ -1341,15 +1447,27 @@ mod tests {
         // { x: i32, y: bool } should unify with { x: i32, y: bool }
         let record1 = Type::record(
             vec![
-                RecordField { name: make_symbol(1), ty: Type::i32() },
-                RecordField { name: make_symbol(2), ty: Type::bool() },
+                RecordField {
+                    name: make_symbol(1),
+                    ty: Type::i32(),
+                },
+                RecordField {
+                    name: make_symbol(2),
+                    ty: Type::bool(),
+                },
             ],
             None,
         );
         let record2 = Type::record(
             vec![
-                RecordField { name: make_symbol(1), ty: Type::i32() },
-                RecordField { name: make_symbol(2), ty: Type::bool() },
+                RecordField {
+                    name: make_symbol(1),
+                    ty: Type::i32(),
+                },
+                RecordField {
+                    name: make_symbol(2),
+                    ty: Type::bool(),
+                },
             ],
             None,
         );
@@ -1364,11 +1482,17 @@ mod tests {
 
         // { x: i32 } should NOT unify with { x: bool }
         let record1 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: Type::i32(),
+            }],
             None,
         );
         let record2 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: Type::bool() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: Type::bool(),
+            }],
             None,
         );
 
@@ -1382,11 +1506,17 @@ mod tests {
 
         // { x: i32 } should NOT unify with { y: i32 } (different field names)
         let record1 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: Type::i32(),
+            }],
             None,
         );
         let record2 = Type::record(
-            vec![RecordField { name: make_symbol(2), ty: Type::i32() }],
+            vec![RecordField {
+                name: make_symbol(2),
+                ty: Type::i32(),
+            }],
             None,
         );
 
@@ -1400,13 +1530,22 @@ mod tests {
 
         // { x: i32 } should NOT unify with { x: i32, y: bool }
         let record1 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: Type::i32(),
+            }],
             None,
         );
         let record2 = Type::record(
             vec![
-                RecordField { name: make_symbol(1), ty: Type::i32() },
-                RecordField { name: make_symbol(2), ty: Type::bool() },
+                RecordField {
+                    name: make_symbol(1),
+                    ty: Type::i32(),
+                },
+                RecordField {
+                    name: make_symbol(2),
+                    ty: Type::bool(),
+                },
             ],
             None,
         );
@@ -1422,11 +1561,17 @@ mod tests {
         // { x: ?T } should unify with { x: i32 }, binding ?T = i32
         let var = u.fresh_var();
         let record1 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: var.clone() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: var.clone(),
+            }],
             None,
         );
         let record2 = Type::record(
-            vec![RecordField { name: make_symbol(1), ty: Type::i32() }],
+            vec![RecordField {
+                name: make_symbol(1),
+                ty: Type::i32(),
+            }],
             None,
         );
 
@@ -1707,7 +1852,9 @@ mod tests {
                 assert_eq!(params.len(), 1);
                 // Body should be a function type T -> T
                 match body.kind() {
-                    TypeKind::Fn { params: fn_params, .. } => {
+                    TypeKind::Fn {
+                        params: fn_params, ..
+                    } => {
                         assert_eq!(fn_params.len(), 1);
                         // Both param and return should be the same Param type (or Infer after instantiation)
                     }
@@ -1988,16 +2135,8 @@ mod tests {
             let _ = u2.unify(&v2_a, &Type::i32(), span);
             let _ = u2.unify(&v2_b, &v2_a, span);
 
-            assert_eq!(
-                u1.resolve(&v1_a),
-                u2.resolve(&v2_a),
-                "Determinism failed"
-            );
-            assert_eq!(
-                u1.resolve(&v1_b),
-                u2.resolve(&v2_b),
-                "Determinism failed"
-            );
+            assert_eq!(u1.resolve(&v1_a), u2.resolve(&v2_a), "Determinism failed");
+            assert_eq!(u1.resolve(&v1_b), u2.resolve(&v2_b), "Determinism failed");
         }
     }
 
@@ -2016,12 +2155,20 @@ mod tests {
 
         // Try to unify with same type - should succeed
         assert!(u.unify(&var, &Type::i32(), span).is_ok());
-        assert_eq!(u.resolve(&var), bound_type, "Monotonicity violated: type changed");
+        assert_eq!(
+            u.resolve(&var),
+            bound_type,
+            "Monotonicity violated: type changed"
+        );
 
         // Try to unify with different type - should fail
         assert!(u.unify(&var, &Type::bool(), span).is_err());
         // Variable should still be bound to original type
-        assert_eq!(u.resolve(&var), bound_type, "Monotonicity violated after failed unification");
+        assert_eq!(
+            u.resolve(&var),
+            bound_type,
+            "Monotonicity violated after failed unification"
+        );
     }
 
     #[test]
@@ -2064,7 +2211,10 @@ mod tests {
                 assert_eq!(elements[0], Type::i32());
                 assert_eq!(elements[1], Type::bool());
             }
-            _ => panic!("Structure not preserved: expected tuple, got {:?}", resolved),
+            _ => panic!(
+                "Structure not preserved: expected tuple, got {:?}",
+                resolved
+            ),
         }
     }
 
@@ -2248,8 +2398,12 @@ mod tests {
 
         // Same mutability should unify
         let mut u2 = Unifier::new();
-        assert!(u2.unify(&ref_mut, &Type::reference(Type::i32(), true), span).is_ok());
-        assert!(u2.unify(&ref_imm, &Type::reference(Type::i32(), false), span).is_ok());
+        assert!(u2
+            .unify(&ref_mut, &Type::reference(Type::i32(), true), span)
+            .is_ok());
+        assert!(u2
+            .unify(&ref_imm, &Type::reference(Type::i32(), false), span)
+            .is_ok());
     }
 
     #[test]
@@ -2269,7 +2423,10 @@ mod tests {
                 if arity1 == arity2 {
                     assert!(result.is_ok(), "Same arity functions should unify");
                 } else {
-                    assert!(result.is_err(), "Different arity functions should not unify");
+                    assert!(
+                        result.is_err(),
+                        "Different arity functions should not unify"
+                    );
                 }
             }
         }
@@ -2396,8 +2553,12 @@ mod tests {
                     result1.is_ok(),
                     result2.is_ok(),
                     "Symmetry violated: unify({:?}, {:?}) = {:?}, but unify({:?}, {:?}) = {:?}",
-                    t1, t2, result1.is_ok(),
-                    t2, t1, result2.is_ok()
+                    t1,
+                    t2,
+                    result1.is_ok(),
+                    t2,
+                    t1,
+                    result2.is_ok()
                 );
             }
         }
@@ -2423,7 +2584,10 @@ mod tests {
             let resolved2 = u2.resolve(&var2);
 
             assert!(result1.is_ok(), "Variable unification should succeed");
-            assert!(result2.is_ok(), "Variable unification should succeed (reverse)");
+            assert!(
+                result2.is_ok(),
+                "Variable unification should succeed (reverse)"
+            );
             assert_eq!(
                 resolved1, resolved2,
                 "Variable resolution should be order-independent for {:?}",
@@ -2450,11 +2614,7 @@ mod tests {
             // Resolution should be idempotent
             let once = u.resolve(ty);
             let twice = u.resolve(&once);
-            assert_eq!(
-                once, twice,
-                "Resolution idempotence violated for {:?}",
-                ty
-            );
+            assert_eq!(once, twice, "Resolution idempotence violated for {:?}", ty);
         }
     }
 
@@ -2544,7 +2704,8 @@ mod tests {
                 assert!(
                     result.is_err(),
                     "Constructor distinctness violated: {} and {} should not unify",
-                    name1, name2
+                    name1,
+                    name2
                 );
             }
         }
@@ -2606,7 +2767,8 @@ mod tests {
                     result1.is_ok(),
                     result2.is_ok(),
                     "Determinism violated: unify({:?}, {:?}) gave different results",
-                    t1, t2
+                    t1,
+                    t2
                 );
             }
         }
@@ -2638,7 +2800,9 @@ mod tests {
                     // Unbound variables resolve to themselves (or another unbound var)
                     // The key property is they're not bound to something else
                     assert!(
-                        resolved != Type::i32() && resolved != Type::bool() && resolved != Type::string(),
+                        resolved != Type::i32()
+                            && resolved != Type::bool()
+                            && resolved != Type::string(),
                         "Fresh variable {:?} should be independent",
                         i
                     );
@@ -2750,10 +2914,7 @@ mod tests {
         // Create a reasonably nested type (should be fine with default limit)
         let nested = Type::tuple(vec![
             Type::i32(),
-            Type::tuple(vec![
-                Type::bool(),
-                Type::tuple(vec![Type::string()]),
-            ]),
+            Type::tuple(vec![Type::bool(), Type::tuple(vec![Type::string()])]),
         ]);
 
         // This should succeed

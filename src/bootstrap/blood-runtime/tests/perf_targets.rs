@@ -111,7 +111,10 @@ fn test_generation_check_overhead() {
         let _ = std::hint::black_box(slot.validate(gen));
     });
 
-    println!("Generation check: {:.2}ns/op (target: <{:.0}ns)", ns_per_op, TARGET_NS);
+    println!(
+        "Generation check: {:.2}ns/op (target: <{:.0}ns)",
+        ns_per_op, TARGET_NS
+    );
 
     #[cfg(not(debug_assertions))]
     assert!(
@@ -214,7 +217,10 @@ fn test_pointer_operations_fast() {
         std::hint::black_box((addr, gen, meta));
     });
 
-    println!("Pointer operations: {:.2}ns/op (target: <{:.0}ns)", ns_per_op, TARGET_NS);
+    println!(
+        "Pointer operations: {:.2}ns/op (target: <{:.0}ns)",
+        ns_per_op, TARGET_NS
+    );
 
     #[cfg(not(debug_assertions))]
     assert!(
@@ -271,7 +277,10 @@ fn test_performance_summary() {
     let ptr_ns = measure_ns_per_op(|| {
         std::hint::black_box((ptr.address(), ptr.generation(), ptr.metadata()));
     });
-    println!("Pointer Operations:  {:>8.2} ns/op                      target: <10ns", ptr_ns);
+    println!(
+        "Pointer Operations:  {:>8.2} ns/op                      target: <10ns",
+        ptr_ns
+    );
 
     println!("\n=========================================\n");
 }

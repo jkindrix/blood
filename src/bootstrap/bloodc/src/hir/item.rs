@@ -3,9 +3,9 @@
 //! This module defines the HIR representation of top-level items:
 //! functions, structs, enums, type aliases, etc.
 
+use super::{BodyId, DefId, DefKind, TyVarId, Type};
 use crate::ast::Visibility;
 use crate::span::Span;
-use super::{DefId, DefKind, Type, BodyId, TyVarId};
 
 /// A top-level item in HIR.
 #[derive(Debug, Clone)]
@@ -53,15 +53,9 @@ pub enum ItemKind {
     /// An enum.
     Enum(EnumDef),
     /// A type alias.
-    TypeAlias {
-        generics: Generics,
-        ty: Type,
-    },
+    TypeAlias { generics: Generics, ty: Type },
     /// A constant.
-    Const {
-        ty: Type,
-        body_id: BodyId,
-    },
+    Const { ty: Type, body_id: BodyId },
     /// A static.
     Static {
         ty: Type,
@@ -324,9 +318,7 @@ pub enum GenericParamKind {
     /// A lifetime parameter.
     Lifetime,
     /// A const parameter.
-    Const {
-        ty: Type,
-    },
+    Const { ty: Type },
 }
 
 /// A where predicate.

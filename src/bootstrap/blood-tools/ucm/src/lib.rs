@@ -55,7 +55,9 @@ pub mod test_runner;
 pub use codebase::{Codebase, DiffResult, Difference};
 pub use hash::Hash;
 pub use names::Name;
-pub use test_runner::{TestRunner, TestRunOptions, TestResult, TestOutcome, TestSummary, TestDiscovery};
+pub use test_runner::{
+    TestDiscovery, TestOutcome, TestResult, TestRunOptions, TestRunner, TestSummary,
+};
 
 use thiserror::Error;
 

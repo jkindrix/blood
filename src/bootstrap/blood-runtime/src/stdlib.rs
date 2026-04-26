@@ -238,16 +238,14 @@ pub mod int {
 
     /// Add two integers.
     pub fn add(a: i64, b: i64) -> StdResult<i64> {
-        a.checked_add(b).ok_or_else(|| {
-            StdError::new(StdErrorKind::Overflow, "integer overflow in addition")
-        })
+        a.checked_add(b)
+            .ok_or_else(|| StdError::new(StdErrorKind::Overflow, "integer overflow in addition"))
     }
 
     /// Subtract two integers.
     pub fn sub(a: i64, b: i64) -> StdResult<i64> {
-        a.checked_sub(b).ok_or_else(|| {
-            StdError::new(StdErrorKind::Overflow, "integer overflow in subtraction")
-        })
+        a.checked_sub(b)
+            .ok_or_else(|| StdError::new(StdErrorKind::Overflow, "integer overflow in subtraction"))
     }
 
     /// Multiply two integers.
@@ -260,7 +258,10 @@ pub mod int {
     /// Divide two integers.
     pub fn div(a: i64, b: i64) -> StdResult<i64> {
         if b == 0 {
-            Err(StdError::new(StdErrorKind::DivisionByZero, "division by zero"))
+            Err(StdError::new(
+                StdErrorKind::DivisionByZero,
+                "division by zero",
+            ))
         } else {
             a.checked_div(b).ok_or_else(|| {
                 StdError::new(StdErrorKind::Overflow, "integer overflow in division")
@@ -271,7 +272,10 @@ pub mod int {
     /// Modulo of two integers.
     pub fn modulo(a: i64, b: i64) -> StdResult<i64> {
         if b == 0 {
-            Err(StdError::new(StdErrorKind::DivisionByZero, "modulo by zero"))
+            Err(StdError::new(
+                StdErrorKind::DivisionByZero,
+                "modulo by zero",
+            ))
         } else {
             Ok(a % b)
         }
@@ -279,23 +283,21 @@ pub mod int {
 
     /// Negate an integer.
     pub fn neg(a: i64) -> StdResult<i64> {
-        a.checked_neg().ok_or_else(|| {
-            StdError::new(StdErrorKind::Overflow, "integer overflow in negation")
-        })
+        a.checked_neg()
+            .ok_or_else(|| StdError::new(StdErrorKind::Overflow, "integer overflow in negation"))
     }
 
     /// Absolute value.
     pub fn abs(a: i64) -> StdResult<i64> {
-        a.checked_abs().ok_or_else(|| {
-            StdError::new(StdErrorKind::Overflow, "integer overflow in abs")
-        })
+        a.checked_abs()
+            .ok_or_else(|| StdError::new(StdErrorKind::Overflow, "integer overflow in abs"))
     }
 
     /// Parse an integer from a string.
     pub fn parse(s: &str) -> StdResult<i64> {
-        s.trim().parse().map_err(|_| {
-            StdError::new(StdErrorKind::ValueError, format!("invalid integer: {}", s))
-        })
+        s.trim()
+            .parse()
+            .map_err(|_| StdError::new(StdErrorKind::ValueError, format!("invalid integer: {}", s)))
     }
 }
 
@@ -321,7 +323,10 @@ pub mod float {
     /// Divide two floats.
     pub fn div(a: f64, b: f64) -> StdResult<f64> {
         if b == 0.0 {
-            Err(StdError::new(StdErrorKind::DivisionByZero, "division by zero"))
+            Err(StdError::new(
+                StdErrorKind::DivisionByZero,
+                "division by zero",
+            ))
         } else {
             Ok(a / b)
         }
@@ -354,9 +359,9 @@ pub mod float {
 
     /// Parse a float from a string.
     pub fn parse(s: &str) -> StdResult<f64> {
-        s.trim().parse().map_err(|_| {
-            StdError::new(StdErrorKind::ValueError, format!("invalid float: {}", s))
-        })
+        s.trim()
+            .parse()
+            .map_err(|_| StdError::new(StdErrorKind::ValueError, format!("invalid float: {}", s)))
     }
 }
 
@@ -389,7 +394,12 @@ pub mod string {
         if start > end || end > s.len() {
             Err(StdError::new(
                 StdErrorKind::IndexError,
-                format!("substring indices out of bounds: {}..{} for len {}", start, end, s.len()),
+                format!(
+                    "substring indices out of bounds: {}..{} for len {}",
+                    start,
+                    end,
+                    s.len()
+                ),
             ))
         } else {
             Ok(s[start..end].to_string())
@@ -461,23 +471,27 @@ pub mod list {
         list.get(index).cloned().ok_or_else(|| {
             StdError::new(
                 StdErrorKind::IndexError,
-                format!("index {} out of bounds for list of len {}", index, list.len()),
+                format!(
+                    "index {} out of bounds for list of len {}",
+                    index,
+                    list.len()
+                ),
             )
         })
     }
 
     /// Get first element.
     pub fn first<T: Clone>(list: &[T]) -> StdResult<T> {
-        list.first().cloned().ok_or_else(|| {
-            StdError::new(StdErrorKind::IndexError, "list is empty")
-        })
+        list.first()
+            .cloned()
+            .ok_or_else(|| StdError::new(StdErrorKind::IndexError, "list is empty"))
     }
 
     /// Get last element.
     pub fn last<T: Clone>(list: &[T]) -> StdResult<T> {
-        list.last().cloned().ok_or_else(|| {
-            StdError::new(StdErrorKind::IndexError, "list is empty")
-        })
+        list.last()
+            .cloned()
+            .ok_or_else(|| StdError::new(StdErrorKind::IndexError, "list is empty"))
     }
 
     /// Append an element.
@@ -515,9 +529,9 @@ pub mod io_ops {
     /// Print to stdout.
     pub fn print(s: &str) -> StdResult<()> {
         print!("{}", s);
-        io::stdout().flush().map_err(|e| {
-            StdError::new(StdErrorKind::IoError, e.to_string())
-        })
+        io::stdout()
+            .flush()
+            .map_err(|e| StdError::new(StdErrorKind::IoError, e.to_string()))
     }
 
     /// Print line to stdout.
@@ -529,9 +543,9 @@ pub mod io_ops {
     /// Print to stderr.
     pub fn eprint(s: &str) -> StdResult<()> {
         eprint!("{}", s);
-        io::stderr().flush().map_err(|e| {
-            StdError::new(StdErrorKind::IoError, e.to_string())
-        })
+        io::stderr()
+            .flush()
+            .map_err(|e| StdError::new(StdErrorKind::IoError, e.to_string()))
     }
 
     /// Print line to stderr.
@@ -543,9 +557,9 @@ pub mod io_ops {
     /// Read line from stdin.
     pub fn read_line() -> StdResult<String> {
         let mut line = String::new();
-        io::stdin().read_line(&mut line).map_err(|e| {
-            StdError::new(StdErrorKind::IoError, e.to_string())
-        })?;
+        io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| StdError::new(StdErrorKind::IoError, e.to_string()))?;
         Ok(line.trim_end_matches('\n').to_string())
     }
 }
@@ -615,7 +629,10 @@ mod tests {
         assert!(string::contains("hello world", "world"));
         assert!(string::starts_with("hello world", "hello"));
         assert!(string::ends_with("hello world", "world"));
-        assert_eq!(string::replace("hello world", "world", "rust"), "hello rust");
+        assert_eq!(
+            string::replace("hello world", "world", "rust"),
+            "hello rust"
+        );
     }
 
     #[test]

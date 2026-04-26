@@ -58,8 +58,9 @@ struct Chunk {
 impl Chunk {
     /// Create a new chunk with the given capacity.
     fn new(capacity: usize) -> Self {
-        let layout = Layout::from_size_align(capacity, 16)
-            .expect("BUG: invalid layout - capacity must be within valid bounds for 16-byte alignment");
+        let layout = Layout::from_size_align(capacity, 16).expect(
+            "BUG: invalid layout - capacity must be within valid bounds for 16-byte alignment",
+        );
 
         // SAFETY: Layout is valid and non-zero sized
         let data = unsafe {
@@ -86,9 +87,7 @@ impl Chunk {
         }
 
         // SAFETY: We just verified the offset is within bounds
-        let ptr = unsafe {
-            NonNull::new_unchecked(self.data.as_ptr().add(aligned_offset))
-        };
+        let ptr = unsafe { NonNull::new_unchecked(self.data.as_ptr().add(aligned_offset)) };
 
         self.offset = new_offset;
         Some(ptr)
@@ -144,7 +143,10 @@ impl<T> TypedArena<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         let chunk_size = capacity * mem::size_of::<T>();
         let arena = Self::new();
-        arena.chunks.borrow_mut().push(Chunk::new(chunk_size.max(DEFAULT_CHUNK_SIZE)));
+        arena
+            .chunks
+            .borrow_mut()
+            .push(Chunk::new(chunk_size.max(DEFAULT_CHUNK_SIZE)));
         arena
     }
 
@@ -177,11 +179,7 @@ impl<T> TypedArena<T> {
 
         // SAFETY: ptr is properly aligned and sized
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                values.as_ptr(),
-                ptr.as_ptr().cast::<T>(),
-                values.len(),
-            );
+            std::ptr::copy_nonoverlapping(values.as_ptr(), ptr.as_ptr().cast::<T>(), values.len());
             std::slice::from_raw_parts(ptr.as_ptr().cast::<T>(), values.len())
         }
     }
@@ -200,7 +198,8 @@ impl<T> TypedArena<T> {
         // Need a new chunk
         let chunk_size = layout.size().max(DEFAULT_CHUNK_SIZE);
         let mut new_chunk = Chunk::new(chunk_size);
-        let ptr = new_chunk.try_alloc(layout)
+        let ptr = new_chunk
+            .try_alloc(layout)
             .expect("BUG: fresh chunk must have space - allocation size exceeds chunk capacity");
         chunks.push(new_chunk);
         ptr
@@ -269,9 +268,8 @@ impl StringArena {
         // SAFETY: We just allocated this memory
         unsafe {
             std::ptr::copy_nonoverlapping(s.as_ptr(), ptr.as_ptr(), s.len());
-            let allocated = std::str::from_utf8_unchecked(
-                std::slice::from_raw_parts(ptr.as_ptr(), s.len())
-            );
+            let allocated =
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr.as_ptr(), s.len()));
 
             // Store in intern map with 'static lifetime (safe within arena)
             let static_ref: &'static str = std::mem::transmute(allocated);
@@ -293,7 +291,8 @@ impl StringArena {
 
         let chunk_size = layout.size().max(DEFAULT_CHUNK_SIZE);
         let mut new_chunk = Chunk::new(chunk_size);
-        let ptr = new_chunk.try_alloc(layout)
+        let ptr = new_chunk
+            .try_alloc(layout)
             .expect("BUG: fresh chunk must have space - allocation size exceeds chunk capacity");
         chunks.push(new_chunk);
         ptr

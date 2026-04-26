@@ -7,17 +7,17 @@
 //! - Effect system
 //! - Error detection
 
+use crate::diagnostics::Diagnostic;
 use crate::parser::Parser;
 use crate::typeck::check_program;
-use crate::diagnostics::Diagnostic;
 
 /// Helper to parse and type-check source code.
 fn typecheck(source: &str) -> Result<(), Vec<Diagnostic>> {
     let mut parser = Parser::new(source);
     let program = parser.parse_program().map_err(|e| {
-        e.into_iter().map(|err| {
-            Diagnostic::error(err.message, crate::span::Span::default())
-        }).collect::<Vec<_>>()
+        e.into_iter()
+            .map(|err| Diagnostic::error(err.message, crate::span::Span::default()))
+            .collect::<Vec<_>>()
     })?;
 
     // Use the interner from the parser - it has all symbols populated
@@ -33,7 +33,8 @@ fn assert_typechecks(source: &str) {
             panic!(
                 "Expected type checking to succeed, but got {} error(s):\n{}",
                 errors.len(),
-                errors.iter()
+                errors
+                    .iter()
                     .map(|e| format!("  - {}", e.message))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -52,12 +53,15 @@ fn assert_type_error(source: &str, expected_substring: &str) {
             );
         }
         Err(errors) => {
-            let has_expected = errors.iter().any(|e| e.message.contains(expected_substring));
+            let has_expected = errors
+                .iter()
+                .any(|e| e.message.contains(expected_substring));
             if !has_expected {
                 panic!(
                     "Expected error containing '{}', but got:\n{}",
                     expected_substring,
-                    errors.iter()
+                    errors
+                        .iter()
                         .map(|e| format!("  - {}", e.message))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -176,11 +180,13 @@ fn test_function_missing_args() {
 
 #[test]
 fn test_recursive_function() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn factorial(n: i32) -> i32 {
             if n <= 1 { 1 } else { n * factorial(n - 1) }
         }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -189,50 +195,62 @@ fn test_recursive_function() {
 
 #[test]
 fn test_struct_construction() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: 10, y: 20 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_struct_field_access() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: 10, y: 20 }; let x = p.x; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_struct_missing_field() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: 10 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_struct_unknown_field() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: 10, y: 20, z: 30 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_struct_field_wrong_type() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: true, y: 20 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_struct_access_nonexistent_field() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         struct Point { x: i32, y: i32 }
         fn main() { let p = Point { x: 10, y: 20 }; let z = p.z; }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -241,34 +259,42 @@ fn test_struct_access_nonexistent_field() {
 
 #[test]
 fn test_enum_unit_variant() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum Color { Red, Green, Blue }
         fn main() { let c = Color.Red; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_enum_tuple_variant() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum MyOption { Some(i32), None }
         fn main() { let x = MyOption.Some(42); let y = MyOption.None; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_enum_struct_variant() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum Message { Move { x: i32, y: i32 }, Quit }
         fn main() { let m = Message.Move { x: 10, y: 20 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_enum_variant_wrong_args() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         enum MyOption { Some(i32), None }
         fn main() { let x = MyOption.Some(true); }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -277,7 +303,8 @@ fn test_enum_variant_wrong_args() {
 
 #[test]
 fn test_match_exhaustive() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum Bool { True, False }
         fn main() {
             let b = Bool.True;
@@ -286,12 +313,14 @@ fn test_match_exhaustive() {
                 Bool.False => 0,
             };
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_match_with_wildcard() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn main() {
             let x = 5;
             match x {
@@ -300,12 +329,14 @@ fn test_match_with_wildcard() {
                 _ => 2,
             };
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_match_binding_type() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum MyOption { Some(i32), None }
         fn main() {
             let opt = MyOption.Some(42);
@@ -314,12 +345,14 @@ fn test_match_binding_type() {
                 MyOption.None => 0,
             };
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_match_arm_type_mismatch() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         fn main() {
             let x = true;
             match x {
@@ -327,7 +360,8 @@ fn test_match_arm_type_mismatch() {
                 false => "no",
             };
         }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -408,34 +442,42 @@ fn test_generic_function() {
 
 #[test]
 fn test_generic_struct() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct MyBox<T> { value: T }
         fn main() { let b = MyBox { value: 42 }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_generic_enum() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         enum MyOption<T> { Some(T), None }
         fn main() { let x = MyOption.Some(42); }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_generic_inference() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn first<T>(a: T, b: T) -> T { a }
         fn main() { let x = first(1, 2); }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_generic_type_mismatch() {
-    assert_type_fails(r#"
+    assert_type_fails(
+        r#"
         fn first<T>(a: T, b: T) -> T { a }
         fn main() { let x = first(1, true); }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -459,10 +501,12 @@ fn test_closure_captures() {
 
 #[test]
 fn test_closure_as_parameter() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn apply(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }
         fn main() { apply(|x| x * 2, 21); }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -491,7 +535,9 @@ fn test_array_indexing() {
 
 #[test]
 fn test_slice_parameter() {
-    assert_typechecks("fn sum(s: &[i32]) -> i32 { 0 } fn main() { let arr = [1, 2, 3]; sum(&arr); }");
+    assert_typechecks(
+        "fn sum(s: &[i32]) -> i32 { 0 } fn main() { let arr = [1, 2, 3]; sum(&arr); }",
+    );
 }
 
 // ============================================================
@@ -524,35 +570,41 @@ fn test_unit_type() {
 
 #[test]
 fn test_impl_method() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct Point { x: i32, y: i32 }
         impl Point {
             fn new(x: i32, y: i32) -> Point { Point { x, y } }
         }
         fn main() { let p = Point.new(1, 2); }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_self_method() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct Point { x: i32, y: i32 }
         impl Point {
             fn get_x(&self) -> i32 { self.x }
         }
         fn main() { let p = Point { x: 1, y: 2 }; let x = p.get_x(); }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_mut_self_method() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct Counter { value: i32 }
         impl Counter {
             fn increment(&mut self) { self.value = self.value + 1; }
         }
         fn main() { let mut c = Counter { value: 0 }; c.increment(); }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -561,21 +613,25 @@ fn test_mut_self_method() {
 
 #[test]
 fn test_trait_implementation() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         trait Printable { fn print(&self); }
         struct Point { x: i32, y: i32 }
         impl Printable for Point { fn print(&self) {} }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_trait_bound() {
     // Test basic trait bound syntax
     // Note: Full method dispatch with Self type has known limitations
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         trait Display { fn show(&self) -> i32; }
         fn process<T: Display>(x: T) -> i32 { 42 }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -584,35 +640,42 @@ fn test_trait_bound() {
 
 #[test]
 fn test_effect_declaration() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         effect Console {
             op print(msg: i32) -> ();
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_function_with_effect() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         effect Console {
             op print(msg: i32) -> ();
         }
         fn greet() / {Console} {
             perform Console.print(42)
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_pure_function() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn add(a: i32, b: i32) -> i32 / pure { a + b }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_handler_basic() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         effect State {
             op get() -> i32;
             op put(x: i32) -> ();
@@ -623,7 +686,8 @@ fn test_handler_basic() {
             op get() { resume(0) }
             op put(x) { resume(()) }
         }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -656,11 +720,13 @@ fn test_type_alias() {
 
 #[test]
 fn test_generic_type_alias() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         struct MyBox<T> { value: T }
         type IntBox = MyBox<i32>;
         fn main() { let b: IntBox = MyBox { value: 42 }; }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -669,15 +735,18 @@ fn test_generic_type_alias() {
 
 #[test]
 fn test_never_type_panic() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn diverge() -> ! { loop {} }
         fn main() { let x: i32 = if true { 42 } else { diverge() }; }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_never_in_match() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn diverge() -> ! { loop {} }
         fn main() {
             let x: i32 = match true {
@@ -685,7 +754,8 @@ fn test_never_in_match() {
                 false => diverge(),
             };
         }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -694,14 +764,16 @@ fn test_never_in_match() {
 
 #[test]
 fn test_deref_coercion() {
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn takes_ref(x: &i32) {}
         fn main() {
             let x = 42;
             let r = &x;
             takes_ref(r);
         }
-    "#);
+    "#,
+    );
 }
 
 // ============================================================
@@ -726,7 +798,8 @@ fn test_bool_to_int_cast() {
 fn test_match_with_return_diverge() {
     // This tests that match arms with diverging expressions (return, panic, etc.)
     // have type ! (never) which unifies with any type
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example(opt: Option<i32>) -> i32 {
             let val = match opt {
                 Some(x) => x,
@@ -736,26 +809,30 @@ fn test_match_with_return_diverge() {
             };
             val
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_match_with_return_no_block() {
     // Return without block wrapper
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example(opt: Option<i32>) -> i32 {
             match opt {
                 Some(x) => x,
                 None => return 0,
             }
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_if_with_return_diverge() {
     // If-else where one branch returns early
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example(x: i32) -> i32 {
             let val = if x > 0 {
                 x
@@ -764,39 +841,45 @@ fn test_if_with_return_diverge() {
             };
             val * 2
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_block_with_return_statement() {
     // Block that diverges via return statement
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example() -> i32 {
             let x: i32 = {
                 return 42;
             };
             x
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_match_all_arms_diverge() {
     // All arms diverge - match has type !
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example(x: i32) -> i32 {
             match x {
                 0 => return 0,
                 _ => return 1,
             }
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_loop_break_with_value_diverges() {
     // Loop with break-with-value in match arm
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example(opt: Option<i32>) -> i32 {
             loop {
                 match opt {
@@ -807,13 +890,15 @@ fn test_loop_break_with_value_diverges() {
                 }
             }
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_nested_block_diverge() {
     // Nested block with diverging inner block
-    assert_typechecks(r#"
+    assert_typechecks(
+        r#"
         fn example() -> i32 {
             let x: i32 = {
                 let y = 10;
@@ -823,5 +908,6 @@ fn test_nested_block_diverge() {
             };
             x
         }
-    "#);
+    "#,
+    );
 }

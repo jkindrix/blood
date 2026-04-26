@@ -4,14 +4,11 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{
-    self, Type, LocalId, Body, Local, FnSig,
-    Expr, ExprKind, LiteralValue,
-};
 use crate::ast::BinOp;
+use crate::hir::{self, Body, Expr, ExprKind, FnSig, LiteralValue, Local, LocalId, Type};
 use crate::span::Span;
 
-use super::{DeriveExpander, DeriveRequest, local_expr, literal_expr};
+use super::{literal_expr, local_expr, DeriveExpander, DeriveRequest};
 
 /// Expand Hash derive for a struct.
 pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
@@ -31,7 +28,9 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn hash(&self) -> u64
     let sig = FnSig::new(vec![self_ref_ty.clone()], Type::u64());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body
     let self_local_id = LocalId::new(1);
@@ -72,7 +71,11 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
             let field_access = Expr::new(
                 ExprKind::Field {
                     base: Box::new(Expr::new(
-                        ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
+                        ExprKind::Deref(Box::new(local_expr(
+                            self_local_id,
+                            self_ref_ty.clone(),
+                            span,
+                        ))),
                         self_ty.clone(),
                         span,
                     )),
@@ -97,11 +100,7 @@ pub fn expand_struct(expander: &mut DeriveExpander, request: &DeriveRequest) {
             );
 
             // hash = hash * FNV_PRIME (wrapping multiply)
-            let fnv_prime = literal_expr(
-                LiteralValue::Int(1099511628211i128),
-                Type::u64(),
-                span,
-            );
+            let fnv_prime = literal_expr(LiteralValue::Int(1099511628211i128), Type::u64(), span);
             hash_expr = Expr::new(
                 ExprKind::Binary {
                     op: BinOp::Mul,
@@ -149,7 +148,9 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
     // Create signature: fn hash(&self) -> u64
     let sig = FnSig::new(vec![self_ref_ty.clone()], Type::u64());
     expander.fn_sigs.insert(method_def_id, sig);
-    expander.method_self_types.insert(method_def_id, self_ty.clone());
+    expander
+        .method_self_types
+        .insert(method_def_id, self_ty.clone());
 
     // Create body with match expression
     let self_local_id = LocalId::new(1);
@@ -178,11 +179,8 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
 
     for variant in &enum_info.variants {
         // Start with discriminant hash
-        let discriminant_hash = literal_expr(
-            LiteralValue::Int(variant.index as i128),
-            Type::u64(),
-            span,
-        );
+        let discriminant_hash =
+            literal_expr(LiteralValue::Int(variant.index as i128), Type::u64(), span);
 
         if variant.fields.is_empty() {
             // Unit variant: just use discriminant
@@ -271,7 +269,11 @@ pub fn expand_enum(expander: &mut DeriveExpander, request: &DeriveRequest) {
 
     // Scrutinee: *self
     let scrutinee = Expr::new(
-        ExprKind::Deref(Box::new(local_expr(self_local_id, self_ref_ty.clone(), span))),
+        ExprKind::Deref(Box::new(local_expr(
+            self_local_id,
+            self_ref_ty.clone(),
+            span,
+        ))),
         self_ty.clone(),
         span,
     );
@@ -313,10 +315,10 @@ fn hash_value(value_expr: Expr, ty: &Type, span: Span) -> Expr {
         TypeKind::Primitive(prim) => {
             use crate::hir::PrimitiveTy;
             match prim {
-                PrimitiveTy::Bool |
-                PrimitiveTy::Char |
-                PrimitiveTy::Int(_) |
-                PrimitiveTy::Uint(_) => {
+                PrimitiveTy::Bool
+                | PrimitiveTy::Char
+                | PrimitiveTy::Int(_)
+                | PrimitiveTy::Uint(_) => {
                     // Cast to u64
                     Expr::new(
                         ExprKind::Cast {

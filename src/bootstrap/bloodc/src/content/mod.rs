@@ -38,10 +38,10 @@ pub mod namespace;
 pub mod storage;
 pub mod vft;
 
-pub use build_cache::{BuildCache, CacheStats, CacheError, hash_hir_item, extract_dependencies};
+pub use build_cache::{extract_dependencies, hash_hir_item, BuildCache, CacheError, CacheStats};
 pub use canonical::{CanonicalAST, Canonicalizer, DeBruijnIndex};
-pub use distributed_cache::{DistributedCache, RemoteCacheConfig, FetchResult};
+pub use distributed_cache::{DistributedCache, FetchResult, RemoteCacheConfig};
 pub use hash::{ContentHash, HashDisplay, FORMAT_VERSION};
-pub use namespace::{Namespace, NameBinding};
-pub use storage::{Codebase, DefinitionRecord, StorageError, PersistentCodebase};
-pub use vft::{VFT, VFTEntry, CallingConvention};
+pub use namespace::{NameBinding, Namespace};
+pub use storage::{Codebase, DefinitionRecord, PersistentCodebase, StorageError};
+pub use vft::{CallingConvention, VFTEntry, VFT};

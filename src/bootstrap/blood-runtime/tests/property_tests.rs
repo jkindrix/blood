@@ -2,7 +2,9 @@
 //!
 //! Uses proptest to generate random inputs and verify invariants hold.
 
-use blood_runtime::memory::{BloodPtr, GenerationSnapshot, PointerMetadata, generation, Slot, Generation};
+use blood_runtime::memory::{
+    generation, BloodPtr, Generation, GenerationSnapshot, PointerMetadata, Slot,
+};
 use proptest::prelude::*;
 
 /// Strategy for generating valid generations (non-zero, non-reserved)
@@ -217,7 +219,10 @@ proptest! {
 #[cfg(test)]
 mod stress_tests {
     use super::*;
-    use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
     use std::thread;
 
     /// Stress test for concurrent slot access
@@ -227,7 +232,8 @@ mod stress_tests {
         const ITERATIONS: usize = 10_000;
 
         let slots: Arc<Vec<Slot>> = Arc::new((0..100).map(|_| Slot::new()).collect());
-        let generations: Arc<Vec<Generation>> = Arc::new(slots.iter().map(|s| s.generation()).collect());
+        let generations: Arc<Vec<Generation>> =
+            Arc::new(slots.iter().map(|s| s.generation()).collect());
         let errors = Arc::new(AtomicUsize::new(0));
         let running = Arc::new(AtomicBool::new(true));
 
@@ -263,7 +269,11 @@ mod stress_tests {
         }
 
         running.store(false, Ordering::Relaxed);
-        assert_eq!(errors.load(Ordering::Relaxed), 0, "No validation errors should occur with matching generations");
+        assert_eq!(
+            errors.load(Ordering::Relaxed),
+            0,
+            "No validation errors should occur with matching generations"
+        );
     }
 
     /// Stress test for generation snapshot validation under concurrent reads
@@ -312,6 +322,10 @@ mod stress_tests {
             handle.join().unwrap();
         }
 
-        assert_eq!(errors.load(Ordering::Relaxed), 0, "Snapshot validation should succeed consistently");
+        assert_eq!(
+            errors.load(Ordering::Relaxed),
+            0,
+            "Snapshot validation should succeed consistently"
+        );
     }
 }

@@ -3,13 +3,13 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use crate::hir::{Type, TypeKind, PrimitiveTy, TyVarId};
+use crate::hir::{PrimitiveTy, TyVarId, Type, TypeKind};
 use crate::typeck::unify::Unifier;
 
-use super::types::{MethodCandidate, InstantiationResult};
-use super::effect_row::EffectRow;
-use super::result::{DispatchResult, NoMatchError, AmbiguityError, TraitChecker};
 use super::constraints::ConstraintChecker;
+use super::effect_row::EffectRow;
+use super::result::{AmbiguityError, DispatchResult, NoMatchError, TraitChecker};
+use super::types::{InstantiationResult, MethodCandidate};
 
 /// Dispatch resolution context.
 pub struct DispatchResolver<'a> {
@@ -34,10 +34,7 @@ impl<'a> DispatchResolver<'a> {
     ///
     /// The trait_checker function should return true if the given type
     /// implements the trait with the given DefId.
-    pub fn with_trait_checker(
-        unifier: &'a Unifier,
-        trait_checker: &'a TraitChecker,
-    ) -> Self {
+    pub fn with_trait_checker(unifier: &'a Unifier, trait_checker: &'a TraitChecker) -> Self {
         Self {
             unifier,
             trait_checker: Some(trait_checker),
@@ -76,8 +73,12 @@ impl<'a> DispatchResolver<'a> {
         // Step 4: Check for unique winner
         if maximal.len() == 1 {
             // SAFETY: We just checked that len == 1, so next() always returns Some
-            return DispatchResult::Resolved(maximal.into_iter().next()
-                .expect("checked: maximal.len() == 1"));
+            return DispatchResult::Resolved(
+                maximal
+                    .into_iter()
+                    .next()
+                    .expect("checked: maximal.len() == 1"),
+            );
         }
 
         // Step 5: Ambiguity error
@@ -174,9 +175,7 @@ impl<'a> DispatchResolver<'a> {
             (Some(_), None) => true,
 
             // Both have effect rows - check subset relationship
-            (Some(method_row), Some(context_row)) => {
-                method_row.is_subset_of(context_row)
-            }
+            (Some(method_row), Some(context_row)) => method_row.is_subset_of(context_row),
         }
     }
 
@@ -257,7 +256,8 @@ impl<'a> DispatchResolver<'a> {
 
         // Match each parameter against its argument
         for (param_type, arg_type) in method.param_types.iter().zip(arg_types) {
-            match self.try_match_type_param(param_type, arg_type, &valid_params, &mut substitutions) {
+            match self.try_match_type_param(param_type, arg_type, &valid_params, &mut substitutions)
+            {
                 Ok(()) => continue,
                 Err(mismatch) => return *mismatch,
             }
@@ -268,7 +268,9 @@ impl<'a> DispatchResolver<'a> {
         if has_constraints {
             let default_checker = ConstraintChecker::new();
             let checker = constraint_checker.unwrap_or(&default_checker);
-            if let Err(constraint_error) = checker.check_constraints(&method.type_params, &substitutions) {
+            if let Err(constraint_error) =
+                checker.check_constraints(&method.type_params, &substitutions)
+            {
                 return InstantiationResult::ConstraintNotSatisfied(constraint_error);
             }
         }
@@ -510,11 +512,7 @@ impl<'a> DispatchResolver<'a> {
     }
 
     /// Apply type parameter substitutions to a type.
-    fn apply_substitutions(
-        &self,
-        ty: &Type,
-        substitutions: &HashMap<TyVarId, Type>,
-    ) -> Type {
+    fn apply_substitutions(&self, ty: &Type, substitutions: &HashMap<TyVarId, Type>) -> Type {
         match ty.kind.as_ref() {
             TypeKind::Param(id) => {
                 if let Some(concrete) = substitutions.get(id) {
@@ -531,7 +529,10 @@ impl<'a> DispatchResolver<'a> {
 
             TypeKind::Ptr { inner, mutable } => {
                 let new_inner = self.apply_substitutions(inner, substitutions);
-                Type::new(TypeKind::Ptr { inner: new_inner, mutable: *mutable })
+                Type::new(TypeKind::Ptr {
+                    inner: new_inner,
+                    mutable: *mutable,
+                })
             }
 
             TypeKind::Array { element, size } => {
@@ -552,7 +553,12 @@ impl<'a> DispatchResolver<'a> {
                 Type::tuple(new_elems)
             }
 
-            TypeKind::Fn { params, ret, effects, const_args } => {
+            TypeKind::Fn {
+                params,
+                ret,
+                effects,
+                const_args,
+            } => {
                 let new_params: Vec<Type> = params
                     .iter()
                     .map(|p| self.apply_substitutions(p, substitutions))
@@ -576,10 +582,17 @@ impl<'a> DispatchResolver<'a> {
 
             TypeKind::Range { element, inclusive } => {
                 let new_elem = self.apply_substitutions(element, substitutions);
-                Type::new(TypeKind::Range { element: new_elem, inclusive: *inclusive })
+                Type::new(TypeKind::Range {
+                    element: new_elem,
+                    inclusive: *inclusive,
+                })
             }
 
-            TypeKind::Closure { def_id, params, ret } => {
+            TypeKind::Closure {
+                def_id,
+                params,
+                ret,
+            } => {
                 let new_params: Vec<Type> = params
                     .iter()
                     .map(|p| self.apply_substitutions(p, substitutions))
@@ -592,9 +605,10 @@ impl<'a> DispatchResolver<'a> {
                 })
             }
 
-            TypeKind::DynTrait { trait_id, auto_traits } => {
-                Type::dyn_trait(*trait_id, auto_traits.clone())
-            }
+            TypeKind::DynTrait {
+                trait_id,
+                auto_traits,
+            } => Type::dyn_trait(*trait_id, auto_traits.clone()),
 
             TypeKind::Record { fields, row_var } => {
                 let new_fields: Vec<crate::hir::RecordField> = fields
@@ -622,10 +636,9 @@ impl<'a> DispatchResolver<'a> {
             }
 
             // Types that don't contain type parameters
-            TypeKind::Primitive(_)
-            | TypeKind::Never
-            | TypeKind::Error
-            | TypeKind::Infer(_) => ty.clone(),
+            TypeKind::Primitive(_) | TypeKind::Never | TypeKind::Error | TypeKind::Infer(_) => {
+                ty.clone()
+            }
         }
     }
 
@@ -680,48 +693,66 @@ impl<'a> DispatchResolver<'a> {
         match (a.kind.as_ref(), b.kind.as_ref()) {
             // Immutable references are covariant: &Cat <: &Animal if Cat <: Animal
             (
-                TypeKind::Ref { inner: a_inner, mutable: false },
-                TypeKind::Ref { inner: b_inner, mutable: false },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: false,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: false,
+                },
             ) => {
                 return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
 
             // Mutable references are invariant: &mut T requires exact match
             (
-                TypeKind::Ref { inner: a_inner, mutable: true },
-                TypeKind::Ref { inner: b_inner, mutable: true },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: true,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: true,
+                },
             ) => {
                 return self.types_equal(a_inner, b_inner);
             }
 
             // Immutable ref is not subtype of mutable ref
-            (
-                TypeKind::Ref { mutable: false, .. },
-                TypeKind::Ref { mutable: true, .. },
-            ) => {
+            (TypeKind::Ref { mutable: false, .. }, TypeKind::Ref { mutable: true, .. }) => {
                 return false;
             }
 
             // Mutable ref can be used where immutable ref is expected
             (
-                TypeKind::Ref { inner: a_inner, mutable: true },
-                TypeKind::Ref { inner: b_inner, mutable: false },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: true,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: false,
+                },
             ) => {
                 return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
 
             // Slices are covariant
-            (
-                TypeKind::Slice { element: a_elem },
-                TypeKind::Slice { element: b_elem },
-            ) => {
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
                 return self.is_subtype_bounded(a_elem, b_elem, depth + 1);
             }
 
             // Arrays are covariant in element type (same size required)
             (
-                TypeKind::Array { element: a_elem, size: a_size },
-                TypeKind::Array { element: b_elem, size: b_size },
+                TypeKind::Array {
+                    element: a_elem,
+                    size: a_size,
+                },
+                TypeKind::Array {
+                    element: b_elem,
+                    size: b_size,
+                },
             ) => {
                 return a_size == b_size && self.is_subtype_bounded(a_elem, b_elem, depth + 1);
             }
@@ -729,41 +760,66 @@ impl<'a> DispatchResolver<'a> {
             // Tuples are covariant in each position
             (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
                 return a_elems.len() == b_elems.len()
-                    && a_elems.iter().zip(b_elems.iter())
+                    && a_elems
+                        .iter()
+                        .zip(b_elems.iter())
                         .all(|(a, b)| self.is_subtype_bounded(a, b, depth + 1));
             }
 
             // Function types: contravariant in params, covariant in return, covariant in effects
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, effects: a_effects, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, effects: b_effects, .. },
+                TypeKind::Fn {
+                    params: a_params,
+                    ret: a_ret,
+                    effects: a_effects,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: b_params,
+                    ret: b_ret,
+                    effects: b_effects,
+                    ..
+                },
             ) => {
                 // Same arity required
                 if a_params.len() != b_params.len() {
                     return false;
                 }
                 // Contravariant in parameters: b_param <: a_param
-                let params_ok = a_params.iter().zip(b_params.iter())
+                let params_ok = a_params
+                    .iter()
+                    .zip(b_params.iter())
                     .all(|(a, b)| self.is_subtype_bounded(b, a, depth + 1));
                 // Covariant in return type: a_ret <: b_ret
                 let ret_ok = self.is_subtype_bounded(a_ret, b_ret, depth + 1);
                 // Covariant in effects: a_effects ⊆ b_effects
                 // A function with fewer effects is a subtype of one with more
-                let effects_ok = a_effects.iter()
-                    .all(|ae| b_effects.contains(ae));
+                let effects_ok = a_effects.iter().all(|ae| b_effects.contains(ae));
                 return params_ok && ret_ok && effects_ok;
             }
 
             // Pointers follow same variance as references
             (
-                TypeKind::Ptr { inner: a_inner, mutable: false },
-                TypeKind::Ptr { inner: b_inner, mutable: false },
+                TypeKind::Ptr {
+                    inner: a_inner,
+                    mutable: false,
+                },
+                TypeKind::Ptr {
+                    inner: b_inner,
+                    mutable: false,
+                },
             ) => {
                 return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
             (
-                TypeKind::Ptr { inner: a_inner, mutable: true },
-                TypeKind::Ptr { inner: b_inner, mutable: true },
+                TypeKind::Ptr {
+                    inner: a_inner,
+                    mutable: true,
+                },
+                TypeKind::Ptr {
+                    inner: b_inner,
+                    mutable: true,
+                },
             ) => {
                 return self.types_equal(a_inner, b_inner);
             }
@@ -772,8 +828,14 @@ impl<'a> DispatchResolver<'a> {
             // - Trait1 == Trait2 (same primary trait)
             // - auto_traits of a is a superset of auto_traits of b
             (
-                TypeKind::DynTrait { trait_id: a_trait, auto_traits: a_auto },
-                TypeKind::DynTrait { trait_id: b_trait, auto_traits: b_auto },
+                TypeKind::DynTrait {
+                    trait_id: a_trait,
+                    auto_traits: a_auto,
+                },
+                TypeKind::DynTrait {
+                    trait_id: b_trait,
+                    auto_traits: b_auto,
+                },
             ) => {
                 // Same primary trait required
                 if a_trait != b_trait {
@@ -794,7 +856,11 @@ impl<'a> DispatchResolver<'a> {
 
         // Trait-based subtyping: T <: dyn Trait when T: Trait
         // This requires a trait checker to be provided
-        if let TypeKind::DynTrait { trait_id, auto_traits } = b.kind.as_ref() {
+        if let TypeKind::DynTrait {
+            trait_id,
+            auto_traits,
+        } = b.kind.as_ref()
+        {
             if let Some(checker) = self.trait_checker {
                 // Check if type 'a' implements the primary trait
                 if !checker(a, *trait_id) {
@@ -828,28 +894,54 @@ impl<'a> DispatchResolver<'a> {
         match (a.kind.as_ref(), b.kind.as_ref()) {
             (TypeKind::Primitive(pa), TypeKind::Primitive(pb)) => pa == pb,
             (TypeKind::Tuple(as_), TypeKind::Tuple(bs)) => {
-                as_.len() == bs.len()
-                    && as_.iter().zip(bs).all(|(a, b)| self.types_equal(a, b))
+                as_.len() == bs.len() && as_.iter().zip(bs).all(|(a, b)| self.types_equal(a, b))
             }
             (
-                TypeKind::Array { element: a_elem, size: a_len },
-                TypeKind::Array { element: b_elem, size: b_len },
+                TypeKind::Array {
+                    element: a_elem,
+                    size: a_len,
+                },
+                TypeKind::Array {
+                    element: b_elem,
+                    size: b_len,
+                },
             ) => a_len == b_len && self.types_equal(a_elem, b_elem),
+            (TypeKind::Slice { element: a_elem }, TypeKind::Slice { element: b_elem }) => {
+                self.types_equal(a_elem, b_elem)
+            }
             (
-                TypeKind::Slice { element: a_elem },
-                TypeKind::Slice { element: b_elem },
-            ) => self.types_equal(a_elem, b_elem),
-            (
-                TypeKind::Ref { inner: a_inner, mutable: a_mut },
-                TypeKind::Ref { inner: b_inner, mutable: b_mut },
+                TypeKind::Ref {
+                    inner: a_inner,
+                    mutable: a_mut,
+                },
+                TypeKind::Ref {
+                    inner: b_inner,
+                    mutable: b_mut,
+                },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Ptr { inner: a_inner, mutable: a_mut },
-                TypeKind::Ptr { inner: b_inner, mutable: b_mut },
+                TypeKind::Ptr {
+                    inner: a_inner,
+                    mutable: a_mut,
+                },
+                TypeKind::Ptr {
+                    inner: b_inner,
+                    mutable: b_mut,
+                },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, effects: a_effects, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, effects: b_effects, .. },
+                TypeKind::Fn {
+                    params: a_params,
+                    ret: a_ret,
+                    effects: a_effects,
+                    ..
+                },
+                TypeKind::Fn {
+                    params: b_params,
+                    ret: b_ret,
+                    effects: b_effects,
+                    ..
+                },
             ) => {
                 a_params.len() == b_params.len()
                     && a_params
@@ -860,20 +952,37 @@ impl<'a> DispatchResolver<'a> {
                     && a_effects == b_effects
             }
             (
-                TypeKind::Adt { def_id: a_def, args: a_args },
-                TypeKind::Adt { def_id: b_def, args: b_args },
+                TypeKind::Adt {
+                    def_id: a_def,
+                    args: a_args,
+                },
+                TypeKind::Adt {
+                    def_id: b_def,
+                    args: b_args,
+                },
             ) => {
                 a_def == b_def
                     && a_args.len() == b_args.len()
-                    && a_args.iter().zip(b_args).all(|(a, b)| self.types_equal(a, b))
+                    && a_args
+                        .iter()
+                        .zip(b_args)
+                        .all(|(a, b)| self.types_equal(a, b))
             }
             (TypeKind::Infer(a_var), TypeKind::Infer(b_var)) => a_var == b_var,
             (TypeKind::Param(a_var), TypeKind::Param(b_var)) => a_var == b_var,
             (TypeKind::Never, TypeKind::Never) => true,
             (TypeKind::Error, TypeKind::Error) => true,
             (
-                TypeKind::Closure { def_id: a_def, params: a_params, ret: a_ret },
-                TypeKind::Closure { def_id: b_def, params: b_params, ret: b_ret },
+                TypeKind::Closure {
+                    def_id: a_def,
+                    params: a_params,
+                    ret: a_ret,
+                },
+                TypeKind::Closure {
+                    def_id: b_def,
+                    params: b_params,
+                    ret: b_ret,
+                },
             ) => {
                 a_def == b_def
                     && a_params.len() == b_params.len()
@@ -884,13 +993,25 @@ impl<'a> DispatchResolver<'a> {
                     && self.types_equal(a_ret, b_ret)
             }
             (
-                TypeKind::Range { element: a_elem, inclusive: a_incl },
-                TypeKind::Range { element: b_elem, inclusive: b_incl },
+                TypeKind::Range {
+                    element: a_elem,
+                    inclusive: a_incl,
+                },
+                TypeKind::Range {
+                    element: b_elem,
+                    inclusive: b_incl,
+                },
             ) => a_incl == b_incl && self.types_equal(a_elem, b_elem),
             // DynTrait equality: same trait_id and same auto_traits (order independent)
             (
-                TypeKind::DynTrait { trait_id: a_trait, auto_traits: a_auto },
-                TypeKind::DynTrait { trait_id: b_trait, auto_traits: b_auto },
+                TypeKind::DynTrait {
+                    trait_id: a_trait,
+                    auto_traits: a_auto,
+                },
+                TypeKind::DynTrait {
+                    trait_id: b_trait,
+                    auto_traits: b_auto,
+                },
             ) => {
                 a_trait == b_trait
                     && a_auto.len() == b_auto.len()
@@ -907,9 +1028,9 @@ impl<'a> DispatchResolver<'a> {
         let mut maximal = Vec::new();
 
         for m in applicable {
-            let is_maximal = !applicable.iter().any(|other| {
-                !std::ptr::eq(m, other) && self.is_more_specific(other, m)
-            });
+            let is_maximal = !applicable
+                .iter()
+                .any(|other| !std::ptr::eq(m, other) && self.is_more_specific(other, m));
 
             if is_maximal {
                 maximal.push(m.clone());
@@ -986,12 +1107,20 @@ impl<'a> DispatchResolver<'a> {
 
         for i in 0..max_params {
             let bounds1: Vec<&str> = if i < m1.type_params.len() {
-                m1.type_params[i].constraints.iter().map(|c| c.trait_name.as_str()).collect()
+                m1.type_params[i]
+                    .constraints
+                    .iter()
+                    .map(|c| c.trait_name.as_str())
+                    .collect()
             } else {
                 Vec::new()
             };
             let bounds2: Vec<&str> = if i < m2.type_params.len() {
-                m2.type_params[i].constraints.iter().map(|c| c.trait_name.as_str()).collect()
+                m2.type_params[i]
+                    .constraints
+                    .iter()
+                    .map(|c| c.trait_name.as_str())
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -1018,11 +1147,7 @@ impl<'a> DispatchResolver<'a> {
     /// - Ordering::Less if m1 is more specific
     /// - Ordering::Greater if m2 is more specific
     /// - Ordering::Equal if they are equally specific (potential ambiguity)
-    pub fn compare_specificity(
-        &self,
-        m1: &MethodCandidate,
-        m2: &MethodCandidate,
-    ) -> Ordering {
+    pub fn compare_specificity(&self, m1: &MethodCandidate, m2: &MethodCandidate) -> Ordering {
         let m1_more = self.is_more_specific(m1, m2);
         let m2_more = self.is_more_specific(m2, m1);
 
@@ -1045,7 +1170,7 @@ pub fn compare_type_param_specificity(t1: &Type, t2: &Type) -> Ordering {
     let t2_concrete = !matches!(t2.kind.as_ref(), TypeKind::Infer(_) | TypeKind::Param(_));
 
     match (t1_concrete, t2_concrete) {
-        (true, false) => Ordering::Less,   // Concrete more specific
+        (true, false) => Ordering::Less, // Concrete more specific
         (false, true) => Ordering::Greater,
         _ => Ordering::Equal,
     }

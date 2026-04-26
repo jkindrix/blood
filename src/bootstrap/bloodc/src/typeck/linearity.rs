@@ -15,9 +15,9 @@
 
 use std::collections::HashMap;
 
-use crate::hir::{self, DefId, LocalId, Type};
 use crate::hir::item::{ItemKind, StructKind};
-use crate::hir::ty::{TypeKind, OwnershipQualifier};
+use crate::hir::ty::{OwnershipQualifier, TypeKind};
+use crate::hir::{self, DefId, LocalId, Type};
 use crate::span::Span;
 use crate::typeck::error::{TypeError, TypeErrorKind};
 
@@ -86,7 +86,10 @@ impl<'hir> LinearityChecker<'hir> {
         let (is_linear, is_affine) = self.check_linearity(&local.ty);
         if is_linear || is_affine {
             Some(VariableUsage {
-                name: local.name.clone().unwrap_or_else(|| "<unnamed>".to_string()),
+                name: local
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "<unnamed>".to_string()),
                 ty: local.ty.clone(),
                 def_span: local.span,
                 is_linear,
@@ -102,8 +105,14 @@ impl<'hir> LinearityChecker<'hir> {
     /// Check if a type is linear or affine.
     fn check_linearity(&self, ty: &Type) -> (bool, bool) {
         match ty.kind() {
-            TypeKind::Ownership { qualifier: OwnershipQualifier::Linear, .. } => (true, false),
-            TypeKind::Ownership { qualifier: OwnershipQualifier::Affine, .. } => (false, true),
+            TypeKind::Ownership {
+                qualifier: OwnershipQualifier::Linear,
+                ..
+            } => (true, false),
+            TypeKind::Ownership {
+                qualifier: OwnershipQualifier::Affine,
+                ..
+            } => (false, true),
             // Recursively check inner types
             TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
                 self.check_linearity(inner)
@@ -134,9 +143,7 @@ impl<'hir> LinearityChecker<'hir> {
             }
             TypeKind::Forall { body, .. } => self.check_linearity(body),
             // ADTs may contain linear/affine fields — recurse into them.
-            TypeKind::Adt { def_id, .. } => {
-                self.check_adt_field_linearity(*def_id)
-            }
+            TypeKind::Adt { def_id, .. } => self.check_adt_field_linearity(*def_id),
             // These types cannot contain linear/affine values
             TypeKind::Fn { .. }
             | TypeKind::Closure { .. }
@@ -159,14 +166,16 @@ impl<'hir> LinearityChecker<'hir> {
                     }
                     StructKind::Unit => Vec::new(),
                 },
-                ItemKind::Enum(e) => {
-                    e.variants.iter().flat_map(|v| match &v.fields {
+                ItemKind::Enum(e) => e
+                    .variants
+                    .iter()
+                    .flat_map(|v| match &v.fields {
                         StructKind::Record(fields) | StructKind::Tuple(fields) => {
                             fields.iter().map(|f| &f.ty).collect::<Vec<_>>()
                         }
                         StructKind::Unit => Vec::new(),
-                    }).collect()
-                }
+                    })
+                    .collect(),
                 _ => return (false, false),
             };
             let mut is_linear = false;
@@ -193,7 +202,9 @@ impl<'hir> LinearityChecker<'hir> {
 
             // Block/Region - check all statements and final expression
             hir::ExprKind::Block { stmts, expr: tail }
-            | hir::ExprKind::Region { stmts, expr: tail, .. } => {
+            | hir::ExprKind::Region {
+                stmts, expr: tail, ..
+            } => {
                 for stmt in stmts {
                     self.check_stmt(stmt);
                 }
@@ -203,7 +214,11 @@ impl<'hir> LinearityChecker<'hir> {
             }
 
             // If expression - need to check branches
-            hir::ExprKind::If { condition, then_branch, else_branch } => {
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.check_expr(condition);
 
                 // Save current usage state
@@ -257,7 +272,9 @@ impl<'hir> LinearityChecker<'hir> {
                 self.exit_loop();
             }
 
-            hir::ExprKind::While { condition, body, .. } => {
+            hir::ExprKind::While {
+                condition, body, ..
+            } => {
                 self.check_expr(condition);
                 self.enter_loop();
                 self.check_expr(body);
@@ -392,7 +409,11 @@ impl<'hir> LinearityChecker<'hir> {
             }
 
             // Handle expression
-            hir::ExprKind::Handle { body, handler_instance, .. } => {
+            hir::ExprKind::Handle {
+                body,
+                handler_instance,
+                ..
+            } => {
                 self.check_expr(body);
                 self.check_expr(handler_instance);
             }
@@ -442,7 +463,9 @@ impl<'hir> LinearityChecker<'hir> {
             }
 
             // Macro expansion - check all arguments
-            hir::ExprKind::MacroExpansion { args, named_args, .. } => {
+            hir::ExprKind::MacroExpansion {
+                args, named_args, ..
+            } => {
                 for arg in args {
                     self.check_expr(arg);
                 }
@@ -590,7 +613,8 @@ impl<'hir> LinearityChecker<'hir> {
 
     /// Take a snapshot of the current usage state.
     fn snapshot_usage(&self) -> HashMap<LocalId, usize> {
-        self.locals.iter()
+        self.locals
+            .iter()
             .map(|(id, usage)| (*id, usage.use_count))
             .collect()
     }
