@@ -64,44 +64,26 @@ impl DeriveKind {
 
     /// Parses a derive kind from a name string.
     pub fn from_name(name: &str) -> Option<DeriveKind> {
-        if str_equals(name, "Clone") {
+        if name == "Clone" {
             return Option.Some(DeriveKind.Clone);
         }
-        if str_equals(name, "Debug") {
+        if name == "Debug" {
             return Option.Some(DeriveKind.Debug);
         }
-        if str_equals(name, "PartialEq") {
+        if name == "PartialEq" {
             return Option.Some(DeriveKind.PartialEq);
         }
-        if str_equals(name, "Eq") {
+        if name == "Eq" {
             return Option.Some(DeriveKind.Eq);
         }
-        if str_equals(name, "Default") {
+        if name == "Default" {
             return Option.Some(DeriveKind.Default);
         }
-        if str_equals(name, "Hash") {
+        if name == "Hash" {
             return Option.Some(DeriveKind.Hash);
         }
         Option.None
     }
-}
-
-/// Byte-wise string equality (matching the convention used elsewhere in the
-/// compiler; `==` on `&str` is not yet a supported operation).
-fn str_equals(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    let mut i: usize = 0;
-    while i < a.len() {
-        if ab[i] != bb[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
 }
 
 // ============================================================
@@ -651,52 +633,52 @@ fn syn_match_arm(
 /// Returns `None` for non-primitive names (user types, String) so the
 /// caller can fall back to a `FieldTypeName.default()` call.
 fn primitive_default_expr(name_str: &str, span: common.Span) -> Option<ast.Expr> {
-    if str_equals(name_str, "bool") {
+    if name_str == "bool" {
         return Option.Some(syn_bool_lit(false, span));
     }
-    if str_equals(name_str, "char") {
+    if name_str == "char" {
         return Option.Some(syn_char_lit('\0', span));
     }
-    if str_equals(name_str, "i8") {
+    if name_str == "i8" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I8, span));
     }
-    if str_equals(name_str, "i16") {
+    if name_str == "i16" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I16, span));
     }
-    if str_equals(name_str, "i32") {
+    if name_str == "i32" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I32, span));
     }
-    if str_equals(name_str, "i64") {
+    if name_str == "i64" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I64, span));
     }
-    if str_equals(name_str, "i128") {
+    if name_str == "i128" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.I128, span));
     }
-    if str_equals(name_str, "isize") {
+    if name_str == "isize" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.Isize, span));
     }
-    if str_equals(name_str, "u8") {
+    if name_str == "u8" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U8, span));
     }
-    if str_equals(name_str, "u16") {
+    if name_str == "u16" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U16, span));
     }
-    if str_equals(name_str, "u32") {
+    if name_str == "u32" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U32, span));
     }
-    if str_equals(name_str, "u64") {
+    if name_str == "u64" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U64, span));
     }
-    if str_equals(name_str, "u128") {
+    if name_str == "u128" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.U128, span));
     }
-    if str_equals(name_str, "usize") {
+    if name_str == "usize" {
         return Option.Some(syn_int_lit_suffixed(0u128, ast.IntSuffix.Usize, span));
     }
-    if str_equals(name_str, "f32") {
+    if name_str == "f32" {
         return Option.Some(syn_float_lit_suffixed(0u64, ast.FloatSuffix.F32, span));
     }
-    if str_equals(name_str, "f64") {
+    if name_str == "f64" {
         return Option.Some(syn_float_lit_suffixed(0u64, ast.FloatSuffix.F64, span));
     }
     Option.None
@@ -918,7 +900,7 @@ fn is_derive_attribute(ctx: &hir_lower_ctx.LoweringCtx, attr: &ast.Attribute) ->
         return false;
     }
     let path_str = ctx.span_to_string(attr.path[0].span);
-    str_equals(path_str.as_str(), "derive")
+    path_str.as_str() == "derive"
 }
 
 /// Extracts derive requests from an ADT (struct or enum) declaration's
