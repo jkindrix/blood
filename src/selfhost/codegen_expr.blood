@@ -628,6 +628,175 @@ fn try_emit_binop_string_ref_eq(
     true
 }
 
+/// True if operand is `&[T]` for some T — exactly one Ref layer wrapping a
+/// Slice. Multi-layer refs to slices deliberately rejected (mirrors S100's
+/// single-Ref-layer choice for `&String`). Used to gate the @str_eq routing
+/// for slice equality. The element type is read separately via
+/// `slice_ref_elem_size_id` for the byte-count multiplier.
+fn operand_is_slice_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner = type_intern.unwrap_ref_id(id);
+            type_intern.is_slice_id(inner)
+        }
+        Option.None => false,
+    }
+}
+
+/// Returns the byte size of the slice element type for a `&[T]` operand.
+/// Falls back to 1 if the operand isn't a slice ref (caller should have
+/// gated via `operand_is_slice_ref` first; the fallback is defensive).
+fn slice_ref_elem_size_id(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> u64 {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            let inner = type_intern.unwrap_ref_id(id);
+            match type_intern.get_slice_element(inner) {
+                Option.Some(elem_id) => codegen_size.type_size_with_ctx_id(ctx, elem_id),
+                Option.None => 1,
+            }
+        }
+        Option.None => 1,
+    }
+}
+
+/// Builds a `{ ptr, i64 }` view from a `&[T]` slice's loaded value, where the
+/// i64 holds the BYTE count (element count * elem_size) suitable for
+/// `@str_eq`'s memcmp-equivalent path. The slice's loaded LLVM value is
+/// `{ ptr, i64 }` where the i64 packs `(gen << 32) | element_count` — the
+/// same convention `&str` uses. The view we feed to `@str_eq` must drop the
+/// gen bits because:
+///   1. `@str_eq` calls `str_len` on each operand, which gen-validates if
+///      gen != 0 by looking up the buffer in the gen registry. Two slice
+///      operands pointing at distinct stack arrays have distinct gens, and
+///      the registry only tracks specific allocation paths — validation
+///      would either spuriously panic with "stale reference detected" or
+///      produce a length much larger than the buffer (causing OOB reads).
+///   2. With gen masked to 0, `emit_str_gen_validation` short-circuits and
+///      `@str_eq`'s loop bound is just the byte count, which is what we
+///      want. Live-ref guarantee comes from the binop's MIR-level operand
+///      semantics — both operands are dereferenceable at the binop site.
+/// Masking via `and i64 raw, 4294967295` mirrors the slice-length extract
+/// at codegen_expr.blood:1352. When elem_size is 1 (e.g. `&[u8]`), the
+/// multiply is skipped because element count == byte count.
+fn extract_slice_str_view(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    slice_val: &str,
+    elem_size: u64,
+) -> codegen_ctx.CgName {
+    let data = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&data);
+    ctx.write(" = extractvalue { ptr, i64 } ");
+    ctx.write(slice_val);
+    ctx.write(", 0\n");
+    let raw_count = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&raw_count);
+    ctx.write(" = extractvalue { ptr, i64 } ");
+    ctx.write(slice_val);
+    ctx.write(", 1\n");
+    // Mask off packed gen — upper 32 bits hold (gen << 32). After this we
+    // have just the element count with gen=0, suitable for @str_eq.
+    let count = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&count);
+    ctx.write(" = and i64 ");
+    ctx.write_cgname(&raw_count);
+    ctx.write(", 4294967295\n");
+    let bytes = if elem_size == 1u64 {
+        count
+    } else {
+        let byte_count = ctx.fresh_temp_cg();
+        let elem_size_str = codegen_types.format_u64(elem_size);
+        ctx.write_indent();
+        ctx.write_cgname(&byte_count);
+        ctx.write(" = mul i64 ");
+        ctx.write_cgname(&count);
+        ctx.write(", ");
+        ctx.write(elem_size_str.as_str());
+        ctx.write("\n");
+        byte_count
+    };
+    let view0 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&view0);
+    ctx.write(" = insertvalue { ptr, i64 } zeroinitializer, ptr ");
+    ctx.write_cgname(&data);
+    ctx.write(", 0\n");
+    let view = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&view);
+    ctx.write(" = insertvalue { ptr, i64 } ");
+    ctx.write_cgname(&view0);
+    ctx.write(", i64 ");
+    ctx.write_cgname(&bytes);
+    ctx.write(", 1\n");
+    view
+}
+
+/// Routes `&[T] == &[T]` and `&[T] != &[T]` through `@str_eq`. The default
+/// binop path treats `{ ptr, i64 }` as an aggregate and extracts the first
+/// field (data ptr), giving pointer-equality semantics — wrong for any two
+/// distinct slice allocations regardless of content. Multiplies element
+/// count by elem_size to produce a byte length, then dispatches via the
+/// same runtime function S98 routes &str equality through.
+///
+/// CORRECTNESS NOTE: bytewise equality is equivalent to element-wise `==`
+/// for integer-element slices (u8/i8/.../bool/char/raw ptr). For
+/// float-element slices (`&[f32]`/`&[f64]`), this implementation diverges
+/// from element-wise `==` at NaN (NaN != NaN element-wise but bytewise-
+/// equal) and ±0 (bytewise distinct but element-wise equal). For aggregate-
+/// element slices with padding, this implementation may compare uninit
+/// padding bytes. Both edges are pre-existing — the prior pointer-equality
+/// path was strictly worse because it never returned true for distinct
+/// allocations. Future work can dispatch to a per-element loop for
+/// non-integer element types if those callers materialize.
+fn try_emit_binop_slice_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_slice_ref(ctx, left) || !operand_is_slice_ref(ctx, right) {
+        return false;
+    }
+    let elem_size = slice_ref_elem_size_id(ctx, left);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_view = extract_slice_str_view(ctx, left_val.as_str(), elem_size);
+    let right_view = extract_slice_str_view(ctx, right_val.as_str(), elem_size);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &left_view);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &right_view);
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -814,6 +983,18 @@ pub fn emit_rvalue(
             // Derefs each operand to load the underlying String, then runs
             // through the same @str_eq pipeline S99 set up.
             if try_emit_binop_string_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S102: extends the eq family to slice operands. `&[T]` loads as
+            // `{ ptr, i64 }` (data ptr + element count) — same shape as `&str`
+            // but with element count instead of byte count. Default path
+            // extracts the ptr field and pointer-compares — wrong for distinct
+            // allocations. Multiplies count by elem_size to get byte length,
+            // builds `{ ptr, i64-bytes }` view, and dispatches via the same
+            // @str_eq runtime. Correct for integer-element slices; see
+            // try_emit_binop_slice_eq's comment for the float/aggregate caveat.
+            if try_emit_binop_slice_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
