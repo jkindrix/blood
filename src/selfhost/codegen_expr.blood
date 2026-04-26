@@ -2188,7 +2188,45 @@ pub fn emit_binop_typed(
         return codegen_ctx.CgName.Str(common.make_string("undef"));
     }
     if ty_bytes.len() > 0 && ty_bytes[0] == 123 {
-        // Aggregate type - extract first element and compare as that type
+        // Aggregate type. The recursive extract-first-field path is only
+        // sound for single-field wrappers (e.g. `{ i32 }` from
+        // `struct Wrapper { x: i32 }`); for multi-field aggregates it
+        // silently miscompiles equality by comparing only the first field.
+        // The S98–S103 dispatch chain in the BinaryOp Rvalue routes every
+        // known eq-family aggregate (str / String / &String / & &String /
+        // &[T] / Vec<T> / &Vec<T>) through @str_eq before reaching here.
+        // If a multi-field aggregate Eq/Ne arrives at this point the
+        // dispatcher missed it — almost always a missing entry for
+        // custom struct ==, fat-ref of custom type ==, Option/Result ==,
+        // closure ==, or a similar type whose equality must be defined
+        // by other means. Diagnose instead of falling through, so the
+        // silent miscompile surfaces as an error.
+        let llvm_ty_string = common.make_string(llvm_ty);
+        let n_fields = count_struct_fields(&llvm_ty_string);
+        let is_eq_or_ne = match bin_op {
+            &mir_types.MirBinOp.Eq => true,
+            &mir_types.MirBinOp.Ne => true,
+            _ => false,
+        };
+        if is_eq_or_ne && n_fields > 1 {
+            let mut msg = common.make_string("equality on multi-field aggregate type `");
+            msg.push_str(llvm_ty);
+            msg.push_str("` is not supported (the default codegen path would silently compare only the first field)");
+            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. For Option/Result, use `match`. For custom structs, use `#[derive(PartialEq)]` and call `.eq()` explicitly. HashMap and closure equality are not implemented.");
+            ctx.codegen_error_with_note_fatal(
+                codegen_ctx.CodegenErrorKind.UnsupportedOperation,
+                msg,
+                note,
+            );
+            // Emit a placeholder i1 result so subsequent codegen consumes
+            // a valid SSA name; the fatal flag will cause generate_module
+            // to return a failed result and halt the build before this
+            // placeholder reaches the linker.
+            let placeholder = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg(&placeholder, "ne", "i64", "0", "0");
+            return placeholder;
+        }
+        // Single-field wrapper or non-Eq/Ne op: extract field 0 and recurse.
         let inner_ty = extract_first_field_type(llvm_ty);
         let left_elem_cg = ctx.fresh_temp_cg();
         ctx.write_indent();

@@ -278,10 +278,21 @@ pub fn generate_module_with_items(
     ctx.emit_layout_descriptors();
     output.push_str(ctx.output.as_str());
 
-    // Drain accumulated errors and warnings from the context
+    // Drain accumulated errors and warnings from the context.
+    // Capture the fatal flag BEFORE take_errors clears the error list — when
+    // set, an earlier silent-miscompile guard (S104-B) escalated a recorded
+    // error and the build must halt instead of demoting it to a warning.
+    let was_fatal = ctx.has_fatal_codegen_error;
     let errors = ctx.take_errors();
     let warnings = ctx.take_warnings();
-    if errors.len() > 0 || warnings.len() > 0 {
+    if was_fatal {
+        CodegenResult {
+            llvm_ir: output,
+            errors: errors,
+            warnings: warnings,
+            success: false,
+        }
+    } else if errors.len() > 0 || warnings.len() > 0 {
         CodegenResult.ok_with_diagnostics(output, errors, warnings)
     } else {
         CodegenResult.ok(output)

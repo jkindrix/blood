@@ -375,6 +375,13 @@ pub struct CodegenCtx {
     pub codegen_errors: Vec<CodegenError>,
     /// Warnings accumulated during code generation.
     pub codegen_warnings: Vec<String>,
+    /// True if a fatal codegen error has been recorded. When set,
+    /// generate_module returns a failed CodegenResult, halting the
+    /// build instead of demoting the error to a warning. Used by
+    /// silent-miscompile guards (S104-B) where falling through to the
+    /// default codegen path would emit IR that runs but produces wrong
+    /// answers — those must hard-error rather than warn.
+    pub has_fatal_codegen_error: bool,
     /// The span of the MIR statement/terminator currently being compiled.
     /// Set before each statement/terminator codegen, used by codegen_error().
     pub current_span: Option<common.Span>,
@@ -778,6 +785,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec.with_capacity(8),
             codegen_errors: Vec.new(),
             codegen_warnings: Vec.new(),
+            has_fatal_codegen_error: false,
             current_span: Option.None,
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),
@@ -905,6 +913,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec.with_capacity(8),
             codegen_errors: Vec.new(),
             codegen_warnings: Vec.new(),
+            has_fatal_codegen_error: false,
             current_span: Option.None,
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),
@@ -2542,6 +2551,16 @@ impl CodegenCtx {
         if had_temp_err2 { region_activate(self.fn_temp_region); }
     }
 
+    /// Like `codegen_error_with_note`, but also sets the fatal flag so the
+    /// next `generate_module` returns a failed `CodegenResult`. Use for
+    /// silent-miscompile guards: cases where falling through emits IR that
+    /// links and runs but produces wrong answers, where degrading to a
+    /// warning is unsafe.
+    pub fn codegen_error_with_note_fatal(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String, note: String) {
+        self.codegen_error_with_note(kind, message, note);
+        self.has_fatal_codegen_error = true;
+    }
+
     /// Returns true if any codegen errors have been recorded.
     pub fn has_codegen_errors(self: &CodegenCtx) -> bool {
         self.codegen_errors.len() > 0
@@ -3417,6 +3436,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec.new(),
             codegen_errors: Vec.new(),
             codegen_warnings: Vec.new(),
+            has_fatal_codegen_error: false,
             current_span: Option.None,
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),

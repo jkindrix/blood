@@ -760,12 +760,25 @@ do_test_golden() {
 
         # ── COMPILE_FAIL ──
         if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
-            local tmpdir stderr_file
+            local tmpdir stderr_file build_failed=0
             tmpdir=$(mktemp -d)
             stderr_file="$tmpdir/stderr.txt"
-            # Use 'check' (no codegen/link needed) with compile timeout
-            if timeout 30 "$bin" check "$src" --stdlib-path "$stdlib" \
+            # Try 'check' first (parse + typeck, no codegen) — covers most
+            # COMPILE_FAIL diagnostics quickly.
+            if ! timeout 30 "$bin" check "$src" --stdlib-path "$stdlib" \
                     >/dev/null 2>"$stderr_file"; then
+                build_failed=1
+            else
+                # check passed; try full 'build' to catch codegen-time
+                # diagnostics (e.g. silent-miscompile guards introduced in
+                # S104-B that fire only when emitting LLVM IR).
+                if ! timeout 30 "$bin" build "$src" --build-dir "$tmpdir" \
+                        -o "$tmpdir/out" --stdlib-path "$stdlib" \
+                        >/dev/null 2>"$stderr_file"; then
+                    build_failed=1
+                fi
+            fi
+            if [ "$build_failed" -eq 0 ]; then
                 echo "COMP_FAIL" > "$rf"
                 echo "(expected compile failure, but succeeded)" > "$of"
             else

@@ -2776,6 +2776,48 @@ fn codegen_pass2(
             }
         }
 
+        // Merge worker codegen errors and fatal flag into main ctx (S104-B).
+        // Each worker may have recorded errors during parallel codegen; when
+        // a worker hits a silent-miscompile guard it sets has_fatal_codegen_error
+        // on its own ctx. Without this merge, the main ctx's fatal check at the
+        // end of compile_file_streaming would never see worker-recorded fatals
+        // and the build would emit a binary with placeholder IR.
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            if wctx.has_fatal_codegen_error {
+                ctx.has_fatal_codegen_error = true;
+            }
+            for ei in 0usize..wctx.codegen_errors.len() {
+                let we = &wctx.codegen_errors[ei];
+                let fn_name = match &we.fn_name {
+                    &Option.Some(ref name) => Option.Some(name.clone()),
+                    &Option.None => Option.None,
+                };
+                let span = match &we.span {
+                    &Option.Some(ref s) => Option.Some(*s),
+                    &Option.None => Option.None,
+                };
+                let mut notes: Vec<codegen_ctx.CodegenNote> = Vec.new();
+                for ni in 0usize..we.notes.len() {
+                    let nspan = match &we.notes[ni].span {
+                        &Option.Some(ref s) => Option.Some(*s),
+                        &Option.None => Option.None,
+                    };
+                    notes.push(codegen_ctx.CodegenNote {
+                        message: we.notes[ni].message.clone(),
+                        span: nspan,
+                    });
+                }
+                ctx.codegen_errors.push(codegen_ctx.CodegenError {
+                    kind: codegen_ctx.clone_error_kind(&we.kind),
+                    message: we.message.clone(),
+                    fn_name: fn_name,
+                    span: span,
+                    notes: notes,
+                });
+            }
+        }
+
         // PERF-S78-PARALLEL: merge per-worker mono_requests into all_mono_requests.
         // Workers wrote heap-allocated MonoRequests (bypass active) — clone the
         // request fields onto fresh main-context allocations so the data is owned
@@ -4294,6 +4336,30 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     finalize_codegen_passes(&mut ctx, &worklist, &handler_info, &lower_result);
     let codegen_elapsed = blood_clock_millis() - codegen_start;
     eprint_str(" done\n");
+
+    // Abort build if codegen recorded a fatal diagnostic. Silent-miscompile
+    // guards (S104-B) escalate via `codegen_error_with_note_fatal`, which
+    // sets `ctx.has_fatal_codegen_error`. The IR contains a placeholder for
+    // the diagnosed expression but is otherwise valid; halting here ensures
+    // we do not write a binary that runs but produces wrong answers.
+    if ctx.has_fatal_codegen_error {
+        common.eprint_wrap_usize("\nerror: codegen produced ", ctx.codegen_errors.len(), " fatal diagnostic(s). Build aborted — no binary produced.\n");
+        for ei in 0usize..ctx.codegen_errors.len() {
+            let cge = &ctx.codegen_errors[ei];
+            eprint_str("  [");
+            eprint_str(codegen_ctx.error_kind_code(&cge.kind));
+            eprint_str("] ");
+            eprint_str(cge.message.as_str());
+            eprint_str("\n");
+            for ni in 0usize..cge.notes.len() {
+                eprint_str("    note: ");
+                eprint_str(cge.notes[ni].message.as_str());
+                eprint_str("\n");
+            }
+        }
+        destroy_compilation_regions(pass2_result.fn_temp_region, codegen_region, hir_region);
+        return false;
+    }
 
     // Split monolithic IR into per-module files (if requested).
     // Must happen before region destroys — ctx.fn_signatures are in codegen_region.
