@@ -1,0 +1,25 @@
+// Test: Option<T>.unwrap_or(default) inline. Closes S95's Option audit.
+// Pre-S95 this method was registered in typeck but had NO runtime, NO
+// declaration, NO emitter. Calling .unwrap_or(...) failed at llc with
+// `use of undefined value '@option_unwrap_or'`. S95 adds the full triad
+// (rt_option_unwrap_or runtime + declaration in codegen.blood + emitter
+// emit_option_unwrap_or_call mirroring emit_option_unwrap with extra
+// default-staging alloca).
+// EXPECT: some_or_99: 42
+// EXPECT: none_or_99: 99
+// EXPECT: some_or_42: 7
+// EXPECT: none_or_42: 42
+
+fn main() -> i32 {
+    let some_val: Option<i32> = Some(42);
+    let none_val: Option<i32> = None;
+
+    print("some_or_99: "); println_int(some_val.unwrap_or(99));
+    print("none_or_99: "); println_int(none_val.unwrap_or(99));
+
+    let s7: Option<i32> = Some(7);
+    let n: Option<i32> = None;
+    print("some_or_42: "); println_int(s7.unwrap_or(42));
+    print("none_or_42: "); println_int(n.unwrap_or(42));
+    0
+}

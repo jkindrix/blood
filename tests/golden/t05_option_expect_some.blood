@@ -1,0 +1,18 @@
+// Test: Option<T>.expect(msg) on Some — should not panic. Closes S95.
+// Pre-S95 this method was registered in typeck but had NO runtime, NO
+// declaration, NO emitter. Calling .expect(...) failed at llc with
+// `use of undefined value '@option_expect'`. S95 adds the full triad.
+// On Some, runtime copies payload to out (same as unwrap). On None it
+// writes "panic: <msg>\n" to stderr and aborts (covered by separate
+// EXPECT_EXIT golden).
+// EXPECT: got: 42
+// EXPECT: also: 7
+
+fn main() -> i32 {
+    let s: Option<i32> = Some(42);
+    print("got: "); println_int(s.expect("must not panic"));
+
+    let s7: Option<i32> = Some(7);
+    print("also: "); println_int(s7.expect("also fine"));
+    0
+}

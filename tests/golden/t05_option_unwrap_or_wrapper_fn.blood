@@ -1,0 +1,17 @@
+// Test: Option<T>.unwrap_or(default) through a non-generic wrapper.
+// Wrapper auto-refs &Option<T> to &&Option<T> in MIR; emit_operand_as_ptr
+// strips both ref layers down to the bare ptr the runtime expects.
+// EXPECT: w_some: 42
+// EXPECT: w_none: 99
+
+fn or_default(o: &Option<i32>, fallback: i32) -> i32 / pure {
+    o.unwrap_or(fallback)
+}
+
+fn main() -> i32 {
+    let s: Option<i32> = Some(42);
+    let n: Option<i32> = None;
+    print("w_some: "); println_int(or_default(&s, 99));
+    print("w_none: "); println_int(or_default(&n, 99));
+    0
+}
