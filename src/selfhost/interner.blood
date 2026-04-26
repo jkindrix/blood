@@ -26,7 +26,7 @@ pub struct StringInterner {
     /// Storage for interned strings (symbol index → string).
     strings: Vec<String>,
     /// Hash-based reverse lookup (string hash → symbol index).
-    /// Multiple strings may hash to the same value; we verify with str_equals.
+    /// Multiple strings may hash to the same value; we verify with ==
     hash_index: hashmap.HashMapU64U32,
 }
 
@@ -166,7 +166,7 @@ impl StringInterner {
         match self.hash_index.get(hash) {
             Option.Some(idx) => {
                 // Found a candidate - verify it's the same string (handle collisions)
-                if str_equals(&self.strings[idx as usize], s) {
+                if self.strings[idx as usize].as_str() == s {
                     return common.Symbol.new(idx);
                 }
                 // Hash collision - fall through to linear scan for this rare case
@@ -183,7 +183,7 @@ impl StringInterner {
         // Hash collision case: linear scan to find or add
         // This is rare with good hash function
         for i in 0usize..self.strings.len() {
-            if str_equals(&self.strings[i], s) {
+            if self.strings[i].as_str() == s {
                 return common.Symbol.new(i as u32);
             }
         }
@@ -242,7 +242,7 @@ impl StringInterner {
         match self.hash_index.get(hash) {
             Option.Some(idx) => {
                 // Verify it's the same string (handle collisions)
-                if str_equals(&self.strings[idx as usize], s) {
+                if self.strings[idx as usize].as_str() == s {
                     return Option.Some(common.Symbol.new(idx));
                 }
                 // Hash collision - fall through to linear scan
@@ -254,7 +254,7 @@ impl StringInterner {
 
         // Hash collision case: linear scan
         for i in 0usize..self.strings.len() {
-            if str_equals(&self.strings[i], s) {
+            if self.strings[i].as_str() == s {
                 return Option.Some(common.Symbol.new(i as u32));
             }
         }
@@ -469,27 +469,5 @@ pub fn resolve(symbol: common.Symbol) -> Option<&String> {
             &Option.None => Option.None,
         }
     }
-}
-
-// ============================================================
-// Helper Functions
-// ============================================================
-
-/// Compares a String with a &str for equality.
-fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-
-    if bytes.len() != other_bytes.len() {
-        return false;
-    }
-
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] {
-            return false;
-        }
-    }
-
-    true
 }
 

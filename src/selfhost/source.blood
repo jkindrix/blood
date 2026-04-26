@@ -167,7 +167,7 @@ impl SourceMap {
     /// Finds a file by path.
     pub fn find_by_path(self: &SourceMap, path: &str) -> Option<FileId> {
         for i in 0usize..self.files.len() {
-            if str_equals(&self.files[i].path, path) {
+            if self.files[i].path.as_str() == path {
                 return Option.Some(FileId.new(i as u32));
             }
         }
@@ -354,20 +354,3 @@ fn substring(s: &String, start: usize, end: usize) -> String {
     result
 }
 
-/// Compares a String with a &str for equality.
-fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-
-    if bytes.len() != other_bytes.len() {
-        return false;
-    }
-
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] {
-            return false;
-        }
-    }
-
-    true
-}

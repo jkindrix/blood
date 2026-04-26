@@ -402,7 +402,7 @@ impl Compiler {
                 // Dedup: skip if a mono function with the same name was already compiled
                 let mut already_compiled: bool = false;
                 for ci in 0usize..compiled_mono_names.len() {
-                    if str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
+                    if compiled_mono_names[ci].as_str() == req.fn_name.as_str() {
                         already_compiled = true;
                     }
                 }
@@ -1480,7 +1480,7 @@ fn has_main_function(lower_result: &hir_lower_ctx.LowerResult) -> bool {
         match &entry.item.kind {
             &hir_item.ItemKind.Fn(_) => {
                 let name = resolve_symbol(&lower_result.interner, entry.item.name.symbol);
-                if str_equals(&name, "main") {
+                if name.as_str() == "main" {
                     return true;
                 }
             }
@@ -1489,22 +1489,6 @@ fn has_main_function(lower_result: &hir_lower_ctx.LowerResult) -> bool {
     }
     false
 }
-
-/// Compares a String to a string literal for equality.
-fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-    if bytes.len() != other_bytes.len() {
-        return false;
-    }
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] {
-            return false;
-        }
-    }
-    true
-}
-
 
 /// Generates a function name from an index.
 pub fn make_fn_name(index: usize) -> String {

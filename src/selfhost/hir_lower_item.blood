@@ -26,16 +26,6 @@ mod type_intern;
 mod derive;
 mod interner;
 
-fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-    if bytes.len() != other_bytes.len() { return false; }
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] { return false; }
-    }
-    true
-}
-
 // ============================================================
 // Function Parameter Lowering
 // ============================================================
@@ -690,9 +680,9 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
         let attr = &f.attrs[ai];
         if attr.path.len() == 1 {
             let attr_name = ctx.span_to_string(attr.path[0].span);
-            if str_equals(&attr_name, "no_mangle") {
+            if attr_name.as_str() == "no_mangle" {
                 ctx.no_mangle_def_ids.push(def_id.index);
-            } else if str_equals(&attr_name, "export_name") {
+            } else if attr_name.as_str() == "export_name" {
                 // #[export_name = "custom_name"]
                 match &attr.args {
                     &Option.Some(ref args) => {
@@ -1035,7 +1025,7 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StaticDecl) {
         let attr = &s.attrs[ai];
         if attr.path.len() == 1 {
             let attr_name = ctx.span_to_string(attr.path[0].span);
-            if str_equals(&attr_name, "thread_local") {
+            if attr_name.as_str() == "thread_local" {
                 ctx.thread_local_def_ids.push(def_id.index);
             }
         }
