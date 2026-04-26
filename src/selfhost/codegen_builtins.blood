@@ -1764,6 +1764,26 @@ pub fn is_str_concat(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@str_concat")
 }
 
+pub fn is_str_is_empty(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_is_empty")
+}
+
+pub fn is_str_contains(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_contains")
+}
+
+pub fn is_str_starts_with(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_starts_with")
+}
+
+pub fn is_str_ends_with(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_ends_with")
+}
+
+pub fn is_str_as_bytes(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_as_bytes")
+}
+
 /// Helper: load a { ptr, i64 } fat pointer from a pointer operand.
 /// The generic call path for &str methods produces a pointer to the
 /// fat pointer alloca. This loads the actual { ptr, i64 } value.
@@ -1981,6 +2001,156 @@ pub fn emit_str_concat_call(
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_is_empty call. Runtime signature: i1 @str_is_empty({ ptr, i64 })
+pub fn emit_str_is_empty_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    let str_self = load_str_fat_ptr(ctx, &args[0]);
+    emit_str_gen_validation(ctx, &str_self);
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_is_empty");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_self);
+    ctx.end_call();
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
+
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Shared helper for str methods of shape ({ptr,i64} self, {ptr,i64} needle) -> i1.
+/// Three callers: contains, starts_with, ends_with — identical except runtime name.
+fn emit_str_bool_with_needle_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+    runtime_name: &str,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    let str_self = load_str_fat_ptr(ctx, &args[0]);
+    let str_needle = load_str_fat_ptr(ctx, &args[1]);
+
+    emit_str_gen_validation(ctx, &str_self);
+    emit_str_gen_validation(ctx, &str_needle);
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", runtime_name);
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_self);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &str_needle);
+    ctx.end_call();
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
+
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_contains call. Runtime: i1 @str_contains({ptr,i64}, {ptr,i64})
+pub fn emit_str_contains_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_str_bool_with_needle_call(ctx, args, destination, target, "@str_contains");
+}
+
+/// Emits a str_starts_with call. Same shape as str_contains.
+pub fn emit_str_starts_with_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_str_bool_with_needle_call(ctx, args, destination, target, "@str_starts_with");
+}
+
+/// Emits a str_ends_with call. Same shape as str_contains.
+pub fn emit_str_ends_with_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    emit_str_bool_with_needle_call(ctx, args, destination, target, "@str_ends_with");
+}
+
+/// Emits a str_as_bytes call. Runtime: { ptr, i64 } @str_as_bytes(ptr)
+/// Pre-S96 this worked by ABI accident through generic dispatch (gen ref's first
+/// 8 bytes happened to be the correct ptr-to-fat-str). The runtime keeps its
+/// ptr-to-fat-str ABI so seed-compiled code (which uses .as_bytes() heavily)
+/// stays working; this proper emitter loads the {ptr,i64} fat pointer, validates
+/// the gen, stages it in a fresh alloca, and passes the alloca ptr — no longer
+/// relying on the accident.
+pub fn emit_str_as_bytes_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    let str_self = load_str_fat_ptr(ctx, &args[0]);
+    emit_str_gen_validation(ctx, &str_self);
+
+    // Stage the {ptr,i64} on the stack so we can pass a ptr that the runtime
+    // can read 16 bytes from (matches the existing rt_str_as_bytes ABI).
+    let str_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&str_tmp, "{ ptr, i64 }");
+    ctx.emit_store_cg2("{ ptr, i64 }", &str_self, &str_tmp);
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@str_as_bytes");
+    ctx.call_arg_cg(true, "ptr", &str_tmp);
+    ctx.end_call();
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+
     match target {
         &Option.Some(t) => {
             let label = ctx.block_label_cg(t);

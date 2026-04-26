@@ -298,8 +298,95 @@ pub fn rt_string_as_bytes(s: *mut u8) -> FatStr {
     FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
 }
 
-// { ptr, i64 } @str_as_bytes(ptr) — &str is already { ptr, i64 }
-// Arg is ptr to the fat str on the stack
+// i1 @str_is_empty({ ptr, i64 })
+// &str is { ptr, i64 } passed by value (matches str_len/str_eq ABI).
+// Receiver's len may have gen packed in upper 32 bits — mask it.
+#[export_name = "str_is_empty"]
+pub fn rt_str_is_empty(s: &str) -> bool {
+    str_len(s) % 4294967296 == 0
+}
+
+// i1 @str_starts_with({ ptr, i64 } self, { ptr, i64 } needle)
+#[export_name = "str_starts_with"]
+pub fn rt_str_starts_with(s: &str, needle: &str) -> bool {
+    @unsafe {
+        let s_len: i64 = str_len(s) % 4294967296;
+        let n_len: i64 = str_len(needle) % 4294967296;
+        if n_len == 0 { return true; }
+        if n_len > s_len { return false; }
+        let s_addr: i64 = alloc.ptr_to_addr(s as *const u8 as *mut u8);
+        let n_addr: i64 = alloc.ptr_to_addr(needle as *const u8 as *mut u8);
+        let mut i: i64 = 0;
+        while i < n_len {
+            let a: u8 = ptr_read_u8((s_addr + i) as u64);
+            let b: u8 = ptr_read_u8((n_addr + i) as u64);
+            if a != b { return false; }
+            i = i + 1;
+        }
+        true
+    }
+}
+
+// i1 @str_ends_with({ ptr, i64 } self, { ptr, i64 } needle)
+#[export_name = "str_ends_with"]
+pub fn rt_str_ends_with(s: &str, needle: &str) -> bool {
+    @unsafe {
+        let s_len: i64 = str_len(s) % 4294967296;
+        let n_len: i64 = str_len(needle) % 4294967296;
+        if n_len == 0 { return true; }
+        if n_len > s_len { return false; }
+        let s_addr: i64 = alloc.ptr_to_addr(s as *const u8 as *mut u8);
+        let n_addr: i64 = alloc.ptr_to_addr(needle as *const u8 as *mut u8);
+        let offset: i64 = s_len - n_len;
+        let mut i: i64 = 0;
+        while i < n_len {
+            let a: u8 = ptr_read_u8((s_addr + offset + i) as u64);
+            let b: u8 = ptr_read_u8((n_addr + i) as u64);
+            if a != b { return false; }
+            i = i + 1;
+        }
+        true
+    }
+}
+
+// i1 @str_contains({ ptr, i64 } self, { ptr, i64 } needle)
+// Naive O(n*m) substring search. Empty needle matches anything.
+#[export_name = "str_contains"]
+pub fn rt_str_contains(s: &str, needle: &str) -> bool {
+    @unsafe {
+        let s_len: i64 = str_len(s) % 4294967296;
+        let n_len: i64 = str_len(needle) % 4294967296;
+        if n_len == 0 { return true; }
+        if n_len > s_len { return false; }
+        let s_addr: i64 = alloc.ptr_to_addr(s as *const u8 as *mut u8);
+        let n_addr: i64 = alloc.ptr_to_addr(needle as *const u8 as *mut u8);
+        let max_start: i64 = s_len - n_len;
+        let mut i: i64 = 0;
+        while i <= max_start {
+            let mut matched: bool = true;
+            let mut j: i64 = 0;
+            while j < n_len {
+                let a: u8 = ptr_read_u8((s_addr + i + j) as u64);
+                let b: u8 = ptr_read_u8((n_addr + j) as u64);
+                if a != b { matched = false; }
+                j = j + 1;
+            }
+            if matched { return true; }
+            i = i + 1;
+        }
+        false
+    }
+}
+
+// { ptr, i64 } @str_as_bytes(ptr) — &str is already { ptr, i64 }.
+// Arg is ptr to the fat str on the stack (kept ptr-style for two reasons:
+// 1) the seed's generic dispatch passes by-accident a `{ptr,i32}` gen ref
+//    whose first 8 bytes are the ptr-to-fat-str; switching this to by-value
+//    would crash any seed-compiled code that calls .as_bytes() — and selfhost
+//    source uses .as_bytes() in many places, so the seed must keep working.
+// 2) S96's emit_str_as_bytes_call routes through a proper alloca + ptr pass
+//    so first_gen-emitted IR is no longer by-accident.
+// Receiver's len may have gen packed in upper 32 bits — mask it.
 #[export_name = "str_as_bytes"]
 pub fn rt_str_as_bytes(fat_str: *mut u8) -> FatStr {
     @unsafe {
