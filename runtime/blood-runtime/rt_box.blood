@@ -85,6 +85,48 @@ pub fn rt_option_as_ref(opt: *mut u8, packed_size: i64, out: *mut u8) {
     }
 }
 
+// void @option_unwrap_or(ptr opt, i64 packed_size, ptr def_ptr, ptr out)
+//   On Some: copy elem_size bytes from opt+offset to out.
+//   On None: copy elem_size bytes from def_ptr to out.
+#[export_name = "option_unwrap_or"]
+pub fn rt_option_unwrap_or(opt: *mut u8, packed_size: i64, def_ptr: *mut u8, out: *mut u8) {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        let size: i64 = decode_payload_size(packed_size);
+        if tag != 0 {
+            let offset: i64 = decode_payload_offset(packed_size);
+            let data_addr: i64 = alloc.ptr_to_addr(opt) + offset;
+            libc.sys_memmove(out, alloc.addr_to_cptr(data_addr), size as u64);
+        } else {
+            libc.sys_memmove(out, alloc.addr_to_cptr(alloc.ptr_to_addr(def_ptr)), size as u64);
+        }
+    }
+}
+
+// void @option_expect(ptr opt, i64 packed_size, ptr msg_str, ptr out)
+//   msg_str = ptr to {ptr, i64} fat string (with gen-tracking bits in upper 32 of len).
+//   On Some: copy elem_size bytes from opt+offset to out.
+//   On None: write "panic: <msg>\n" to stderr and abort. Control does not return.
+#[export_name = "option_expect"]
+pub fn rt_option_expect(opt: *mut u8, packed_size: i64, msg_str: *mut u8, out: *mut u8) {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        if tag == 0 {
+            let msg_data: i64 = ptr_read_i64(alloc.ptr_to_addr(msg_str) as u64);
+            let msg_len: i64 = ptr_read_i64((alloc.ptr_to_addr(msg_str) + 8) as u64) % 4294967296;
+            print.eprint_str("panic: ");
+            libc.sys_write(libc.STDERR(), alloc.addr_to_cptr(msg_data) as *const u8, msg_len as u64);
+            let nl: u8 = 10;
+            libc.sys_write(libc.STDERR(), &nl as *const u8, 1);
+            libc.sys_abort();
+        }
+        let size: i64 = decode_payload_size(packed_size);
+        let offset: i64 = decode_payload_offset(packed_size);
+        let data_addr: i64 = alloc.ptr_to_addr(opt) + offset;
+        libc.sys_memmove(out, alloc.addr_to_cptr(data_addr), size as u64);
+    }
+}
+
 // i1 @str_eq({ptr, i64}, {ptr, i64}) — compare two &str by value
 #[export_name = "str_eq"]
 pub fn rt_str_eq(a: &str, b: &str) -> bool {

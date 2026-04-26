@@ -2008,6 +2008,14 @@ pub fn is_option_unwrap(func_val: &String) -> bool {
 }
 
 /// Checks if the function name is @option_as_ref.
+pub fn is_option_unwrap_or(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_unwrap_or")
+}
+
+pub fn is_option_expect(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_expect")
+}
+
 pub fn is_option_as_ref(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@option_as_ref")
 }
@@ -2317,6 +2325,141 @@ pub fn emit_option_unwrap_call(
     ctx.end_call();
 
     // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an option_unwrap_or call. Blood method
+/// `Option<T>.unwrap_or(&self, default: T) -> T` is dispatched via runtime
+/// `void @option_unwrap_or(ptr self, i64 packed_size, ptr default, ptr out)`
+/// using the same out-param ABI as option_unwrap. The default is staged into
+/// a stack alloca (mirrors emit_vec_push_call's stacksave/stackrestore brackets
+/// since the default's size depends on T and could be in a loop).
+///
+/// Pre-S95 this method was registered in typeck (typeck_driver.blood:3902)
+/// but had no runtime impl, no declaration, and no emitter — calling
+/// .unwrap_or(...) failed at llc with `use of undefined value '@option_unwrap_or'`.
+pub fn emit_option_unwrap_or_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Strip gen ref - FFI expects bare ptr.
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    // Element size from destination's HIR type (T).
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option.Some(ty_id) => codegen_size.type_size_with_ctx_id(ctx, ty_id),
+        Option.None => 8,
+    };
+    // Option payload always at offset 8 (i64-aligned).
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+    let elem_size_str = codegen_types.format_u64(packed_size);
+
+    // Stage default value in a stack alloca; bracket with stacksave/restore so
+    // the alloca doesn't accumulate across loop iterations.
+    let stack_save = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&stack_save);
+    ctx.write(" = call ptr @llvm.stacksave()\n");
+
+    let elem_size_only_str = codegen_types.format_u64(elem_size);
+    let default_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&default_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&elem_size_only_str);
+    ctx.write(" x i8], align 8\n");
+
+    let (default_val, default_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+    ctx.emit_store_str_cg(default_ty.as_str(), default_val.as_str(), &default_alloca);
+
+    // call void @option_unwrap_or(ptr self, i64 packed_size, ptr default, ptr out)
+    ctx.begin_call(Option.None, "void", "@option_unwrap_or");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &default_alloca);
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
+
+    ctx.write_indent();
+    ctx.write("call void @llvm.stackrestore(ptr ");
+    ctx.write_cgname(&stack_save);
+    ctx.write(")\n");
+
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an option_expect call. Blood method
+/// `Option<T>.expect(&self, msg: &str) -> T` is dispatched via runtime
+/// `void @option_expect(ptr self, i64 packed_size, ptr msg_str, ptr out)`.
+/// Same out-param ABI as option_unwrap. The msg &str is staged in an alloca
+/// (mirrors emit_string_push_str_call). On None the runtime writes
+/// "panic: <msg>\n" to stderr and aborts.
+///
+/// Pre-S95 this method was registered in typeck (typeck_driver.blood:3907)
+/// but had no runtime impl, no declaration, and no emitter — calling
+/// .expect(...) failed at llc with `use of undefined value '@option_expect'`.
+pub fn emit_option_expect_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Strip gen ref - FFI expects bare ptr.
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option.Some(ty_id) => codegen_size.type_size_with_ctx_id(ctx, ty_id),
+        Option.None => 8,
+    };
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+    let elem_size_str = codegen_types.format_u64(packed_size);
+
+    // Stage &str fat pointer in alloca (fixed 16-byte struct, no stacksave needed).
+    let (msg_val, _msg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+    let msg_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&msg_tmp, "{ ptr, i64 }");
+    ctx.emit_store_str_cg("{ ptr, i64 }", msg_val.as_str(), &msg_tmp);
+
+    // call void @option_expect(ptr self, i64 packed_size, ptr msg_str, ptr out)
+    ctx.begin_call(Option.None, "void", "@option_expect");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &msg_tmp);
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
+
     match target {
         &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
