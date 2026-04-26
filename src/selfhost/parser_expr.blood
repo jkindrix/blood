@@ -597,13 +597,11 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
             parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
             return parse_path_expr(parser);
         }
-        // Default expression - produces type's default value
+        // `default` is contextual (GRAMMAR.md §9.2): parse as an identifier path so a
+        // bound local (e.g. `fn f(default: i32) { default }`) resolves correctly.
+        // When unbound, HIR lowering falls back to the type-default expression.
         token.TokenKind.Default => {
-            parser.advance();
-            return ast.Expr {
-                kind: ast.ExprKind.Default,
-                span: start,
-            };
+            return parse_path_expr(parser);
         }
         token.TokenKind.Handle => {
             return parse_path_expr(parser);

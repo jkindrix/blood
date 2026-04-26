@@ -28,6 +28,20 @@ mod interner;
 // Name Suggestion (did-you-mean)
 // ============================================================
 
+fn str_equals(s: &String, other: &str) -> bool {
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+    if bytes.len() != other_bytes.len() {
+        return false;
+    }
+    for i in 0usize..bytes.len() {
+        if bytes[i] != other_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
 /// Computes Levenshtein edit distance between two byte slices.
 fn edit_distance(a: &[u8], b: &[u8]) -> u32 {
     let m = a.len();
@@ -646,8 +660,17 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
             );
         }
 
-        // Not found — try to suggest a similar name
         let attempted_str = ctx.span_to_string(seg.name.span);
+
+        // `default` is a contextual keyword: the parser routes it through path parsing
+        // so a bound local resolves above. When unbound, fall back to the type-default
+        // expression (e.g. `let x: i32 = default;`).
+        if str_equals(&attempted_str, "default") {
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
+            return hir_expr.Expr.new(hir_expr.ExprKind.Default, ty, span);
+        }
+
+        // Not found — try to suggest a similar name
         let suggestion = find_name_suggestion(ctx, attempted_str.as_str());
         if suggestion.len() > 0 {
             let mut msg = common.make_string("undefined name `");
