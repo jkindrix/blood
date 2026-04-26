@@ -528,6 +528,106 @@ fn try_emit_binop_string_eq(
     true
 }
 
+/// True if operand has type `&String` — exactly one Ref layer wrapping
+/// `Adt(String)`. Multi-layer refs (`&&String`, etc.) deliberately rejected:
+/// the codegen path here loads `{ ptr, i64, i64 }` from the fat ref's ptr
+/// field, which would be wrong for `&&String` (whose ptr points to a
+/// `{ ptr, i32 }` ref, not a String aggregate). Layered support can be added
+/// by chaining loads, but is out of scope for this fix.
+fn operand_is_string_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    if ctx.string_def_id == 0 { return false; }
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner = type_intern.unwrap_ref_id(id);
+            match type_intern.get_adt_def_id(inner) {
+                Option.Some(def_id) => def_id.index == ctx.string_def_id,
+                Option.None => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Builds a `{ ptr, i64 }` view from a `&String` fat ref (`{ ptr, i32 }`).
+/// Two-step deref: extract field 0 (ptr to the String alloca), load the
+/// underlying `{ ptr, i64, i64 }` String aggregate, then reuse S99's
+/// `extract_string_str_view` to drop the cap field. Mirrors S98's design
+/// decision to skip generation validation in the binop path — the runtime's
+/// `@str_eq` reads bytes through the data ptr, trusting the ref is live.
+fn extract_string_ref_str_view(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ref_val: &str,
+) -> codegen_ctx.CgName {
+    let alloca_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&alloca_ptr);
+    ctx.write(" = extractvalue { ptr, i32 } ");
+    ctx.write(ref_val);
+    ctx.write(", 0\n");
+    let string_val = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&string_val);
+    ctx.write(" = load { ptr, i64, i64 }, ptr ");
+    ctx.write_cgname(&alloca_ptr);
+    ctx.write("\n");
+    let string_val_str = cgname_to_string(&string_val);
+    extract_string_str_view(ctx, string_val_str.as_str())
+}
+
+/// Routes `&String == &String` and `&String != &String` through `@str_eq`.
+/// Same root cause as S99 (String == String) but operand shape differs:
+/// `&String` loads as a `{ ptr, i32 }` fat ref, not the `{ ptr, i64, i64 }`
+/// String aggregate. The default binop path extracts field 0 (the alloca
+/// address) and pointer-compares — always wrong because two distinct String
+/// allocations have distinct addresses regardless of content. Derefs each
+/// operand to load the underlying String, then dispatches via the same
+/// `extract_string_str_view` + `@str_eq` pipeline S99 introduced. Returns
+/// true if the binop was handled here; the caller should skip the default.
+fn try_emit_binop_string_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_string_ref(ctx, left) || !operand_is_string_ref(ctx, right) {
+        return false;
+    }
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_view = extract_string_ref_str_view(ctx, left_val.as_str());
+    let right_view = extract_string_ref_str_view(ctx, right_val.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &left_view);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &right_view);
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -705,6 +805,15 @@ pub fn emit_rvalue(
             // comparison instead. Builds { ptr, i64 } views and dispatches to
             // the same @str_eq runtime function.
             if try_emit_binop_string_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S100: extends the String-eq family to `&String` operands. Loaded
+            // value is `{ ptr, i32 }` (fat ref), not the String aggregate, so
+            // the default path pointer-compares two distinct alloca addresses.
+            // Derefs each operand to load the underlying String, then runs
+            // through the same @str_eq pipeline S99 set up.
+            if try_emit_binop_string_ref_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
