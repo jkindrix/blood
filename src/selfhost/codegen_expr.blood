@@ -1161,6 +1161,160 @@ fn try_emit_binop_vec_ref_eq(
     true
 }
 
+/// True if operand has a registered user-defined `eq` method (from
+/// `impl PartialEq for T` — hand-written or `#[derive(PartialEq)]`)
+/// AND the operand type is an Adt. Strips a single outer Ref so `T`
+/// (value) and `&T` (single-layer ref) both resolve to the same
+/// registered method. Multi-layer `&&T` falls through (mirrors S100/
+/// S103-B's single-layer choice for `&String`).
+///
+/// CRITICAL: The Adt gate excludes primitives even though stdlib's
+/// `impl PartialEq for i32 { fn eq(self, other) { *self == *other } }`
+/// (and friends) registers an eq method for every primitive. Without
+/// this gate, my dispatcher would route i32 == i32 inside the primitive
+/// eq body recursively into itself, causing infinite recursion at
+/// runtime. Primitives must always fall through to the default
+/// emit_binop_typed path (icmp/fcmp). Adt-typed operands (user structs/
+/// enums + builtin Adts not handled by S98-S103) are the legitimate
+/// targets of user-impl dispatch.
+fn operand_is_user_partial_eq(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            let stripped = if type_intern.is_ref_id(id) {
+                let inner = type_intern.unwrap_ref_id(id);
+                if type_intern.is_ref_id(inner) { return false; }
+                inner
+            } else {
+                id
+            };
+            match type_intern.get_adt_def_id(stripped) {
+                Option.Some(_) => {}
+                Option.None => { return false; }
+            }
+            match ctx.lookup_eq_method(stripped.index) {
+                Option.Some(_) => true,
+                Option.None => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Materializes an operand as a `{ ptr, i32 }` fat-ref suitable for passing
+/// to a user-defined `eq(self: &Self, other: &Self)` method. Returns the
+/// SSA name as a String for direct use in `call_arg_str`.
+///
+/// - `is_ref=true`: operand already loads as `{ ptr, i32 }` — pass through.
+/// - `is_ref=false`: spill to a fresh alloca, store the loaded value, build
+///   `{ ptr, i32 }` with gen=0. Stack-frame liveness guarantees the alloca
+///   is valid for the duration of the eq call. gen=0 makes the user's
+///   eq-side derefs skip stale-ref validation; codegen_place.blood:869-874
+///   documents the gen=0 sentinel for stack-allocated refs.
+fn build_user_eq_arg_str(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
+    is_ref: bool,
+) -> String {
+    let (val, ty) = emit_operand_typed(ctx, operand);
+    if is_ref {
+        return val;
+    }
+    let spill = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&spill);
+    ctx.write(" = alloca ");
+    ctx.write(ty.as_str());
+    ctx.write("\n");
+    ctx.write_indent();
+    ctx.write("store ");
+    ctx.write(ty.as_str());
+    ctx.write(" ");
+    ctx.write(val.as_str());
+    ctx.write(", ptr ");
+    ctx.write_cgname(&spill);
+    ctx.write("\n");
+    let step1 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&step1);
+    ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
+    ctx.write_cgname(&spill);
+    ctx.write(", 0\n");
+    let fat_ref = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&fat_ref);
+    ctx.write(" = insertvalue { ptr, i32 } ");
+    ctx.write_cgname(&step1);
+    ctx.write(", i32 0, 1\n");
+    cgname_to_string(&fat_ref)
+}
+
+/// Routes `==` / `!=` on a user-defined type with `impl PartialEq` to the
+/// user's `eq` method directly. Closes the S105 typeck/codegen UX gap where
+/// `derive(PartialEq) struct Point + p1 == p2` passes typeck (impl exists)
+/// but reaches codegen's S104-B fatal because the default binop path
+/// extracts only field 0 of a multi-field aggregate. After this dispatch:
+/// the user's `eq(self: &Self, other: &Self) -> bool` is called with both
+/// operands materialized as `{ ptr, i32 }` fat-refs. Single-layer ref only
+/// — multi-layer `&&T` falls through. Returns true if the binop was handled
+/// here; the caller should skip the default path.
+fn try_emit_binop_user_partial_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_user_partial_eq(ctx, left) || !operand_is_user_partial_eq(ctx, right) {
+        return false;
+    }
+    let left_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let is_ref = type_intern.is_ref_id(left_ty_id);
+    let stripped = if is_ref { type_intern.unwrap_ref_id(left_ty_id) } else { left_ty_id };
+    let method_def_id = match ctx.lookup_eq_method(stripped.index) {
+        Option.Some(d) => d,
+        Option.None => { return false; }
+    };
+    let eq_target = match ctx.lookup_def_name(method_def_id) {
+        Option.Some(n) => n,
+        Option.None => { return false; }
+    };
+    let left_arg = build_user_eq_arg_str(ctx, left, is_ref);
+    let right_arg = build_user_eq_arg_str(ctx, right, is_ref);
+    let mut symbol = common.make_string("@");
+    symbol.push_str(eq_target.as_str());
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", symbol.as_str());
+    ctx.call_arg_str(true, "{ ptr, i32 }", left_arg.as_str());
+    ctx.call_arg_str(false, "{ ptr, i32 }", right_arg.as_str());
+    ctx.end_call();
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1386,6 +1540,19 @@ pub fn emit_rvalue(
             // the same view-extract + @str_eq pipeline. Mirrors S100's split
             // between String value and `&String` ref handlers.
             if try_emit_binop_vec_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S106: dispatches `==` and `!=` on a user-defined type with an
+            // `impl PartialEq` (manual or `#[derive(PartialEq)]`). Looks up
+            // the user's `eq` method via the codegen registry; if present,
+            // materializes both operands as `{ ptr, i32 }` fat-refs and
+            // calls the method directly. Closes the S105 typeck/codegen UX
+            // gap where derived/manual PartialEq impls pass typeck but
+            // reach S104-B's fatal because the default binop path extracts
+            // only field 0 of a multi-field aggregate. Single-layer ref
+            // only.
+            if try_emit_binop_user_partial_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
@@ -2192,15 +2359,15 @@ pub fn emit_binop_typed(
         // sound for single-field wrappers (e.g. `{ i32 }` from
         // `struct Wrapper { x: i32 }`); for multi-field aggregates it
         // silently miscompiles equality by comparing only the first field.
-        // The S98–S103 dispatch chain in the BinaryOp Rvalue routes every
+        // The S98–S106 dispatch chain in the BinaryOp Rvalue routes every
         // known eq-family aggregate (str / String / &String / & &String /
-        // &[T] / Vec<T> / &Vec<T>) through @str_eq before reaching here.
-        // If a multi-field aggregate Eq/Ne arrives at this point the
-        // dispatcher missed it — almost always a missing entry for
-        // custom struct ==, fat-ref of custom type ==, Option/Result ==,
-        // closure ==, or a similar type whose equality must be defined
-        // by other means. Diagnose instead of falling through, so the
-        // silent miscompile surfaces as an error.
+        // &[T] / Vec<T> / &Vec<T>, plus user Adts with `impl PartialEq`)
+        // through their respective handlers before reaching here. If a
+        // multi-field aggregate Eq/Ne arrives at this point the dispatcher
+        // missed it — typically Option/Result ==, tuple ==, array ==,
+        // closure ==, HashMap ==, or a fat-ref of a user Adt that lacks
+        // `impl<T: PartialEq> PartialEq for &T`. Diagnose instead of falling
+        // through, so the silent miscompile surfaces as an error.
         let llvm_ty_string = common.make_string(llvm_ty);
         let n_fields = count_struct_fields(&llvm_ty_string);
         let is_eq_or_ne = match bin_op {
@@ -2212,7 +2379,7 @@ pub fn emit_binop_typed(
             let mut msg = common.make_string("equality on multi-field aggregate type `");
             msg.push_str(llvm_ty);
             msg.push_str("` is not supported (the default codegen path would silently compare only the first field)");
-            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. For Option/Result, use `match`. For custom structs, use `#[derive(PartialEq)]` and call `.eq()` explicitly. HashMap and closure equality are not implemented.");
+            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. User Adts with `impl PartialEq` (manual or `#[derive(PartialEq)]`) dispatch through the operator since S106. Remaining gaps: Option/Result == (use `match`), tuple ==, array ==, closure ==, HashMap ==, and fat-refs of user Adts (`&UserStruct == &UserStruct` requires a blanket `impl<T: PartialEq> PartialEq for &T` not yet in stdlib).");
             ctx.codegen_error_with_note_fatal(
                 codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                 msg,

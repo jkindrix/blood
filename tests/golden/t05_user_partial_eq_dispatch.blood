@@ -1,0 +1,91 @@
+// Test: codegen dispatch of `==` / `!=` on user-defined types with
+// `impl PartialEq` (manual or `#[derive(PartialEq)]`). S106 closes the
+// typeck/codegen gap left by S105 — `try_emit_binop_user_partial_eq` in
+// codegen_expr.blood materializes both operands as { ptr, i32 } fat-refs
+// and calls the user's eq method directly. The Adt gate excludes
+// primitives so stdlib's `impl PartialEq for i32` and friends do not
+// trigger infinite recursion via the operator.
+//
+// EXPECT: derive_struct_eq_match: 1
+// EXPECT: derive_struct_eq_mismatch: 0
+// EXPECT: derive_struct_ne_match: 0
+// EXPECT: derive_struct_ne_mismatch: 1
+// EXPECT: manual_struct_eq_match: 1
+// EXPECT: manual_struct_eq_mismatch: 0
+// EXPECT: manual_struct_ne_mismatch: 1
+// EXPECT: derive_enum_unit_match: 1
+// EXPECT: derive_enum_unit_mismatch: 0
+// EXPECT: derive_enum_payload_match: 1
+// EXPECT: derive_enum_payload_mismatch: 0
+// EXPECT: derive_enum_diff_variant: 0
+mod std;
+
+trait PartialEq {
+    fn eq(self: &Self, other: &Self) -> bool;
+}
+
+#[derive(PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+impl PartialEq for Pair {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.a == other.a && self.b == other.b
+    }
+}
+
+#[derive(PartialEq)]
+enum Color {
+    Red,
+    Gray(u32),
+    Rgb(u32, u32, u32),
+}
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn main() -> i32 {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 2 };
+    let p3 = Point { x: 9, y: 9 };
+    print_kv("derive_struct_eq_match", p1 == p2);
+    print_kv("derive_struct_eq_mismatch", p1 == p3);
+    print_kv("derive_struct_ne_match", p1 != p2);
+    print_kv("derive_struct_ne_mismatch", p1 != p3);
+
+    let q1 = Pair { a: 5, b: 7 };
+    let q2 = Pair { a: 5, b: 7 };
+    let q3 = Pair { a: 5, b: 99 };
+    print_kv("manual_struct_eq_match", q1 == q2);
+    print_kv("manual_struct_eq_mismatch", q1 == q3);
+    print_kv("manual_struct_ne_mismatch", q1 != q3);
+
+    let c1: Color = Color.Red;
+    let c2: Color = Color.Red;
+    let c3: Color = Color.Gray(128u32);
+    print_kv("derive_enum_unit_match", c1 == c2);
+    print_kv("derive_enum_unit_mismatch", c1 == c3);
+
+    let g1: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let g2: Color = Color.Rgb(10u32, 20u32, 30u32);
+    let g3: Color = Color.Rgb(10u32, 99u32, 30u32);
+    print_kv("derive_enum_payload_match", g1 == g2);
+    print_kv("derive_enum_payload_mismatch", g1 == g3);
+    print_kv("derive_enum_diff_variant", c1 == g1);
+
+    0
+}
