@@ -1,0 +1,35 @@
+// Test: Vec.insert with a multi-field struct element. Verifies the runtime
+// shifts elem_size bytes (Point = 8 bytes) per slot during the trailing-right
+// memmove, and that the staged elem_alloca (24-byte vec_push pattern doesn't
+// apply here — the alloca is sized by elem_ty) holds the full struct value
+// before being copied into the gap.
+// EXPECT: rs0_x: 1
+// EXPECT: rs1_x: 99
+// EXPECT: rs2_x: 2
+// EXPECT: rs2_y: 20
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mut v: Vec<Point> = Vec.new();
+    v.push(Point { x: 1, y: 10 });
+    v.push(Point { x: 2, y: 20 });
+    v.push(Point { x: 3, y: 30 });
+
+    // Insert {99, 999} at idx 1: v becomes
+    // [{1,10}, {99,999}, {2,20}, {3,30}].
+    v.insert(1, Point { x: 99, y: 999 });
+
+    match v.get(0) { Option.Some(p) => { print("rs0_x: "); println_int(p.x); } Option.None => { println("NONE"); } }
+    match v.get(1) { Option.Some(p) => { print("rs1_x: "); println_int(p.x); } Option.None => { println("NONE"); } }
+    // Confirm the original {2, 20} at the new index 2 — verifies the shift
+    // moved the full 8-byte struct, not just the first field.
+    match v.get(2) { Option.Some(p) => {
+        print("rs2_x: "); println_int(p.x);
+        print("rs2_y: "); println_int(p.y);
+    } Option.None => { println("NONE"); } }
+    0
+}

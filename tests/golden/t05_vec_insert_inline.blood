@@ -1,0 +1,44 @@
+// Test: Vec.insert inline in main. Closes S93 — pre-S93 the runtime symbol
+// `@vec_insert` was not declared and llc failed with `use of undefined value`.
+// S93 adds the runtime (with vec_ensure_cap re-fetch after potential realloc)
+// plus `emit_vec_insert_call` which stages the element in a stack alloca
+// (mirroring vec_push) and calls `void @vec_insert(ptr v, i64 idx, ptr elem,
+// i64 elem_size)`. Tests middle-insert, front-insert, and idx==len append.
+// EXPECT: len: 3
+// EXPECT: v[0]: 10
+// EXPECT: v[1]: 20
+// EXPECT: v[2]: 30
+// EXPECT: v[0]b: 5
+// EXPECT: v[3]b: 30
+// EXPECT: len2: 5
+// EXPECT: v[4]: 99
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(10);
+    v.push(30);
+
+    // Middle insert: v becomes [10, 20, 30].
+    v.insert(1, 20);
+    print("len: "); println_int(v.len() as i32);
+    print("v[0]: ");
+    match v.get(0) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+    print("v[1]: ");
+    match v.get(1) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+    print("v[2]: ");
+    match v.get(2) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+
+    // Front insert: v becomes [5, 10, 20, 30].
+    v.insert(0, 5);
+    print("v[0]b: ");
+    match v.get(0) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+    print("v[3]b: ");
+    match v.get(3) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+
+    // idx == len append: v becomes [5, 10, 20, 30, 99].
+    v.insert(4, 99);
+    print("len2: "); println_int(v.len() as i32);
+    print("v[4]: ");
+    match v.get(4) { Option.Some(x) => println_int(*x), Option.None => println("NONE"), }
+    0
+}

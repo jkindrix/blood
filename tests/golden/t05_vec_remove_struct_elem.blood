@@ -1,0 +1,39 @@
+// Test: Vec.remove with a multi-field struct element. Verifies the runtime
+// memmoves elem_size bytes (computed from the receiver type, not a hardcoded
+// 8) into the destination. Point is 8 bytes (two i32 fields) so an incorrect
+// elem_size derivation would corrupt the struct.
+// EXPECT: x: 30
+// EXPECT: y: 40
+// EXPECT: rem_len: 2
+// EXPECT: head_x: 10
+// EXPECT: head_y: 20
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let mut v: Vec<Point> = Vec.new();
+    v.push(Point { x: 10, y: 20 });
+    v.push(Point { x: 30, y: 40 });
+    v.push(Point { x: 50, y: 60 });
+
+    // Remove the middle element.
+    let p: Point = v.remove(1);
+    print("x: "); println_int(p.x);
+    print("y: "); println_int(p.y);
+    print("rem_len: "); println_int(v.len() as i32);
+
+    // Remaining: [{10,20}, {50,60}] — verify shift was correct.
+    match v.get(0) {
+        Option.Some(q) => {
+            print("head_x: "); println_int(q.x);
+            print("head_y: "); println_int(q.y);
+        }
+        Option.None => {
+            println("NONE");
+        }
+    }
+    0
+}
