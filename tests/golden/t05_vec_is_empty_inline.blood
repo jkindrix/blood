@@ -1,0 +1,25 @@
+// Test: Vec.is_empty inline in main. Closes S94's vec_is_empty cleanup.
+// Pre-S94, vec_is_empty had no dedicated emitter — generic dispatch emitted
+// `call i1 @vec_is_empty({ ptr, i32 } %recv)` against the runtime's
+// `i32 @vec_is_empty(ptr)` declaration. That worked by ABI accident
+// (trailing bytes ignored at C ABI; i32 -> i1 truncation safe for 0/1).
+// S94 adds the dedicated emitter so the call shape now matches the runtime
+// declaration exactly. Verifies empty Vec, after-push, and after-clear.
+// EXPECT: empty: true
+// EXPECT: after_push: false
+// EXPECT: after_clear: true
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    print("empty: ");
+    if v.is_empty() { println("true"); } else { println("false"); }
+
+    v.push(42);
+    print("after_push: ");
+    if v.is_empty() { println("true"); } else { println("false"); }
+
+    v.clear();
+    print("after_clear: ");
+    if v.is_empty() { println("true"); } else { println("false"); }
+    0
+}
