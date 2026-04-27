@@ -1,0 +1,106 @@
+// Test: codegen dispatch of `==` and `!=` on `&Tuple` types. S108
+// closes the typeck-accepted ref-shape companion to S107's value-shape
+// tuple eq. `try_emit_binop_tuple_ref_eq` derefs the `{ ptr, i32 }` fat
+// ref to load the inner Tuple aggregate, then routes through S107's
+// existing `emit_tuple_eq_typed`. Pre-S108 this hit S104-B's fatal
+// because the default codegen path treats `{ ptr, i32 }` as a multi-
+// field aggregate.
+//
+// EXPECT: ref_pair_eq_match: 1
+// EXPECT: ref_pair_eq_mismatch_field0: 0
+// EXPECT: ref_pair_eq_mismatch_field1: 0
+// EXPECT: ref_pair_ne_match: 0
+// EXPECT: ref_pair_ne_mismatch: 1
+// EXPECT: ref_triple_eq_match: 1
+// EXPECT: ref_triple_eq_mismatch: 0
+// EXPECT: ref_mixed_eq_match: 1
+// EXPECT: ref_mixed_eq_mismatch_bool: 0
+// EXPECT: ref_mixed_eq_mismatch_int: 0
+// EXPECT: ref_hetero_widths_eq_match: 1
+// EXPECT: ref_hetero_widths_eq_mismatch: 0
+// EXPECT: ref_nested_tuple_eq_match: 1
+// EXPECT: ref_nested_tuple_eq_mismatch_inner: 0
+// EXPECT: ref_nested_tuple_eq_mismatch_outer: 0
+// EXPECT: ref_fn_param_eq_match: 1
+// EXPECT: ref_fn_param_eq_mismatch: 0
+mod std;
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn ref_pair_arg_eq(a: &(i32, i32), b: &(i32, i32)) -> bool {
+    a == b
+}
+
+fn main() -> i32 {
+    let p1: (i32, i32) = (1, 2);
+    let p2: (i32, i32) = (1, 2);
+    let p3: (i32, i32) = (9, 2);
+    let p4: (i32, i32) = (1, 9);
+    let rp1: &(i32, i32) = &p1;
+    let rp2: &(i32, i32) = &p2;
+    let rp3: &(i32, i32) = &p3;
+    let rp4: &(i32, i32) = &p4;
+    print_kv("ref_pair_eq_match", rp1 == rp2);
+    print_kv("ref_pair_eq_mismatch_field0", rp1 == rp3);
+    print_kv("ref_pair_eq_mismatch_field1", rp1 == rp4);
+    print_kv("ref_pair_ne_match", rp1 != rp2);
+    print_kv("ref_pair_ne_mismatch", rp1 != rp3);
+
+    let t1: (i32, i32, i32) = (1, 2, 3);
+    let t2: (i32, i32, i32) = (1, 2, 3);
+    let t3: (i32, i32, i32) = (1, 2, 9);
+    let rt1: &(i32, i32, i32) = &t1;
+    let rt2: &(i32, i32, i32) = &t2;
+    let rt3: &(i32, i32, i32) = &t3;
+    print_kv("ref_triple_eq_match", rt1 == rt2);
+    print_kv("ref_triple_eq_mismatch", rt1 == rt3);
+
+    let m1: (bool, i32) = (true, 42);
+    let m2: (bool, i32) = (true, 42);
+    let m3: (bool, i32) = (false, 42);
+    let m4: (bool, i32) = (true, 99);
+    let rm1: &(bool, i32) = &m1;
+    let rm2: &(bool, i32) = &m2;
+    let rm3: &(bool, i32) = &m3;
+    let rm4: &(bool, i32) = &m4;
+    print_kv("ref_mixed_eq_match", rm1 == rm2);
+    print_kv("ref_mixed_eq_mismatch_bool", rm1 == rm3);
+    print_kv("ref_mixed_eq_mismatch_int", rm1 == rm4);
+
+    let h1: (i64, u8, i32) = (10000000000i64, 7u8, 100);
+    let h2: (i64, u8, i32) = (10000000000i64, 7u8, 100);
+    let h3: (i64, u8, i32) = (10000000000i64, 7u8, 999);
+    let rh1: &(i64, u8, i32) = &h1;
+    let rh2: &(i64, u8, i32) = &h2;
+    let rh3: &(i64, u8, i32) = &h3;
+    print_kv("ref_hetero_widths_eq_match", rh1 == rh2);
+    print_kv("ref_hetero_widths_eq_mismatch", rh1 == rh3);
+
+    let n1: ((i32, i32), i32) = ((1, 2), 3);
+    let n2: ((i32, i32), i32) = ((1, 2), 3);
+    let n3: ((i32, i32), i32) = ((1, 9), 3);
+    let n4: ((i32, i32), i32) = ((1, 2), 9);
+    let rn1: &((i32, i32), i32) = &n1;
+    let rn2: &((i32, i32), i32) = &n2;
+    let rn3: &((i32, i32), i32) = &n3;
+    let rn4: &((i32, i32), i32) = &n4;
+    print_kv("ref_nested_tuple_eq_match", rn1 == rn2);
+    print_kv("ref_nested_tuple_eq_mismatch_inner", rn1 == rn3);
+    print_kv("ref_nested_tuple_eq_mismatch_outer", rn1 == rn4);
+
+    let a: (i32, i32) = (5, 7);
+    let b: (i32, i32) = (5, 7);
+    let c: (i32, i32) = (5, 8);
+    print_kv("ref_fn_param_eq_match", ref_pair_arg_eq(&a, &b));
+    print_kv("ref_fn_param_eq_mismatch", ref_pair_arg_eq(&a, &c));
+
+    0
+}

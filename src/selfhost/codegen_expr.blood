@@ -1645,6 +1645,179 @@ fn try_emit_binop_array_eq(
     true
 }
 
+/// True if operand is `&Tuple` — exactly one Ref layer wrapping a Tuple
+/// of >= 2 elements. Mutually exclusive with `operand_is_tuple_value`
+/// (which requires the operand type itself be Tuple, not Ref). Mirrors
+/// S100's String value/ref split per the predicate-split rule:
+/// `operand_ty_id` does NOT follow Place projections, so `&Tuple` and
+/// `Tuple` need separate predicates and dispatchers.
+fn operand_is_tuple_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner = type_intern.unwrap_ref_id(id);
+            match type_intern.type_interner().get(inner) {
+                &type_intern.InternedTypeKind.Tuple(list_id) => {
+                    type_intern.type_interner().ty_list_len(list_id) >= 2
+                }
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// True if operand is `&[T; N]` — exactly one Ref layer wrapping an
+/// Array. Mutually exclusive with `operand_is_array_value`.
+fn operand_is_array_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner = type_intern.unwrap_ref_id(id);
+            match type_intern.type_interner().get(inner) {
+                &type_intern.InternedTypeKind.Array { element: _, size: _ } => true,
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Loads an inner aggregate value from a `{ ptr, i32 }` fat ref. Two-step
+/// deref: extract field 0 (ptr to the inner alloca), then load the
+/// underlying aggregate. Used by S108's `&Tuple` / `&Array` dispatchers
+/// to materialize the value before reusing S107's `emit_tuple_eq_typed`
+/// / `emit_array_eq_typed`. `inner_llvm_ty` must be the LLVM type string
+/// of the inner aggregate (e.g. `"{ i32, i32 }"` or `"[3 x i32]"`).
+fn extract_aggregate_ref_value(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ref_val: &str,
+    inner_llvm_ty: &str,
+) -> codegen_ctx.CgName {
+    let alloca_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&alloca_ptr);
+    ctx.write(" = extractvalue { ptr, i32 } ");
+    ctx.write(ref_val);
+    ctx.write(", 0\n");
+    let loaded = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&loaded);
+    ctx.write(" = load ");
+    ctx.write(inner_llvm_ty);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&alloca_ptr);
+    ctx.write("\n");
+    loaded
+}
+
+/// Routes `==` and `!=` on a `&Tuple` to per-element equality after
+/// dereferencing. Mirrors `try_emit_binop_tuple_eq` (S107) with one
+/// extra deref step: extracts the alloca ptr from the `{ ptr, i32 }`
+/// fat ref, loads the inner Tuple aggregate, then invokes S107's
+/// `emit_tuple_eq_typed` with the unwrapped inner ty_id. Closes the
+/// typeck-accepted `&Tuple == &Tuple` shape that previously hit S104-B's
+/// fatal because the default path extracts only field 0 of the
+/// `{ ptr, i32 }` fat ref. Single-layer only — `& &Tuple` falls through.
+fn try_emit_binop_tuple_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_tuple_ref(ctx, left) || !operand_is_tuple_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_tuple_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
+/// Routes `==` and `!=` on a `&[T; N]` to per-index equality after
+/// dereferencing. Mirrors `try_emit_binop_array_eq` (S107) with one
+/// extra deref step. Single-layer only — `& &[T; N]` falls through.
+fn try_emit_binop_array_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_array_ref(ctx, left) || !operand_is_array_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_array_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1896,11 +2069,26 @@ pub fn emit_rvalue(
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
+            // S108: `&Tuple == &Tuple` mirror with one Ref unwrap. The
+            // fat-ref `{ ptr, i32 }` derefs to the tuple aggregate before
+            // reusing S107's emit_tuple_eq_typed pipeline. Matches the
+            // S99/S100 String value/ref split convention.
+            if try_emit_binop_tuple_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
             // S107: array `[T; N] == ..` and `!=`. Pre-S107 the default
             // path's aggregate guard checks `{` not `[`, so `[N x T]`
             // reached `icmp eq [N x T]` and llc rejected. This dispatcher
             // mirrors tuple_eq with index-based extractvalue.
             if try_emit_binop_array_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S108: `&[T; N] == &[T; N]` mirror with one Ref unwrap.
+            // Same Ref-deref step as tuple_ref_eq, then reuses S107's
+            // emit_array_eq_typed pipeline.
+            if try_emit_binop_array_ref_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }
@@ -2707,15 +2895,18 @@ pub fn emit_binop_typed(
         // sound for single-field wrappers (e.g. `{ i32 }` from
         // `struct Wrapper { x: i32 }`); for multi-field aggregates it
         // silently miscompiles equality by comparing only the first field.
-        // The S98–S106 dispatch chain in the BinaryOp Rvalue routes every
+        // The S98–S108 dispatch chain in the BinaryOp Rvalue routes every
         // known eq-family aggregate (str / String / &String / & &String /
-        // &[T] / Vec<T> / &Vec<T>, plus user Adts with `impl PartialEq`)
-        // through their respective handlers before reaching here. If a
+        // &[T] / Vec<T> / &Vec<T>, plus user Adts with `impl PartialEq`,
+        // plus value- and single-ref-shape tuples and arrays) through
+        // their respective handlers before reaching here. If a
         // multi-field aggregate Eq/Ne arrives at this point the dispatcher
-        // missed it — typically Option/Result ==, tuple ==, array ==,
-        // closure ==, HashMap ==, or a fat-ref of a user Adt that lacks
-        // `impl<T: PartialEq> PartialEq for &T`. Diagnose instead of falling
-        // through, so the silent miscompile surfaces as an error.
+        // missed it — typically Option/Result ==, tuple/array of aggregate
+        // elements (str/String/Vec/&UserAdt), closure ==, HashMap ==,
+        // multi-layer refs (`& &Tuple`, `& &[T; N]`), or a fat-ref of a
+        // user Adt that lacks `impl<T: PartialEq> PartialEq for &T`.
+        // Diagnose instead of falling through, so the silent miscompile
+        // surfaces as an error.
         let llvm_ty_string = common.make_string(llvm_ty);
         let n_fields = count_struct_fields(&llvm_ty_string);
         let is_eq_or_ne = match bin_op {
@@ -2727,7 +2918,7 @@ pub fn emit_binop_typed(
             let mut msg = common.make_string("equality on multi-field aggregate type `");
             msg.push_str(llvm_ty);
             msg.push_str("` is not supported (the default codegen path would silently compare only the first field)");
-            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. User Adts with `impl PartialEq` (manual or `#[derive(PartialEq)]`) dispatch through the operator since S106. Remaining gaps: Option/Result == (use `match`), tuple ==, array ==, closure ==, HashMap ==, and fat-refs of user Adts (`&UserStruct == &UserStruct` requires a blanket `impl<T: PartialEq> PartialEq for &T` not yet in stdlib).");
+            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. User Adts with `impl PartialEq` (manual or `#[derive(PartialEq)]`) dispatch through the operator since S106. Tuples and arrays (value or single-ref shape) with primitive or nested Tuple/Array elements dispatch since S107/S108. Remaining gaps: Option/Result == (use `match`), tuple/array of aggregate elements (str/String/Vec/&UserAdt), closure ==, HashMap ==, multi-layer refs (`& &Tuple`, `& &[T; N]`), and fat-refs of user Adts (`&UserStruct == &UserStruct` requires a blanket `impl<T: PartialEq> PartialEq for &T` not yet in stdlib).");
             ctx.codegen_error_with_note_fatal(
                 codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                 msg,
