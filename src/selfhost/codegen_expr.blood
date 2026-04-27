@@ -1684,6 +1684,30 @@ fn operand_is_tuple_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Op
     }
 }
 
+/// True if operand is `& &Tuple` — exactly two Ref layers wrapping a Tuple
+/// of >= 2 elements. Mutually exclusive with `operand_is_tuple_ref` (which
+/// requires the inner be Tuple, not another Ref) and `operand_is_tuple_value`
+/// (which requires no Ref layers). Three-or-more-layer refs (`& & &Tuple`)
+/// fall through and reach S104-B's fatal — closing those is an S111+
+/// follow-on mirroring this pattern recursively.
+fn operand_is_tuple_ref_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner1 = type_intern.unwrap_ref_id(id);
+            if !type_intern.is_ref_id(inner1) { return false; }
+            let inner2 = type_intern.unwrap_ref_id(inner1);
+            match type_intern.type_interner().get(inner2) {
+                &type_intern.InternedTypeKind.Tuple(list_id) => {
+                    type_intern.type_interner().ty_list_len(list_id) >= 2
+                }
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
 /// True if operand is `&[T; N]` — exactly one Ref layer wrapping an
 /// Array. Mutually exclusive with `operand_is_array_value`.
 fn operand_is_array_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
@@ -1692,6 +1716,25 @@ fn operand_is_array_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Op
             if !type_intern.is_ref_id(id) { return false; }
             let inner = type_intern.unwrap_ref_id(id);
             match type_intern.type_interner().get(inner) {
+                &type_intern.InternedTypeKind.Array { element: _, size: _ } => true,
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// True if operand is `& &[T; N]` — exactly two Ref layers wrapping an
+/// Array. Mutually exclusive with `operand_is_array_ref` and
+/// `operand_is_array_value`.
+fn operand_is_array_ref_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner1 = type_intern.unwrap_ref_id(id);
+            if !type_intern.is_ref_id(inner1) { return false; }
+            let inner2 = type_intern.unwrap_ref_id(inner1);
+            match type_intern.type_interner().get(inner2) {
                 &type_intern.InternedTypeKind.Array { element: _, size: _ } => true,
                 _ => false,
             }
@@ -1726,6 +1769,36 @@ fn extract_aggregate_ref_value(
     ctx.write_cgname(&alloca_ptr);
     ctx.write("\n");
     loaded
+}
+
+/// Three-step deref helper for `& &T` where T is a tuple, array, or builtin
+/// enum. Mirrors S103-B's `extract_string_ref_ref_str_view` but produces a
+/// loaded aggregate value instead of a `{ ptr, i64 }` view. Outer fat ref
+/// `{ ptr, i32 }` field 0 addresses the inner fat ref's alloca; loading
+/// `{ ptr, i32 }` from there yields the inner ref SSA, which is then chained
+/// into S108's `extract_aggregate_ref_value` to load the inner aggregate via
+/// the inner ref's data ptr. Used by the S110 `& &Tuple` / `& &[T;N]` /
+/// `& &Option<T>` / `& &Result<T,E>` dispatchers. `inner_llvm_ty` must be
+/// the LLVM type string of the *inner aggregate* (not the inner ref).
+fn extract_aggregate_ref_ref_value(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ref_ref_val: &str,
+    inner_llvm_ty: &str,
+) -> codegen_ctx.CgName {
+    let inner_ref_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&inner_ref_alloca);
+    ctx.write(" = extractvalue { ptr, i32 } ");
+    ctx.write(ref_ref_val);
+    ctx.write(", 0\n");
+    let inner_ref_val = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&inner_ref_val);
+    ctx.write(" = load { ptr, i32 }, ptr ");
+    ctx.write_cgname(&inner_ref_alloca);
+    ctx.write("\n");
+    let inner_ref_val_str = cgname_to_string(&inner_ref_val);
+    extract_aggregate_ref_value(ctx, inner_ref_val_str.as_str(), inner_llvm_ty)
 }
 
 /// Routes `==` and `!=` on a `&Tuple` to per-element equality after
@@ -1770,6 +1843,65 @@ fn try_emit_binop_tuple_ref_eq(
     let left_loaded_str = cgname_to_string(&left_loaded);
     let right_loaded_str = cgname_to_string(&right_loaded);
     let result = emit_tuple_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
+/// Routes `==` and `!=` on `& &Tuple` to per-element equality after two
+/// dereferences. Mirrors `try_emit_binop_tuple_ref_eq` (S108) with one
+/// extra deref step: extracts the alloca ptr from the outer `{ ptr, i32 }`
+/// fat ref, loads the inner `{ ptr, i32 }` ref, then chains into S108's
+/// `extract_aggregate_ref_value` to load the inner Tuple aggregate. After
+/// that, invokes S107's `emit_tuple_eq_typed` with the unwrapped Tuple
+/// ty_id. Closes the typeck-accepted `& &Tuple == & &Tuple` shape that
+/// previously hit S104-B's fatal because the default path extracts only
+/// field 0 of the outer `{ ptr, i32 }` fat ref. Single pair of layers only
+/// — `& & &Tuple` falls through.
+fn try_emit_binop_tuple_ref_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_tuple_ref_ref(ctx, left) || !operand_is_tuple_ref_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner1_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner2_ty_id = type_intern.unwrap_ref_id(inner1_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner2_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_tuple_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner2_ty_id);
     if is_eq {
         ctx.emit_store_cg("i1", &result, dest);
     } else {
@@ -1835,6 +1967,59 @@ fn try_emit_binop_array_ref_eq(
     true
 }
 
+/// Routes `==` and `!=` on `& &[T; N]` to per-index equality after two
+/// dereferences. Mirrors `try_emit_binop_array_ref_eq` (S108) with one
+/// extra deref step. Single pair of layers only — `& & &[T; N]` falls
+/// through.
+fn try_emit_binop_array_ref_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_array_ref_ref(ctx, left) || !operand_is_array_ref_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner1_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner2_ty_id = type_intern.unwrap_ref_id(inner1_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner2_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_array_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner2_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// True if operand has type Adt that is the builtin Option<T> or Result<T,E>.
 /// Mutually exclusive with `operand_is_enum_ref` via the leading is_ref check.
 /// User-defined enums with `derive(PartialEq)` are NOT matched here — those
@@ -1868,6 +2053,29 @@ fn operand_is_enum_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Ope
             let inner = type_intern.unwrap_ref_id(id);
             if type_intern.is_ref_id(inner) { return false; }
             let def_id = match type_intern.get_adt_def_id(inner) {
+                Option.Some(d) => d,
+                Option.None => { return false; }
+            };
+            (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id)
+        }
+        Option.None => false,
+    }
+}
+
+/// True if operand is `& &Option<T>` or `& &Result<T,E>` — exactly two Ref
+/// layers wrapping a builtin enum. Mutually exclusive with
+/// `operand_is_enum_ref` and `operand_is_enum_value`. Three-or-more-layer
+/// refs (`& & &Option<T>`) fall through to S104-B's fatal.
+fn operand_is_enum_ref_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner1 = type_intern.unwrap_ref_id(id);
+            if !type_intern.is_ref_id(inner1) { return false; }
+            let inner2 = type_intern.unwrap_ref_id(inner1);
+            if type_intern.is_ref_id(inner2) { return false; }
+            let def_id = match type_intern.get_adt_def_id(inner2) {
                 Option.Some(d) => d,
                 Option.None => { return false; }
             };
@@ -2225,6 +2433,59 @@ fn try_emit_binop_enum_ref_eq(
     true
 }
 
+/// Routes `==` and `!=` on `& &Option<T>` / `& &Result<T,E>` to per-variant
+/// equality compare after two dereferences. Mirrors `try_emit_binop_enum_ref_eq`
+/// (S109) with one extra deref step. Single pair of layers only —
+/// `& & &Option<T>` falls through.
+fn try_emit_binop_enum_ref_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_enum_ref_ref(ctx, left) || !operand_is_enum_ref_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner1_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner2_ty_id = type_intern.unwrap_ref_id(inner1_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner2_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_enum_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner2_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -2516,6 +2777,28 @@ pub fn emit_rvalue(
             // Same Ref-deref step as tuple_ref_eq, then reuses S107's
             // emit_array_eq_typed pipeline.
             if try_emit_binop_array_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S110: `& &Option<T>` / `& &Result<T,E>` mirror with two Ref
+            // unwraps. Outer `{ ptr, i32 }` field 0 addresses the inner ref's
+            // alloca; load `{ ptr, i32 }` to recover the inner ref SSA, then
+            // chain into emit_enum_eq_typed via extract_aggregate_ref_value.
+            if try_emit_binop_enum_ref_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S110: `& &Tuple == & &Tuple` mirror with two Ref unwraps.
+            // Same outer/inner deref pattern, then reuses S107's
+            // emit_tuple_eq_typed pipeline.
+            if try_emit_binop_tuple_ref_ref_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S110: `& &[T; N] == & &[T; N]` mirror with two Ref unwraps.
+            // Same outer/inner deref pattern, then reuses S107's
+            // emit_array_eq_typed pipeline.
+            if try_emit_binop_array_ref_ref_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }

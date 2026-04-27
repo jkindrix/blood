@@ -1,0 +1,203 @@
+// Test: codegen dispatch of `==` and `!=` on `& &Tuple`, `& &[T; N]`,
+// `& &Option<T>`, and `& &Result<T, E>`. S105 auto-derives PartialEq for
+// refs of PartialEq types recursively, so two-layer refs typeck-accept.
+// Pre-S110 the multi-layer ref reached S104-B's fatal because the existing
+// single-ref dispatchers (S108 tuple_ref / array_ref, S109 enum_ref)
+// require exactly one Ref layer. S110's `try_emit_binop_*_ref_ref_eq`
+// dispatchers extract the alloca ptr from the outer `{ ptr, i32 }` fat
+// ref, load the inner `{ ptr, i32 }` ref SSA, then chain into S108's
+// `extract_aggregate_ref_value` to load the inner aggregate, and finally
+// reuse S107 / S109's value-shape dispatchers (`emit_tuple_eq_typed`,
+// `emit_array_eq_typed`, `emit_enum_eq_typed`) with the unwrapped inner
+// ty_id. Single pair of layers only — `& & &T` falls through.
+//
+// EXPECT: tup_inline_eq: 1
+// EXPECT: tup_inline_neq: 0
+// EXPECT: tup_inline_ne: 1
+// EXPECT: tup_param_eq: 1
+// EXPECT: tup_param_neq: 0
+// EXPECT: tup_param_ne: 1
+// EXPECT: tup_three_eq: 1
+// EXPECT: tup_three_neq_last: 0
+// EXPECT: arr_inline_eq: 1
+// EXPECT: arr_inline_neq: 0
+// EXPECT: arr_inline_ne: 1
+// EXPECT: arr_param_eq: 1
+// EXPECT: arr_param_neq: 0
+// EXPECT: arr_param_ne: 1
+// EXPECT: arr_u8_eq: 1
+// EXPECT: arr_u8_neq: 0
+// EXPECT: opt_inline_some_some_eq: 1
+// EXPECT: opt_inline_some_some_neq: 0
+// EXPECT: opt_inline_some_none_neq: 0
+// EXPECT: opt_inline_none_none_eq: 1
+// EXPECT: opt_inline_ne: 1
+// EXPECT: opt_param_eq: 1
+// EXPECT: opt_param_neq: 0
+// EXPECT: res_ok_ok_eq: 1
+// EXPECT: res_ok_ok_neq: 0
+// EXPECT: res_ok_err_neq: 0
+// EXPECT: res_err_err_eq: 1
+// EXPECT: res_mixed_eq: 1
+// EXPECT: res_mixed_neq: 0
+// EXPECT: res_param_eq: 1
+mod std;
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn rr_tuple_eq(a: & &(i32, i32), b: & &(i32, i32)) -> bool {
+    a == b
+}
+
+fn rr_tuple_ne(a: & &(i32, i32), b: & &(i32, i32)) -> bool {
+    a != b
+}
+
+fn rr_arr_eq(a: & &[i32; 3], b: & &[i32; 3]) -> bool {
+    a == b
+}
+
+fn rr_arr_ne(a: & &[i32; 3], b: & &[i32; 3]) -> bool {
+    a != b
+}
+
+fn rr_opt_eq(a: & &Option<i32>, b: & &Option<i32>) -> bool {
+    a == b
+}
+
+fn rr_res_eq(a: & &Result<i32, i32>, b: & &Result<i32, i32>) -> bool {
+    a == b
+}
+
+fn main() -> i32 {
+    // === & &Tuple ===
+    let t1: (i32, i32) = (10, 20);
+    let t2: (i32, i32) = (10, 20);
+    let t3: (i32, i32) = (10, 99);
+    let r_t1: &(i32, i32) = &t1;
+    let r_t2: &(i32, i32) = &t2;
+    let r_t3: &(i32, i32) = &t3;
+    let rr_t1: & &(i32, i32) = &r_t1;
+    let rr_t2: & &(i32, i32) = &r_t2;
+    let rr_t3: & &(i32, i32) = &r_t3;
+    print_kv("tup_inline_eq", rr_t1 == rr_t2);
+    print_kv("tup_inline_neq", rr_t1 == rr_t3);
+    print_kv("tup_inline_ne", rr_t1 != rr_t3);
+    print_kv("tup_param_eq", rr_tuple_eq(rr_t1, rr_t2));
+    print_kv("tup_param_neq", rr_tuple_eq(rr_t1, rr_t3));
+    print_kv("tup_param_ne", rr_tuple_ne(rr_t1, rr_t3));
+
+    // 3-tuple — exercises tuple_eq's loop bound > 2.
+    let three1: (i32, i32, i32) = (1, 2, 3);
+    let three2: (i32, i32, i32) = (1, 2, 3);
+    let three3: (i32, i32, i32) = (1, 2, 99);
+    let r_three1: &(i32, i32, i32) = &three1;
+    let r_three2: &(i32, i32, i32) = &three2;
+    let r_three3: &(i32, i32, i32) = &three3;
+    let rr_three1: & &(i32, i32, i32) = &r_three1;
+    let rr_three2: & &(i32, i32, i32) = &r_three2;
+    let rr_three3: & &(i32, i32, i32) = &r_three3;
+    print_kv("tup_three_eq", rr_three1 == rr_three2);
+    print_kv("tup_three_neq_last", rr_three1 == rr_three3);
+
+    // === & &[T; N] ===
+    let a1: [i32; 3] = [1, 2, 3];
+    let a2: [i32; 3] = [1, 2, 3];
+    let a3: [i32; 3] = [1, 2, 99];
+    let r_a1: &[i32; 3] = &a1;
+    let r_a2: &[i32; 3] = &a2;
+    let r_a3: &[i32; 3] = &a3;
+    let rr_a1: & &[i32; 3] = &r_a1;
+    let rr_a2: & &[i32; 3] = &r_a2;
+    let rr_a3: & &[i32; 3] = &r_a3;
+    print_kv("arr_inline_eq", rr_a1 == rr_a2);
+    print_kv("arr_inline_neq", rr_a1 == rr_a3);
+    print_kv("arr_inline_ne", rr_a1 != rr_a3);
+    print_kv("arr_param_eq", rr_arr_eq(rr_a1, rr_a2));
+    print_kv("arr_param_neq", rr_arr_eq(rr_a1, rr_a3));
+    print_kv("arr_param_ne", rr_arr_ne(rr_a1, rr_a3));
+
+    // [u8; N] — different element widths exercise size-aware paths.
+    let u1: [u8; 4] = [1u8, 2u8, 3u8, 4u8];
+    let u2: [u8; 4] = [1u8, 2u8, 3u8, 4u8];
+    let u3: [u8; 4] = [1u8, 2u8, 3u8, 99u8];
+    let r_u1: &[u8; 4] = &u1;
+    let r_u2: &[u8; 4] = &u2;
+    let r_u3: &[u8; 4] = &u3;
+    let rr_u1: & &[u8; 4] = &r_u1;
+    let rr_u2: & &[u8; 4] = &r_u2;
+    let rr_u3: & &[u8; 4] = &r_u3;
+    print_kv("arr_u8_eq", rr_u1 == rr_u2);
+    print_kv("arr_u8_neq", rr_u1 == rr_u3);
+
+    // === & &Option<T> ===
+    let s1: Option<i32> = Option.Some(7);
+    let s2: Option<i32> = Option.Some(7);
+    let s3: Option<i32> = Option.Some(99);
+    let n1: Option<i32> = Option.None;
+    let n2: Option<i32> = Option.None;
+    let r_s1: &Option<i32> = &s1;
+    let r_s2: &Option<i32> = &s2;
+    let r_s3: &Option<i32> = &s3;
+    let r_n1: &Option<i32> = &n1;
+    let r_n2: &Option<i32> = &n2;
+    let rr_s1: & &Option<i32> = &r_s1;
+    let rr_s2: & &Option<i32> = &r_s2;
+    let rr_s3: & &Option<i32> = &r_s3;
+    let rr_n1: & &Option<i32> = &r_n1;
+    let rr_n2: & &Option<i32> = &r_n2;
+    print_kv("opt_inline_some_some_eq", rr_s1 == rr_s2);
+    print_kv("opt_inline_some_some_neq", rr_s1 == rr_s3);
+    print_kv("opt_inline_some_none_neq", rr_s1 == rr_n1);
+    print_kv("opt_inline_none_none_eq", rr_n1 == rr_n2);
+    print_kv("opt_inline_ne", rr_s1 != rr_n1);
+    print_kv("opt_param_eq", rr_opt_eq(rr_s1, rr_s2));
+    print_kv("opt_param_neq", rr_opt_eq(rr_s1, rr_n1));
+
+    // === & &Result<T, E> ===
+    let ok1: Result<i32, i32> = Result.Ok(11);
+    let ok2: Result<i32, i32> = Result.Ok(11);
+    let ok3: Result<i32, i32> = Result.Ok(22);
+    let err1: Result<i32, i32> = Result.Err(99);
+    let err2: Result<i32, i32> = Result.Err(99);
+    let r_ok1: &Result<i32, i32> = &ok1;
+    let r_ok2: &Result<i32, i32> = &ok2;
+    let r_ok3: &Result<i32, i32> = &ok3;
+    let r_err1: &Result<i32, i32> = &err1;
+    let r_err2: &Result<i32, i32> = &err2;
+    let rr_ok1: & &Result<i32, i32> = &r_ok1;
+    let rr_ok2: & &Result<i32, i32> = &r_ok2;
+    let rr_ok3: & &Result<i32, i32> = &r_ok3;
+    let rr_err1: & &Result<i32, i32> = &r_err1;
+    let rr_err2: & &Result<i32, i32> = &r_err2;
+    print_kv("res_ok_ok_eq", rr_ok1 == rr_ok2);
+    print_kv("res_ok_ok_neq", rr_ok1 == rr_ok3);
+    print_kv("res_ok_err_neq", rr_ok1 == rr_err1);
+    print_kv("res_err_err_eq", rr_err1 == rr_err2);
+
+    // Heterogeneous T vs E (i32 + u8) — exercises both args slots.
+    let m1: Result<i32, u8> = Result.Ok(50);
+    let m2: Result<i32, u8> = Result.Ok(50);
+    let m3: Result<i32, u8> = Result.Err(255u8);
+    let r_m1: &Result<i32, u8> = &m1;
+    let r_m2: &Result<i32, u8> = &m2;
+    let r_m3: &Result<i32, u8> = &m3;
+    let rr_m1: & &Result<i32, u8> = &r_m1;
+    let rr_m2: & &Result<i32, u8> = &r_m2;
+    let rr_m3: & &Result<i32, u8> = &r_m3;
+    print_kv("res_mixed_eq", rr_m1 == rr_m2);
+    print_kv("res_mixed_neq", rr_m1 == rr_m3);
+
+    // Function-param Result<i32, i32>.
+    print_kv("res_param_eq", rr_res_eq(rr_ok1, rr_ok2));
+
+    0
+}
