@@ -3605,18 +3605,21 @@ pub fn emit_binop_typed(
         // sound for single-field wrappers (e.g. `{ i32 }` from
         // `struct Wrapper { x: i32 }`); for multi-field aggregates it
         // silently miscompiles equality by comparing only the first field.
-        // The S98–S108 dispatch chain in the BinaryOp Rvalue routes every
+        // The S98–S110 dispatch chain in the BinaryOp Rvalue routes every
         // known eq-family aggregate (str / String / &String / & &String /
         // &[T] / Vec<T> / &Vec<T>, plus user Adts with `impl PartialEq`,
-        // plus value- and single-ref-shape tuples and arrays) through
-        // their respective handlers before reaching here. If a
-        // multi-field aggregate Eq/Ne arrives at this point the dispatcher
-        // missed it — typically Option/Result ==, tuple/array of aggregate
-        // elements (str/String/Vec/&UserAdt), closure ==, HashMap ==,
-        // multi-layer refs (`& &Tuple`, `& &[T; N]`), or a fat-ref of a
-        // user Adt that lacks `impl<T: PartialEq> PartialEq for &T`.
-        // Diagnose instead of falling through, so the silent miscompile
-        // surfaces as an error.
+        // plus value-, single-ref- and double-ref-shape tuples and
+        // arrays, plus builtin Option<T> / Result<T,E> in value-,
+        // single-ref- and double-ref shapes) through their respective
+        // handlers before reaching here. If a multi-field aggregate
+        // Eq/Ne arrives at this point the dispatcher missed it —
+        // typically tuple/array of aggregate elements
+        // (str/String/Vec/&UserAdt), Option/Result with aggregate
+        // payloads (Option<String>, Option<Vec>, Result<String,_>),
+        // closure ==, HashMap ==, three-or-more-layer refs (`& & &T`),
+        // & &Vec<T>, or a fat-ref of a user Adt that lacks
+        // `impl<T: PartialEq> PartialEq for &T`. Diagnose instead of
+        // falling through, so the silent miscompile surfaces as an error.
         let llvm_ty_string = common.make_string(llvm_ty);
         let n_fields = count_struct_fields(&llvm_ty_string);
         let is_eq_or_ne = match bin_op {
@@ -3628,7 +3631,7 @@ pub fn emit_binop_typed(
             let mut msg = common.make_string("equality on multi-field aggregate type `");
             msg.push_str(llvm_ty);
             msg.push_str("` is not supported (the default codegen path would silently compare only the first field)");
-            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. User Adts with `impl PartialEq` (manual or `#[derive(PartialEq)]`) dispatch through the operator since S106. Tuples and arrays (value or single-ref shape) with primitive or nested Tuple/Array elements dispatch since S107/S108. Remaining gaps: Option/Result == (use `match`), tuple/array of aggregate elements (str/String/Vec/&UserAdt), closure ==, HashMap ==, multi-layer refs (`& &Tuple`, `& &[T; N]`), and fat-refs of user Adts (`&UserStruct == &UserStruct` requires a blanket `impl<T: PartialEq> PartialEq for &T` not yet in stdlib).");
+            let note = common.make_string("Built-in eq-family types (str / String / &String / & &String / &[T] / Vec<T> / &Vec<T>) are routed through @str_eq upstream; reaching this point for one of those is a compiler bug. User Adts with `impl PartialEq` (manual or `#[derive(PartialEq)]`) dispatch through the operator since S106. Tuples and arrays dispatch in value, single-ref, and double-ref shapes since S107/S108/S110, with primitive or nested Tuple/Array elements. Builtin Option<T> / Result<T,E> dispatch in value, single-ref, and double-ref shapes since S109/S110, with primitive or nested Option/Result/Tuple/Array payloads. Remaining gaps: tuple/array of aggregate elements (str/String/Vec/&UserAdt), Option/Result with aggregate payloads (Option<String>, Option<Vec>, Result<String,_>), closure ==, HashMap ==, three-or-more-layer refs (`& & &T`), & &Vec<T>, and fat-refs of user Adts (`&UserStruct == &UserStruct` requires a blanket `impl<T: PartialEq> PartialEq for &T` not yet in stdlib).");
             ctx.codegen_error_with_note_fatal(
                 codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                 msg,
