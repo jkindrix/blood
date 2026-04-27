@@ -1315,6 +1315,336 @@ fn try_emit_binop_user_partial_eq(
     true
 }
 
+/// True if operand has type Tuple with >= 2 elements. Empty tuples are
+/// LLVM `{}` (handled by emit_binop_typed's unit early-return), and
+/// single-element tuples are sound under emit_binop_typed's existing
+/// single-field-wrapper extract+recurse path. Multi-element tuples are
+/// the case where the default path silently picks field 0 — that's
+/// what S104-B's fatal catches and what this dispatcher resolves.
+fn operand_is_tuple_value(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            match type_intern.type_interner().get(id) {
+                &type_intern.InternedTypeKind.Tuple(list_id) => {
+                    type_intern.type_interner().ty_list_len(list_id) >= 2
+                }
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// True if operand has type Array `[T; N]` for any N (including 0 and 1).
+/// Pre-S107 the default emit_binop_typed path's aggregate guard checks
+/// `ty_bytes[0] == '{'` which doesn't catch `[N x T]`, so an unrouted
+/// Array Eq/Ne reaches `icmp eq [N x T]` and llc rejects with "icmp
+/// requires integer operands". Every Array Eq/Ne must come through this
+/// dispatcher to avoid an llc-level error.
+fn operand_is_array_value(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            match type_intern.type_interner().get(id) {
+                &type_intern.InternedTypeKind.Array { element: _, size: _ } => true,
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Per-element eq dispatch for a Tuple/Array element pair. Recurses
+/// into nested Tuples and Arrays so arbitrarily-deep structural nesting
+/// (e.g. `((i32, i32), [i64; 4]) == ...`) emits correct element-wise
+/// compare. Other element types — primitives + single-field wrappers —
+/// fall through to emit_binop_typed which handles them correctly
+/// (icmp/fcmp for primitives, extract+recurse for single-field).
+///
+/// Multi-field aggregate elements that have their own dedicated
+/// dispatcher in the outer chain (str/String/&String/&[T]/Vec/&Vec/
+/// user-Adt with `impl PartialEq`) are NOT routed through that chain
+/// here — they reach emit_binop_typed and hit S104-B's fatal. This is
+/// a documented limitation: in practice, tuples and arrays of those
+/// types are rare in selfhost source. Future sessions can extend this
+/// dispatcher to forward those element types through their dedicated
+/// dispatchers, mirroring the top-level chain on raw SSA pairs.
+///
+/// Returns the i1 SSA name holding the element-equality result.
+fn dispatch_eq_element_typed(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    left_ssa: &str,
+    right_ssa: &str,
+    elem_ty_id: type_intern.TyId,
+    elem_llvm: &str,
+) -> codegen_ctx.CgName {
+    let interner = type_intern.type_interner();
+    match interner.get(elem_ty_id) {
+        &type_intern.InternedTypeKind.Tuple(_) => {
+            return emit_tuple_eq_typed(ctx, left_ssa, right_ssa, elem_ty_id);
+        }
+        &type_intern.InternedTypeKind.Array { element: _, size: _ } => {
+            return emit_array_eq_typed(ctx, left_ssa, right_ssa, elem_ty_id);
+        }
+        _ => {}
+    }
+    let left_str = common.make_string(left_ssa);
+    let right_str = common.make_string(right_ssa);
+    emit_binop_typed(ctx, &mir_types.MirBinOp.Eq, &left_str, &right_str, elem_llvm, true)
+}
+
+/// Element-wise eq for a Tuple via extractvalue + AND-chain. Returns
+/// the final i1 SSA. Vacuously-true for empty tuples (nested empty
+/// tuple `()` element). Caller is responsible for the outer Eq vs Ne
+/// finalization (Ne = xor result, true).
+fn emit_tuple_eq_typed(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    left_ssa: &str,
+    right_ssa: &str,
+    ty_id: type_intern.TyId,
+) -> codegen_ctx.CgName {
+    let interner = type_intern.type_interner();
+    let list_id = match interner.get(ty_id) {
+        &type_intern.InternedTypeKind.Tuple(lid) => lid,
+        _ => {
+            let placeholder = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg(&placeholder, "eq", "i1", "1", "1");
+            return placeholder;
+        }
+    };
+    let len = interner.ty_list_len(list_id);
+    let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+
+    if len == 0 {
+        let vacuous = ctx.fresh_temp_cg();
+        ctx.emit_icmp_cg(&vacuous, "eq", "i1", "1", "1");
+        return vacuous;
+    }
+
+    // Build AND-chain. Initial accumulator is the literal `true`; the first
+    // iteration emits `and i1 true, %elem0` (LLVM accepts inline booleans).
+    // Subsequent iterations chain through fresh SSA temps.
+    let mut acc_str = common.make_string("true");
+    let mut last_cg: codegen_ctx.CgName = codegen_ctx.CgName.Str(common.make_string("true"));
+    for i in 0usize..len {
+        let elem_ty_id = interner.get_ty_list_element(list_id, i);
+        let elem_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, elem_ty_id);
+        let left_i = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&left_i);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty.as_str());
+        ctx.write(" ");
+        ctx.write(left_ssa);
+        ctx.write(", ");
+        ctx.write(common.format_usize(i).as_str());
+        ctx.write("\n");
+        let right_i = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&right_i);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty.as_str());
+        ctx.write(" ");
+        ctx.write(right_ssa);
+        ctx.write(", ");
+        ctx.write(common.format_usize(i).as_str());
+        ctx.write("\n");
+
+        let left_i_str = cgname_to_string(&left_i);
+        let right_i_str = cgname_to_string(&right_i);
+        let elem_eq = dispatch_eq_element_typed(
+            ctx,
+            left_i_str.as_str(),
+            right_i_str.as_str(),
+            elem_ty_id,
+            elem_llvm.as_str(),
+        );
+
+        let next = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&next);
+        ctx.write(" = and i1 ");
+        ctx.write(acc_str.as_str());
+        ctx.write(", ");
+        ctx.write_cgname(&elem_eq);
+        ctx.write("\n");
+        acc_str = cgname_to_string(&next);
+        last_cg = next;
+    }
+    last_cg
+}
+
+/// Element-wise eq for an Array `[T; N]` via extractvalue + AND-chain.
+/// Returns the final i1 SSA. Vacuously-true for `[T; 0]`. Caller
+/// finalizes Eq vs Ne.
+fn emit_array_eq_typed(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    left_ssa: &str,
+    right_ssa: &str,
+    ty_id: type_intern.TyId,
+) -> codegen_ctx.CgName {
+    let interner = type_intern.type_interner();
+    let (elem_id, size) = match interner.get(ty_id) {
+        &type_intern.InternedTypeKind.Array { element, size } => (element, size),
+        _ => {
+            let placeholder = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg(&placeholder, "eq", "i1", "1", "1");
+            return placeholder;
+        }
+    };
+    let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+    let elem_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, elem_id);
+
+    if size == 0 {
+        let vacuous = ctx.fresh_temp_cg();
+        ctx.emit_icmp_cg(&vacuous, "eq", "i1", "1", "1");
+        return vacuous;
+    }
+
+    let mut acc_str = common.make_string("true");
+    let mut last_cg: codegen_ctx.CgName = codegen_ctx.CgName.Str(common.make_string("true"));
+    let mut i: u64 = 0;
+    while i < size {
+        let left_i = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&left_i);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty.as_str());
+        ctx.write(" ");
+        ctx.write(left_ssa);
+        ctx.write(", ");
+        ctx.write(common.format_usize(i as usize).as_str());
+        ctx.write("\n");
+        let right_i = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&right_i);
+        ctx.write(" = extractvalue ");
+        ctx.write(llvm_ty.as_str());
+        ctx.write(" ");
+        ctx.write(right_ssa);
+        ctx.write(", ");
+        ctx.write(common.format_usize(i as usize).as_str());
+        ctx.write("\n");
+
+        let left_i_str = cgname_to_string(&left_i);
+        let right_i_str = cgname_to_string(&right_i);
+        let elem_eq = dispatch_eq_element_typed(
+            ctx,
+            left_i_str.as_str(),
+            right_i_str.as_str(),
+            elem_id,
+            elem_llvm.as_str(),
+        );
+
+        let next = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&next);
+        ctx.write(" = and i1 ");
+        ctx.write(acc_str.as_str());
+        ctx.write(", ");
+        ctx.write_cgname(&elem_eq);
+        ctx.write("\n");
+        acc_str = cgname_to_string(&next);
+        last_cg = next;
+        i += 1;
+    }
+    last_cg
+}
+
+/// Routes `==` and `!=` on a Tuple value to per-element equality with
+/// an AND-chain. Closes the typeck/codegen UX gap where S105 auto-
+/// derives PartialEq for tuples whose elements are PartialEq, but the
+/// default codegen path silently picks field 0 of a multi-field
+/// aggregate (caught by S104-B's fatal pre-S107). Single-layer only —
+/// `&Tuple` falls through. Returns true if the binop was handled here.
+fn try_emit_binop_tuple_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_tuple_value(ctx, left) || !operand_is_tuple_value(ctx, right) {
+        return false;
+    }
+    let ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let result = emit_tuple_eq_typed(ctx, left_val.as_str(), right_val.as_str(), ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
+/// Routes `==` and `!=` on an Array `[T; N]` to per-index equality
+/// with an AND-chain. Pre-S107 the default emit_binop_typed path emits
+/// raw `icmp eq [N x T]` which llc rejects (icmp requires integer
+/// operands), so every Array Eq/Ne must come through here. Empty
+/// arrays (`[T; 0]`) compare vacuously equal.
+fn try_emit_binop_array_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_array_value(ctx, left) || !operand_is_array_value(ctx, right) {
+        return false;
+    }
+    let ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let result = emit_array_eq_typed(ctx, left_val.as_str(), right_val.as_str(), ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1553,6 +1883,24 @@ pub fn emit_rvalue(
             // only field 0 of a multi-field aggregate. Single-layer ref
             // only.
             if try_emit_binop_user_partial_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S107: tuple `(T1, .., Tn) == ..` and `!=`. S105 auto-derives
+            // PartialEq for tuples whose elements are PartialEq; pre-S107
+            // the multi-field aggregate reached S104-B's fatal. This
+            // dispatcher emits per-element extractvalue + recursive eq
+            // dispatch (nested tuples/arrays handled by recursion) +
+            // AND-chain.
+            if try_emit_binop_tuple_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S107: array `[T; N] == ..` and `!=`. Pre-S107 the default
+            // path's aggregate guard checks `{` not `[`, so `[N x T]`
+            // reached `icmp eq [N x T]` and llc rejected. This dispatcher
+            // mirrors tuple_eq with index-based extractvalue.
+            if try_emit_binop_array_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }

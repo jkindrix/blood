@@ -1,0 +1,86 @@
+// Test: codegen dispatch of `==` and `!=` on Tuple types. S107 closes
+// the typeck/codegen UX gap left by S105 — `try_emit_binop_tuple_eq`
+// in codegen_expr.blood emits per-element extractvalue + recursive
+// dispatch + AND-chain. Pre-S107, multi-element tuple == hit S104-B's
+// fatal because the default codegen path silently picked field 0.
+//
+// EXPECT: pair_eq_match: 1
+// EXPECT: pair_eq_mismatch_field0: 0
+// EXPECT: pair_eq_mismatch_field1: 0
+// EXPECT: pair_ne_match: 0
+// EXPECT: pair_ne_mismatch: 1
+// EXPECT: triple_eq_match: 1
+// EXPECT: triple_eq_mismatch: 0
+// EXPECT: mixed_bool_int_eq_match: 1
+// EXPECT: mixed_bool_int_eq_mismatch_bool: 0
+// EXPECT: mixed_bool_int_eq_mismatch_int: 0
+// EXPECT: hetero_widths_eq_match: 1
+// EXPECT: hetero_widths_eq_mismatch: 0
+// EXPECT: nested_tuple_eq_match: 1
+// EXPECT: nested_tuple_eq_mismatch_inner: 0
+// EXPECT: nested_tuple_eq_mismatch_outer: 0
+// EXPECT: fn_param_eq_match: 1
+// EXPECT: fn_param_eq_mismatch: 0
+mod std;
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn pair_arg_eq(a: (i32, i32), b: (i32, i32)) -> bool {
+    a == b
+}
+
+fn main() -> i32 {
+    let p1: (i32, i32) = (1, 2);
+    let p2: (i32, i32) = (1, 2);
+    let p3: (i32, i32) = (9, 2);
+    let p4: (i32, i32) = (1, 9);
+    print_kv("pair_eq_match", p1 == p2);
+    print_kv("pair_eq_mismatch_field0", p1 == p3);
+    print_kv("pair_eq_mismatch_field1", p1 == p4);
+    print_kv("pair_ne_match", p1 != p2);
+    print_kv("pair_ne_mismatch", p1 != p3);
+
+    let t1: (i32, i32, i32) = (1, 2, 3);
+    let t2: (i32, i32, i32) = (1, 2, 3);
+    let t3: (i32, i32, i32) = (1, 2, 9);
+    print_kv("triple_eq_match", t1 == t2);
+    print_kv("triple_eq_mismatch", t1 == t3);
+
+    let m1: (bool, i32) = (true, 42);
+    let m2: (bool, i32) = (true, 42);
+    let m3: (bool, i32) = (false, 42);
+    let m4: (bool, i32) = (true, 99);
+    print_kv("mixed_bool_int_eq_match", m1 == m2);
+    print_kv("mixed_bool_int_eq_mismatch_bool", m1 == m3);
+    print_kv("mixed_bool_int_eq_mismatch_int", m1 == m4);
+
+    let h1: (i64, u8, i32) = (10000000000i64, 7u8, 100);
+    let h2: (i64, u8, i32) = (10000000000i64, 7u8, 100);
+    let h3: (i64, u8, i32) = (10000000000i64, 7u8, 999);
+    print_kv("hetero_widths_eq_match", h1 == h2);
+    print_kv("hetero_widths_eq_mismatch", h1 == h3);
+
+    let n1: ((i32, i32), i32) = ((1, 2), 3);
+    let n2: ((i32, i32), i32) = ((1, 2), 3);
+    let n3: ((i32, i32), i32) = ((1, 9), 3);
+    let n4: ((i32, i32), i32) = ((1, 2), 9);
+    print_kv("nested_tuple_eq_match", n1 == n2);
+    print_kv("nested_tuple_eq_mismatch_inner", n1 == n3);
+    print_kv("nested_tuple_eq_mismatch_outer", n1 == n4);
+
+    let a: (i32, i32) = (5, 7);
+    let b: (i32, i32) = (5, 7);
+    let c: (i32, i32) = (5, 8);
+    print_kv("fn_param_eq_match", pair_arg_eq(a, b));
+    print_kv("fn_param_eq_mismatch", pair_arg_eq(a, c));
+
+    0
+}
