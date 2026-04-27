@@ -1354,11 +1354,12 @@ fn operand_is_array_value(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.
 }
 
 /// Per-element eq dispatch for a Tuple/Array element pair. Recurses
-/// into nested Tuples and Arrays so arbitrarily-deep structural nesting
-/// (e.g. `((i32, i32), [i64; 4]) == ...`) emits correct element-wise
-/// compare. Other element types — primitives + single-field wrappers —
-/// fall through to emit_binop_typed which handles them correctly
-/// (icmp/fcmp for primitives, extract+recurse for single-field).
+/// into nested Tuples, Arrays, and builtin Option/Result enums so
+/// arbitrarily-deep structural nesting (e.g. `((i32, i32), [i64; 4],
+/// Option<i32>) == ...`) emits correct element-wise compare. Other
+/// element types — primitives + single-field wrappers — fall through
+/// to emit_binop_typed which handles them correctly (icmp/fcmp for
+/// primitives, extract+recurse for single-field).
 ///
 /// Multi-field aggregate elements that have their own dedicated
 /// dispatcher in the outer chain (str/String/&String/&[T]/Vec/&Vec/
@@ -1384,6 +1385,22 @@ fn dispatch_eq_element_typed(
         }
         &type_intern.InternedTypeKind.Array { element: _, size: _ } => {
             return emit_array_eq_typed(ctx, left_ssa, right_ssa, elem_ty_id);
+        }
+        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+            // Recurse into builtin Option<T> / Result<T, E> via S109's enum
+            // dispatcher. User-defined enums with derive(PartialEq) are NOT
+            // routed here — those have a registered eq method and would have
+            // been handled at the top-level by S106's user_partial_eq.
+            // Reaching here for a user enum means the operand-pair came from
+            // a tuple/array element where derive(PartialEq) is auto-applied
+            // by S105 — there is no eq method registered, so emit_binop_typed
+            // would silently miscompile via S104-B's fatal. The enum-recurse
+            // here closes the path for nested Option/Result; user enum nesting
+            // remains a documented gap (S110 candidate).
+            if (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id) {
+                return emit_enum_eq_typed(ctx, left_ssa, right_ssa, elem_ty_id);
+            }
         }
         _ => {}
     }
@@ -1818,6 +1835,396 @@ fn try_emit_binop_array_ref_eq(
     true
 }
 
+/// True if operand has type Adt that is the builtin Option<T> or Result<T,E>.
+/// Mutually exclusive with `operand_is_enum_ref` via the leading is_ref check.
+/// User-defined enums with `derive(PartialEq)` are NOT matched here — those
+/// route through S106's `try_emit_binop_user_partial_eq` (which fires earlier
+/// in the dispatch chain when a registered `eq` method is present). Builtin
+/// Option / Result have NO registered `eq` method (they are not `impl PartialEq`
+/// in stdlib), so without this dispatcher they fall through to S104-B's fatal.
+fn operand_is_enum_value(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if type_intern.is_ref_id(id) { return false; }
+            let def_id = match type_intern.get_adt_def_id(id) {
+                Option.Some(d) => d,
+                Option.None => { return false; }
+            };
+            (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id)
+        }
+        Option.None => false,
+    }
+}
+
+/// True if operand is `&Option<T>` or `&Result<T,E>` — exactly one Ref layer
+/// wrapping a builtin enum. Mutually exclusive with `operand_is_enum_value`.
+/// Multi-layer refs (`& &Option<T>`) deliberately fall through; closing those
+/// is an S110+ follow-on mirroring S103-B.
+fn operand_is_enum_ref(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> bool {
+    match operand_ty_id(ctx, operand) {
+        Option.Some(id) => {
+            if !type_intern.is_ref_id(id) { return false; }
+            let inner = type_intern.unwrap_ref_id(id);
+            if type_intern.is_ref_id(inner) { return false; }
+            let def_id = match type_intern.get_adt_def_id(inner) {
+                Option.Some(d) => d,
+                Option.None => { return false; }
+            };
+            (ctx.option_def_id != 0 && def_id.index == ctx.option_def_id)
+                || (ctx.result_def_id != 0 && def_id.index == ctx.result_def_id)
+        }
+        Option.None => false,
+    }
+}
+
+/// Per-variant equality compare for a builtin Option<T> / Result<T,E> enum.
+/// Discriminants are loaded first; if unequal, result is false. If equal,
+/// per-variant payloads are compared in a cascade of basic blocks. Result
+/// is held in an i1 alloca and loaded at the merge block to produce the
+/// final SSA value.
+///
+/// Layout assumed (matches `make_builtin_enum_layout` in codegen.blood):
+///   wrapper LLVM type: `{ i32, [1 x i64] }`
+///   discriminant: `i32` at field 0
+///   payload: `[1 x i64]` at field 1; per-variant view `{ i64 }` for
+///     payload-bearing variants, `{}` for unit variants (Option.None).
+///   variant fields are derived from the operand's type args:
+///     Option<T>: variant 0 = None (no payload), variant 1 = Some(args[0])
+///     Result<T,E>: variant 0 = Ok(args[0]), variant 1 = Err(args[1])
+///
+/// Field load uses the substituted element LLVM type (e.g., `i32` for
+/// Option<i32>). Per-element compare delegates to `dispatch_eq_element_typed`,
+/// which recurses into Tuple/Array/builtin-enum elements (closing nested
+/// Option<Option<i32>>, Result<i32, (i64, u8)>, etc.).
+///
+/// Multi-field user-defined enums are NOT supported here — those have an
+/// `eq` method registered via derive(PartialEq) and route through S106.
+/// Multi-field builtin enums do not exist (Option/Result both have ≤ 1
+/// payload field per variant), so a missing fields[2..] case is unreachable.
+fn emit_enum_eq_typed(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    left_ssa: &str,
+    right_ssa: &str,
+    ty_id: type_intern.TyId,
+) -> codegen_ctx.CgName {
+    let def_id = match type_intern.get_adt_def_id(ty_id) {
+        Option.Some(d) => d,
+        Option.None => {
+            // Caller should have gated. Vacuous true to keep IR well-formed.
+            let v = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg(&v, "eq", "i1", "1", "1");
+            return v;
+        }
+    };
+    let args = match type_intern.get_adt_args(ty_id) {
+        Option.Some(a) => a,
+        Option.None => {
+            let v = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg(&v, "eq", "i1", "1", "1");
+            return v;
+        }
+    };
+    let interner = type_intern.type_interner();
+    let arg_len = interner.ty_list_len(args);
+
+    let is_option = ctx.option_def_id != 0 && def_id.index == ctx.option_def_id;
+    let is_result = ctx.result_def_id != 0 && def_id.index == ctx.result_def_id;
+
+    // Build per-variant table: (disc_value, payload_count, payload_ty_id).
+    // payload_ty_id is unused when payload_count == 0 (use a placeholder).
+    let placeholder_ty = type_intern.TyId.new(0u32);
+    let mut variants: Vec<(u32, u32, type_intern.TyId)> = Vec.new();
+    if is_option {
+        // Variant 0: None (no payload)
+        variants.push((0u32, 0u32, placeholder_ty));
+        // Variant 1: Some(T) — needs args[0]
+        if arg_len >= 1 {
+            variants.push((1u32, 1u32, interner.get_ty_list_element(args, 0)));
+        }
+    } else if is_result {
+        // Variant 0: Ok(T) — needs args[0]
+        if arg_len >= 1 {
+            variants.push((0u32, 1u32, interner.get_ty_list_element(args, 0)));
+        }
+        // Variant 1: Err(E) — needs args[1]
+        if arg_len >= 2 {
+            variants.push((1u32, 1u32, interner.get_ty_list_element(args, 1)));
+        }
+    } else {
+        // Caller's predicate should have ruled this out. Vacuous.
+        let v = ctx.fresh_temp_cg();
+        ctx.emit_icmp_cg(&v, "eq", "i1", "1", "1");
+        return v;
+    }
+
+    // Use the monomorphized wrapper LLVM type — different Option<T> /
+    // Result<T,E> instantiations may produce different wrapper sizes when
+    // the payload exceeds 8 bytes (e.g., `Option<(i64, i64)>` widens to
+    // `{ i32, [2 x i64] }`). Hardcoding `{ i32, [1 x i64] }` here would
+    // produce IR that llc rejects with type-mismatch on the spill store.
+    let wrapper_llvm_owned = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+    let wrapper_llvm = wrapper_llvm_owned.as_str();
+    let disc_llvm = "i32";
+
+    // === Spill operand SSA values to allocas (so we can GEP into them). ===
+    let left_alloca = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&left_alloca, wrapper_llvm);
+    ctx.emit_store_str_cg(wrapper_llvm, left_ssa, &left_alloca);
+
+    let right_alloca = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&right_alloca, wrapper_llvm);
+    ctx.emit_store_str_cg(wrapper_llvm, right_ssa, &right_alloca);
+
+    // === Result alloca: i1 default false ===
+    let result_alloca = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&result_alloca, "i1");
+    ctx.emit_store_str_cg("i1", "0", &result_alloca);
+
+    // === Load discriminants ===
+    let disc_a_p = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&disc_a_p);
+    ctx.write(" = getelementptr ");
+    ctx.write(wrapper_llvm);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&left_alloca);
+    ctx.write(", i64 0, i32 0\n");
+    let disc_a = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&disc_a, disc_llvm, &disc_a_p);
+
+    let disc_b_p = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&disc_b_p);
+    ctx.write(" = getelementptr ");
+    ctx.write(wrapper_llvm);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&right_alloca);
+    ctx.write(", i64 0, i32 0\n");
+    let disc_b = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&disc_b, disc_llvm, &disc_b_p);
+
+    // === Compare discriminants ===
+    let disc_b_str = cgname_to_string(&disc_b);
+    let disc_eq = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&disc_eq, "eq", disc_llvm, &disc_a, disc_b_str.as_str());
+
+    // === Branch on disc_eq → check_variant or merge ===
+    let check_variant_lbl = ctx.fresh_label_cg();
+    let merge_lbl = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&disc_eq, &check_variant_lbl, &merge_lbl);
+
+    ctx.emit_label_cg(&check_variant_lbl);
+
+    // === Pre-allocate labels for per-variant blocks and the cascade-next blocks ===
+    let nv = variants.len();
+    let mut variant_lbls: Vec<codegen_ctx.CgName> = Vec.new();
+    let mut next_lbls: Vec<codegen_ctx.CgName> = Vec.new();
+    for _vi in 0usize..nv {
+        variant_lbls.push(ctx.fresh_label_cg());
+        next_lbls.push(ctx.fresh_label_cg());
+    }
+
+    // === Emit cascading icmp+br to direct control to the right variant block ===
+    for vi in 0usize..nv {
+        let (disc_val, _, _) = variants[vi];
+        let disc_val_str = codegen_types.format_u64(disc_val as u64);
+        let is_vi = ctx.fresh_temp_cg();
+        ctx.emit_icmp_cg2(&is_vi, "eq", disc_llvm, &disc_a, disc_val_str.as_str());
+        ctx.emit_cond_br_cg(&is_vi, &variant_lbls[vi], &next_lbls[vi]);
+        // Open the next-check block; the next iteration's code lives here, or
+        // (for the last variant) it falls through to merge.
+        ctx.emit_label_cg(&next_lbls[vi]);
+    }
+    // Discriminants matched but value is outside the known variant set —
+    // unreachable in well-typed code. Fall through to merge with the
+    // default-false result alloca.
+    ctx.emit_br_cg(&merge_lbl);
+
+    // === Per-variant compare bodies ===
+    for vi in 0usize..nv {
+        let (_, payload_count, payload_ty) = variants[vi];
+        ctx.emit_label_cg(&variant_lbls[vi]);
+
+        if payload_count == 0u32 {
+            // Unit variant — discriminants already match, so result is true.
+            ctx.emit_store_str_cg("i1", "1", &result_alloca);
+        } else {
+            // Single payload field. GEP into wrapper field 1 (payload),
+            // then GEP into the variant's `{ i64 }` view at field 0,
+            // then load with the actual element LLVM type. This mirrors
+            // the IR pattern used by codegen_place.blood for match
+            // downcast.
+            let variant_payload_view = "{ i64 }";
+            let elem_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, payload_ty);
+
+            let left_pl_p = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&left_pl_p);
+            ctx.write(" = getelementptr ");
+            ctx.write(wrapper_llvm);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&left_alloca);
+            ctx.write(", i64 0, i32 1\n");
+
+            let left_fld_p = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&left_fld_p);
+            ctx.write(" = getelementptr ");
+            ctx.write(variant_payload_view);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&left_pl_p);
+            ctx.write(", i64 0, i32 0\n");
+
+            let left_v = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&left_v, elem_llvm.as_str(), &left_fld_p);
+
+            let right_pl_p = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&right_pl_p);
+            ctx.write(" = getelementptr ");
+            ctx.write(wrapper_llvm);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&right_alloca);
+            ctx.write(", i64 0, i32 1\n");
+
+            let right_fld_p = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&right_fld_p);
+            ctx.write(" = getelementptr ");
+            ctx.write(variant_payload_view);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&right_pl_p);
+            ctx.write(", i64 0, i32 0\n");
+
+            let right_v = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&right_v, elem_llvm.as_str(), &right_fld_p);
+
+            let left_v_str = cgname_to_string(&left_v);
+            let right_v_str = cgname_to_string(&right_v);
+            let elem_eq = dispatch_eq_element_typed(
+                ctx,
+                left_v_str.as_str(),
+                right_v_str.as_str(),
+                payload_ty,
+                elem_llvm.as_str(),
+            );
+            ctx.emit_store_cg2("i1", &elem_eq, &result_alloca);
+        }
+        ctx.emit_br_cg(&merge_lbl);
+    }
+
+    // === Merge block: load result alloca to produce the final i1 SSA ===
+    ctx.emit_label_cg(&merge_lbl);
+    let result = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&result, "i1", &result_alloca);
+    result
+}
+
+/// Routes `==` and `!=` on a builtin Option<T> / Result<T,E> value to
+/// per-variant equality compare. Closes the typeck/codegen UX gap where
+/// S105 auto-derives PartialEq for Option/Result (via the
+/// `type_is_implicitly_partial_eq` builtin-Adt fallback) but the default
+/// codegen path silently miscompiles via S104-B's fatal because the
+/// default path extracts only field 0 of the wrapper aggregate.
+/// Single-layer only — `&Option<T>` is handled by `try_emit_binop_enum_ref_eq`.
+/// Returns true if the binop was handled here; the caller skips the default.
+fn try_emit_binop_enum_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_enum_value(ctx, left) || !operand_is_enum_value(ctx, right) {
+        return false;
+    }
+    let ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let result = emit_enum_eq_typed(ctx, left_val.as_str(), right_val.as_str(), ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
+/// Routes `==` and `!=` on a `&Option<T>` / `&Result<T,E>` to per-variant
+/// equality compare after dereferencing. Mirrors `try_emit_binop_enum_eq`
+/// (S109) with one extra deref step (extracts the alloca ptr from the
+/// `{ ptr, i32 }` fat ref via `extract_aggregate_ref_value`, then invokes
+/// `emit_enum_eq_typed` with the unwrapped inner ty_id). Single-layer only
+/// — `& &Option<T>` falls through (S110+ candidate).
+fn try_emit_binop_enum_ref_eq(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
+    left: &mir_types.Operand,
+    right: &mir_types.Operand,
+    dest: &str,
+) -> bool {
+    let is_eq = match bin_op {
+        &mir_types.MirBinOp.Eq => true,
+        _ => false,
+    };
+    let is_ne = match bin_op {
+        &mir_types.MirBinOp.Ne => true,
+        _ => false,
+    };
+    if !is_eq && !is_ne {
+        return false;
+    }
+    if !operand_is_enum_ref(ctx, left) || !operand_is_enum_ref(ctx, right) {
+        return false;
+    }
+    let outer_ty_id = match operand_ty_id(ctx, left) {
+        Option.Some(id) => id,
+        Option.None => { return false; }
+    };
+    let inner_ty_id = type_intern.unwrap_ref_id(outer_ty_id);
+    let inner_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, inner_ty_id);
+    let (left_val, _) = emit_operand_typed(ctx, left);
+    let (right_val, _) = emit_operand_typed(ctx, right);
+    let left_loaded = extract_aggregate_ref_value(ctx, left_val.as_str(), inner_llvm.as_str());
+    let right_loaded = extract_aggregate_ref_value(ctx, right_val.as_str(), inner_llvm.as_str());
+    let left_loaded_str = cgname_to_string(&left_loaded);
+    let right_loaded_str = cgname_to_string(&right_loaded);
+    let result = emit_enum_eq_typed(ctx, left_loaded_str.as_str(), right_loaded_str.as_str(), inner_ty_id);
+    if is_eq {
+        ctx.emit_store_cg("i1", &result, dest);
+    } else {
+        let neg = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&neg);
+        ctx.write(" = xor i1 ");
+        ctx.write_cgname(&result);
+        ctx.write(", true\n");
+        ctx.emit_store_cg("i1", &neg, dest);
+    }
+    true
+}
+
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -2056,6 +2463,26 @@ pub fn emit_rvalue(
             // only field 0 of a multi-field aggregate. Single-layer ref
             // only.
             if try_emit_binop_user_partial_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S109: builtin Option<T> / Result<T,E> `==` and `!=`. S105
+            // auto-derives PartialEq for these via the builtin-Adt fallback
+            // in `type_is_implicitly_partial_eq`, but neither has an `eq`
+            // method registered (no stdlib `impl PartialEq for Option<T>`),
+            // so user_partial_eq above doesn't fire and the default path
+            // would hit S104-B's fatal. This dispatcher loads discriminants,
+            // compares them, and on match dispatches per-variant payload
+            // compare via dispatch_eq_element_typed (which recurses into
+            // nested Option/Result/Tuple/Array elements).
+            if try_emit_binop_enum_eq(ctx, bin_op, left, right, dest) {
+                @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
+                return;
+            }
+            // S109: `&Option<T>` / `&Result<T,E>` mirror with one Ref
+            // unwrap. The fat-ref `{ ptr, i32 }` derefs to the wrapper
+            // aggregate before reusing emit_enum_eq_typed.
+            if try_emit_binop_enum_ref_eq(ctx, bin_op, left, right, dest) {
                 @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
                 return;
             }

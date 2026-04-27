@@ -1,0 +1,158 @@
+// Test: codegen dispatch of `==` and `!=` on builtin Option<T> and
+// Result<T, E>. S105 auto-derives PartialEq for these via the
+// `type_is_implicitly_partial_eq` builtin-Adt fallback, but neither has
+// a registered `eq` method (no stdlib `impl PartialEq for Option<T>`),
+// so S106's user_partial_eq doesn't fire and the default codegen path
+// would hit S104-B's fatal. S109's `try_emit_binop_enum_eq` /
+// `try_emit_binop_enum_ref_eq` route both shapes through
+// `emit_enum_eq_typed`: spill operands to allocas, load and compare
+// discriminants, then per-variant payload compare via cascading icmp+br
+// with a result alloca / merge block. Per-variant payload compare
+// delegates to `dispatch_eq_element_typed`, which recurses into nested
+// Option/Result/Tuple/Array elements.
+//
+// EXPECT: opt_some_some_eq: 1
+// EXPECT: opt_some_some_neq: 0
+// EXPECT: opt_some_none_neq: 0
+// EXPECT: opt_none_none_eq: 1
+// EXPECT: opt_some_some_ne_eq: 0
+// EXPECT: opt_some_some_ne_neq: 1
+// EXPECT: opt_u8_eq: 1
+// EXPECT: opt_u8_neq: 0
+// EXPECT: opt_i64_eq: 1
+// EXPECT: opt_i64_neq: 0
+// EXPECT: res_ok_ok_eq: 1
+// EXPECT: res_ok_ok_neq: 0
+// EXPECT: res_ok_err_neq: 0
+// EXPECT: res_err_err_eq: 1
+// EXPECT: res_mixed_eq: 1
+// EXPECT: res_mixed_neq: 0
+// EXPECT: nested_opt_eq: 1
+// EXPECT: nested_opt_inner_neq: 0
+// EXPECT: nested_opt_outer_some_none_neq: 0
+// EXPECT: nested_opt_outer_none_neq: 0
+// EXPECT: nested_opt_none_none_eq: 1
+// EXPECT: opt_tuple_eq: 1
+// EXPECT: opt_tuple_neq: 0
+// EXPECT: opt_array_eq: 1
+// EXPECT: opt_array_neq: 0
+// EXPECT: ref_opt_eq: 1
+// EXPECT: ref_opt_neq: 0
+// EXPECT: ref_res_eq: 1
+// EXPECT: ref_res_neq: 0
+// EXPECT: fn_param_opt_eq: 1
+// EXPECT: fn_param_opt_neq: 0
+mod std;
+
+fn bool_to_int(b: bool) -> i32 {
+    if b { 1 } else { 0 }
+}
+
+fn print_kv(label: &str, v: bool) {
+    print_str(label);
+    print_str(": ");
+    println_int(bool_to_int(v));
+}
+
+fn opt_arg_eq(a: Option<i32>, b: Option<i32>) -> bool {
+    a == b
+}
+
+fn main() -> i32 {
+    let o1: Option<i32> = Option.Some(42);
+    let o2: Option<i32> = Option.Some(42);
+    let o3: Option<i32> = Option.Some(99);
+    let n: Option<i32> = Option.None;
+    print_kv("opt_some_some_eq", o1 == o2);
+    print_kv("opt_some_some_neq", o1 == o3);
+    print_kv("opt_some_none_neq", o1 == n);
+    print_kv("opt_none_none_eq", n == n);
+    print_kv("opt_some_some_ne_eq", o1 != o2);
+    print_kv("opt_some_some_ne_neq", o1 != o3);
+
+    // Different element widths exercise the wrapper-type sizing path.
+    let u1: Option<u8> = Option.Some(7u8);
+    let u2: Option<u8> = Option.Some(7u8);
+    let u3: Option<u8> = Option.Some(99u8);
+    print_kv("opt_u8_eq", u1 == u2);
+    print_kv("opt_u8_neq", u1 == u3);
+
+    let l1: Option<i64> = Option.Some(123456789i64);
+    let l2: Option<i64> = Option.Some(123456789i64);
+    let l3: Option<i64> = Option.Some(987654321i64);
+    print_kv("opt_i64_eq", l1 == l2);
+    print_kv("opt_i64_neq", l1 == l3);
+
+    let r1: Result<i32, i32> = Result.Ok(7);
+    let r2: Result<i32, i32> = Result.Ok(7);
+    let r3: Result<i32, i32> = Result.Ok(8);
+    let e1: Result<i32, i32> = Result.Err(99);
+    let e2: Result<i32, i32> = Result.Err(99);
+    print_kv("res_ok_ok_eq", r1 == r2);
+    print_kv("res_ok_ok_neq", r1 == r3);
+    print_kv("res_ok_err_neq", r1 == e1);
+    print_kv("res_err_err_eq", e1 == e2);
+
+    // Heterogeneous T vs E (i32 + u8) — exercises both args slots.
+    let m1: Result<i32, u8> = Result.Ok(50);
+    let m2: Result<i32, u8> = Result.Ok(50);
+    let m3: Result<i32, u8> = Result.Err(255u8);
+    print_kv("res_mixed_eq", m1 == m2);
+    print_kv("res_mixed_neq", m1 == m3);
+
+    // Nested Option<Option<i32>> exercises dispatch_eq_element_typed
+    // recursion into Adt → emit_enum_eq_typed.
+    let na: Option<Option<i32>> = Option.Some(Option.Some(10));
+    let nb: Option<Option<i32>> = Option.Some(Option.Some(10));
+    let nc: Option<Option<i32>> = Option.Some(Option.Some(20));
+    let nd: Option<Option<i32>> = Option.Some(Option.None);
+    let ne: Option<Option<i32>> = Option.None;
+    print_kv("nested_opt_eq", na == nb);
+    print_kv("nested_opt_inner_neq", na == nc);
+    print_kv("nested_opt_outer_some_none_neq", na == nd);
+    print_kv("nested_opt_outer_none_neq", na == ne);
+    print_kv("nested_opt_none_none_eq", ne == ne);
+
+    // Option<(i32, i32)> exercises dispatch into S107's tuple_eq.
+    let ta: Option<(i32, i32)> = Option.Some((1, 2));
+    let tb: Option<(i32, i32)> = Option.Some((1, 2));
+    let tc: Option<(i32, i32)> = Option.Some((1, 99));
+    print_kv("opt_tuple_eq", ta == tb);
+    print_kv("opt_tuple_neq", ta == tc);
+
+    // Option<[i32; 3]> exercises dispatch into S107's array_eq.
+    let aa: Option<[i32; 3]> = Option.Some([1, 2, 3]);
+    let ab: Option<[i32; 3]> = Option.Some([1, 2, 3]);
+    let ac: Option<[i32; 3]> = Option.Some([1, 2, 99]);
+    print_kv("opt_array_eq", aa == ab);
+    print_kv("opt_array_neq", aa == ac);
+
+    // &Option<T> reference shape.
+    let p: Option<i32> = Option.Some(5);
+    let q: Option<i32> = Option.Some(5);
+    let r: Option<i32> = Option.Some(7);
+    let pr: &Option<i32> = &p;
+    let qr: &Option<i32> = &q;
+    let rr: &Option<i32> = &r;
+    print_kv("ref_opt_eq", pr == qr);
+    print_kv("ref_opt_neq", pr == rr);
+
+    // &Result<T, E> reference shape.
+    let s1: Result<i32, i32> = Result.Ok(11);
+    let s2: Result<i32, i32> = Result.Ok(11);
+    let s3: Result<i32, i32> = Result.Err(22);
+    let s1r: &Result<i32, i32> = &s1;
+    let s2r: &Result<i32, i32> = &s2;
+    let s3r: &Result<i32, i32> = &s3;
+    print_kv("ref_res_eq", s1r == s2r);
+    print_kv("ref_res_neq", s1r == s3r);
+
+    // Fn param Option<i32> — value-shape on call boundary.
+    let fa: Option<i32> = Option.Some(33);
+    let fb: Option<i32> = Option.Some(33);
+    let fc: Option<i32> = Option.Some(44);
+    print_kv("fn_param_opt_eq", opt_arg_eq(fa, fb));
+    print_kv("fn_param_opt_neq", opt_arg_eq(fa, fc));
+
+    0
+}
