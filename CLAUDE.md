@@ -297,7 +297,9 @@ Run each tool with `--help` or see its header comments for detailed usage.
 
 ## Key Patterns (Mistake Prevention)
 
+- **No workarounds. Ever.** When a compiler bug, missing feature, or spec gap blocks you, fix it at root or file a bug report with reproducible steps — never code around it. First ask whether the construct *should* be supported: the spec arbitrates, not intuition, and it cuts both ways (some apparent Rust-isms, like `ref` patterns, ARE in Blood's grammar).
 - **Interner mismatch:** AST parser and HIR lowering use different string interners. Re-intern via `ctx.span_to_string(span)` + `ctx.intern()` when creating HIR items from AST data.
+- **Region-allocated growth corruption:** any long-lived global mutable structure (interner, cache, registry) that grows a Vec/HashMap while a transient region is active (e.g. `mir_region`) gets the reallocated backing buffer placed in that region — dangling after `region_reset`, segfaulting at scale during self-compilation. Bracket growth with `region_deactivate_get()` / `region_activate()` (canonical pattern: `type_intern.blood` `intern()`). Bit 4× in one week: dd8ad25, 0a32199, d67a282, 15b3de9.
 - **Unresolved types in MIR expressions:** MIR local types are resolved (`apply_substs_id` runs after `ctx.finish()`), but expression types during MIR lowering are still `Infer(TyVarId)`. Use `ctx.resolve_type()` to get concrete types before type-based decisions in MIR lowering code.
 - **Field resolution keys:** Use `name.span.start` (field NAME position), not `expr.span.start`. Composite key: `(body_def_id, name_span_start)`.
 - **Four `type_to_llvm_with_ctx` functions:** `codegen_ctx` (method, no generics), `codegen_stmt` (standalone, &Type, full generics), `codegen_size` (standalone, &Type, ADT registry only), `codegen_size::type_to_llvm_with_ctx_id` (TyId, full generics + fast path — preferred).
