@@ -598,8 +598,15 @@ do_build_libmprompt() {
         -I"$mp_src" \
         "$mp_src/main.c" -o "$mp_build/mprompt.o"
 
-    # Platform-specific assembly (x86-64 Linux)
-    "$CLANG" -c -O2 -fPIC \
+    # Platform-specific assembly (x86-64 Linux).
+    #
+    # --noexecstack: upstream longjmp_amd64.S carries no .note.GNU-stack section.
+    # An ELF object without one makes ld mark the whole program's stack
+    # executable, and this object is embedded in the runtime archive, so every
+    # binary Blood produced -- the compiler, the seed, and all user programs --
+    # shipped with an RWE stack (NX disabled). The flag adds only that note;
+    # symbols and .text are byte-identical. Fixed here rather than in vendor/.
+    "$CLANG" -c -O2 -fPIC -Wa,--noexecstack \
         "$mp_src/asm/longjmp_amd64.S" -o "$mp_build/longjmp_amd64.o"
 
     ar rcs "$mp_build/libmprompt.a" "$mp_build/mprompt.o" "$mp_build/longjmp_amd64.o"
