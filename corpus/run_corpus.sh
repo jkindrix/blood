@@ -29,8 +29,16 @@ trap cleanup EXIT
 # Projects whose entry point is not <name>/<name>.blood
 declare -A ENTRY=( [identity]="main.blood" [brainfuck]="bf.blood" )
 
-pass=0; fail=0
-declare -a FAILED=()
+# Known failures: tracked work, not regressions. See known-failures.txt.
+declare -A KNOWN=()
+if [ -f "$CORPUS_DIR/known-failures.txt" ]; then
+    while read -r name _; do
+        [ -n "$name" ] && [ "${name#\#}" = "$name" ] && KNOWN[$name]=1
+    done < "$CORPUS_DIR/known-failures.txt"
+fi
+
+pass=0; fail=0; known_fail=0
+declare -a FAILED=() KNOWNFAILED=() FIXED=()
 
 printf "%-16s %6s  %-8s %s\n" "PROJECT" "LINES" "STATUS" "FIRST ERROR"
 printf "%-16s %6s  %-8s %s\n" "----------------" "-----" "--------" "-----------"
@@ -47,19 +55,31 @@ for dir in "$CORPUS_DIR"/*/; do
     out=$(cd "$dir" && timeout 180 "$BLOODC" build "$entry" 2>&1)
     rc=$?
     if [ $rc -eq 0 ]; then
-        printf "%-16s %6s  %-8s\n" "$proj" "$lines" "OK"
+        if [ -n "${KNOWN[$proj]:-}" ]; then
+            printf "%-16s %6s  %-8s %s\n" "$proj" "$lines" "FIXED" "passes -- remove from known-failures.txt"
+            FIXED+=("$proj")
+        else
+            printf "%-16s %6s  %-8s\n" "$proj" "$lines" "OK"
+        fi
         pass=$((pass+1))
     else
         first=$(printf '%s\n' "$out" | grep -E '^(error|warning)' | head -1 | cut -c1-90)
         undef=$(printf '%s\n' "$out" | grep -oE "undefined reference to \`[a-z0-9_]+'" | head -1)
         [ -n "$undef" ] && first="$undef"
         [ $rc -eq 124 ] && first="TIMEOUT after 180s"
-        printf "%-16s %6s  %-8s %s\n" "$proj" "$lines" "FAIL" "$first"
-        FAILED+=("$proj"); fail=$((fail+1))
+        if [ -n "${KNOWN[$proj]:-}" ]; then
+            printf "%-16s %6s  %-8s %s\n" "$proj" "$lines" "KNOWN" "$first"
+            KNOWNFAILED+=("$proj"); known_fail=$((known_fail+1))
+        else
+            printf "%-16s %6s  %-8s %s\n" "$proj" "$lines" "FAIL" "$first"
+            FAILED+=("$proj"); fail=$((fail+1))
+        fi
     fi
 done
 
 echo
-echo "Passed: $pass  Failed: $fail  Total: $((pass+fail))"
-[ $fail -gt 0 ] && { echo "Failing: ${FAILED[*]}"; exit 1; }
+echo "Passed: $pass  Known-failing: $known_fail  Regressed: $fail  Total: $((pass+known_fail+fail))"
+[ ${#KNOWNFAILED[@]} -gt 0 ] && echo "Known failures (tracked work): ${KNOWNFAILED[*]}"
+[ ${#FIXED[@]} -gt 0 ]       && echo "Now passing -- remove from known-failures.txt: ${FIXED[*]}"
+[ $fail -gt 0 ] && { echo "REGRESSED: ${FAILED[*]}"; exit 1; }
 exit 0

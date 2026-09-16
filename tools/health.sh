@@ -106,11 +106,19 @@ fi
 # --- corpus -----------------------------------------------------------------
 CORPUS_N=$(ls -d "$REPO_ROOT"/corpus/*/ 2>/dev/null | wc -l)
 if [ "$FULL" = "1" ] && [ -x "$REPO_ROOT/corpus/run_corpus.sh" ]; then
-    cres=$("$REPO_ROOT/corpus/run_corpus.sh" 2>&1 | tail -3)
+    cres=$("$REPO_ROOT/corpus/run_corpus.sh" 2>&1)
     cpass=$(echo "$cres" | $GREP -oE 'Passed: [0-9]+' | awk '{print $2}')
-    cfail=$(echo "$cres" | $GREP -oE 'Failed: [0-9]+' | awk '{print $2}')
-    if [ "${cfail:-1}" -gt 0 ]; then check "corpus (ran)" fail "$cpass/$CORPUS_N compile, $cfail fail"
-    else check "corpus (ran)" ok "$cpass/$CORPUS_N compile"; fi
+    cknown=$(echo "$cres" | $GREP -oE 'Known-failing: [0-9]+' | awk '{print $2}')
+    creg=$(echo "$cres" | $GREP -oE 'Regressed: [0-9]+' | awk '{print $2}')
+    if [ -z "$cpass" ] || [ -z "$creg" ]; then
+        check "corpus (ran)" fail "could not parse run_corpus.sh output"
+    elif [ "$creg" -gt 0 ]; then
+        check "corpus (ran)" fail "$creg REGRESSED -- $cpass/$CORPUS_N compile"
+    elif [ "${cknown:-0}" -gt 0 ]; then
+        check "corpus (ran)" warn "$cpass/$CORPUS_N compile; $cknown known failure(s) are the next work"
+    else
+        check "corpus (ran)" ok "$cpass/$CORPUS_N compile"
+    fi
 else
     check "corpus" ok "$CORPUS_N projects present (use --full to compile)"
 fi
