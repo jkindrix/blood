@@ -169,6 +169,24 @@ else
     check "CI automation" fail "no workflow runs without a human triggering it"
 fi
 
+# --- last CI result ----------------------------------------------------------
+# CI failure mail goes to the repository owner. If nobody reads it, a red trunk is
+# invisible -- unless the next session's first command reports it. That is this.
+if command -v gh >/dev/null 2>&1; then
+    last=$(timeout 20 gh run list --workflow=health.yml --branch main --limit 5 \
+        --json status,conclusion,headSha,createdAt \
+        -q '[.[] | select(.status=="completed")][0] | "\(.conclusion) \(.headSha[0:8]) \(.createdAt[0:10])"' 2>/dev/null)
+    if [ -z "$last" ]; then
+        check "last CI run" warn "unavailable (gh not authenticated, offline, or no completed run)"
+    else
+        set -- $last
+        if [ "$1" = "success" ]; then check "last CI run" ok "success on $2 ($3)"
+        else check "last CI run" fail "$1 on $2 ($3) — gh run list --workflow=health.yml"; fi
+    fi
+else
+    check "last CI run" warn "gh not installed — cannot see CI results"
+fi
+
 # --- working tree -----------------------------------------------------------
 dirty=$(git status --porcelain | wc -l)
 if [ "$dirty" -gt 0 ]; then check "working tree" warn "$dirty uncommitted path(s)"
