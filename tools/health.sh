@@ -78,7 +78,14 @@ else
 fi
 
 # --- golden tests (from the last build log; .logs is gitignored) ------------
-last_log=$(ls -t "$SELFHOST"/.logs/build_*.log 2>/dev/null | head -1)
+# The newest log is often a build or gate log with no golden result, so search
+# newest-first for the most recent log that actually contains one.
+last_log=""
+for lg in $(ls -t "$SELFHOST"/.logs/build_*.log 2>/dev/null); do
+    if $GREP -qE 'Passed: [0-9]+  Compile fail: [0-9]+  Run fail: [0-9]+' "$lg"; then
+        last_log="$lg"; break
+    fi
+done
 GOLDEN_N="unknown"
 if [ -n "$last_log" ]; then
     line=$($GREP -oE 'Passed: [0-9]+  Compile fail: [0-9]+  Run fail: [0-9]+' "$last_log" | tail -1)
@@ -120,7 +127,10 @@ else
 fi
 
 # --- documentation claims vs measurement ------------------------------------
-if [ "$GOLDEN_N" != "unknown" ]; then
+if [ "$GOLDEN_N" = "unknown" ]; then
+    # Never skip silently: an unverifiable claim is a finding, not an absence.
+    check "README claim" warn "cannot verify — no measured golden count to compare"
+else
     claimed=$($GREP -oE '\*\*[0-9]+/[0-9]+ golden tests\*\*|[0-9]+/[0-9]+ golden tests' README.md 2>/dev/null | head -1 | $GREP -oE '^[0-9]+|[0-9]+' | head -1)
     if [ -n "$claimed" ] && [ "$claimed" != "$GOLDEN_N" ]; then
         check "README claim" fail "says $claimed golden tests, measured $GOLDEN_N"
