@@ -15,8 +15,16 @@ Blood synthesizes five cutting-edge programming language innovations:
 ## Status
 
 > **Pre-release — research compiler.** No version tag yet. See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the honest status of each component.
+>
+> The safety-critical framing below describes what Blood is **designed for**, not what it
+> is certified or ready for. No qualification, no toolchain assessment, no DO-178C
+> artifacts exist. Treat it as a design target.
 
-The self-hosted compiler passes **576/576 golden tests**. It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
+**Verify rather than trust this page:** `./tools/health.sh` measures the repository and
+fails if a claim here has drifted from reality. The numbers above were wrong for months
+before that check existed.
+
+The self-hosted compiler passes **713/713 golden tests**, and 28 of the 30 real programs in [`corpus/`](corpus/) compile. It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -31,7 +39,7 @@ The self-hosted compiler passes **576/576 golden tests**. It compiles itself thr
 | Fibers / Concurrency | ❌ Not integrated | pthread-based spawn; no M:N scheduler, no mutex/channel primitives wired |
 | Safety Checks | ✅ Default | Definite init, linearity, bounds, dangling ref rejection all enabled |
 | Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. VFT dispatch wiring not hooked up |
-| Formal Proofs | ⚠️ Mostly complete | 273 Coq theorems/lemmas (219 proved, 14 Admitted, 0 Axioms). Covers a core calculus formalization, not the compiler artifact |
+| Formal Proofs | ✅ Complete (for what they cover) | 22 theory files, 214 `Qed.`, **0 `Admitted.`, 0 `Axiom`**. Covers a core calculus formalization — there is no mechanized link to the compiler artifact |
 
 **Legend**: ✅ Working | ⚠️ Mostly working with known gaps | 🔶 Partial | ❌ Not integrated
 

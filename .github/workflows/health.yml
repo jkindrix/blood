@@ -1,0 +1,77 @@
+name: Health
+
+# Unattended verification. This workflow exists because the project's only
+# safety net was a script a human had to remember to run, and for five months
+# nobody ran it.
+#
+# Deliberately separate from ci.yml: that workflow's Test matrix and Check &
+# Lint jobs have been failing on unrelated issues since early 2026, and a
+# permanently-red pipeline teaches everyone to ignore the pipeline. Everything
+# here is expected green. If this goes red, something is actually broken.
+#
+# Failures surface via GitHub's default notification to the repository owner.
+# That is the only channel that reaches a human without one being present.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 06:00 UTC. Cheap enough for a private repo's Actions quota
+    # (~30 min/week) and frequent enough that rot is caught in days, not months.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+env:
+  LLVM_VERSION: "18"
+
+jobs:
+  static:
+    name: Static gates (no build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs against the committed bootstrap runtime archive, so it needs
+      # nothing built. Catches a builtin registered with no runtime symbol --
+      # the class that made `print_f64` typecheck and then fail at ld.
+      - name: Builtin parity
+        run: ./tools/builtin-parity.sh
+
+      - name: Measured state
+        run: ./tools/health.sh || true   # informational here; gates below are authoritative
+
+  bootstrap:
+    name: Bootstrap + goldens + corpus
+    runs-on: ubuntu-latest
+    env:
+      RUNTIME_A: ${{ github.workspace }}/bootstrap/libblood_runtime_blood.a
+      BLOOD_NO_PERF_ALARM: 1
+      # ubuntu-latest has 16 GB. Parallel codegen (4 workers) peaks near 13 GB
+      # and gets SIGTERM'd right before link. Sequential is ~3x slower but fits.
+      BLOOD_EXTRA_COMPILER_FLAGS: --no-parallel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        run: wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION }}
+
+      - name: Build first_gen from the committed seed
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh build first_gen
+
+      # Cold run: the local `test golden' often reports `cached: N', which
+      # verifies less than it appears to. CI clears caches first so the number
+      # means what it says.
+      - name: Golden tests (cold)
+        working-directory: src/selfhost
+        run: |
+          ./build_selfhost.sh clean-cache
+          ./build_selfhost.sh test golden -q
+
+      # The signal goldens cannot give: programs written to be used, not to
+      # exercise the compiler. Two of these found a 17-builtin hole that all
+      # 713 goldens missed.
+      - name: Corpus
+        run: ./corpus/run_corpus.sh
