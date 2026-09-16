@@ -18,12 +18,14 @@ Measured, not remembered:
 ./run_corpus.sh          # compile every project with the current first_gen
 ```
 
-Last measured 2026-09-16: **28 of 30 compile**. `brainfuck` and `sortbench` fail at link
-against phantom builtins (`print_char`, `print_u64`) — see `tools/builtin-parity.sh`.
+Known failures, each with its reason, are listed in [`known-failures.txt`](known-failures.txt).
+The runner fails only on a failure that is *not* listed there — a regression — and tells you
+when a listed program starts passing.
 
-Do not hand-maintain a pass/fail table here. It will go stale, and a stale table is worse
-than no table: the entry claiming "trait methods + effect annotations rejected — CRITICAL"
-sat here for five months after the bug was fixed.
+Do not write pass/fail counts into this file. They go stale: this README said "28 of 30"
+for a few hours before CI showed one of those passes came from state left on a developer
+machine. The entry claiming "trait methods + effect annotations rejected — CRITICAL" sat
+here for five months after the bug was fixed.
 
 ## Inherited claims, unverified (March 2026)
 

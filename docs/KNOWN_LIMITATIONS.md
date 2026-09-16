@@ -138,6 +138,16 @@ checking and then emits IR that `llc` rejects, with no source diagnostic.
 path denotes a value (then generate code for it) or not (then reject it at typeck).
 README's quick example uses the bare form.
 
+### ~~GAP-14: Every produced binary had an executable stack~~ RESOLVED (2026-09-16)
+
+`GNU_STACK` was `RWE` — NX disabled — on the compiler, the committed seed, and every user
+program. Upstream libmprompt's `longjmp_amd64.S` has no `.note.GNU-stack` section, `ld`
+marks the whole program's stack executable when any input object lacks one, and that
+object is embedded in the runtime archive. `build_selfhost.sh` now assembles it with
+`-Wa,--noexecstack`, which adds only the note (symbols and `.text` byte-identical).
+Verified `RW` on all three artifact kinds after a full gate. **Binaries built before
+commit `211209f` still have executable stacks** — rebuild them.
+
 ## Design decisions (intentional behavior, not gaps)
 
 ### gen=0 for stack-tier references
