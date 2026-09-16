@@ -288,6 +288,7 @@ pub fn main() -> i32 {
     // Parse command line arguments
     // Note: Without FFI for argument access, we use a stub
     let args = parse_args_stub();
+    common.set_timings(args.timings);
 
     // Execute the command
     match &args.command {
@@ -2869,14 +2870,16 @@ fn codegen_pass2(
         region_activate(saved_codegen_region);
 
         // Print perf summary (parallel replaces the per-phase breakdown)
-        main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
-        main_helpers.eprint_label_usize(" parallel=", num_workers);
-        main_helpers.eprint_label_u64(" wall_ms=", t_parallel_end - t_parallel_start);
-        eprint_str("\n");
-        // BUG-6 investigation: did the numeric-default workaround fire?
-        main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
-        main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
-        eprint_str("\n");
+        if common.timings() {
+            main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
+            main_helpers.eprint_label_usize(" parallel=", num_workers);
+            main_helpers.eprint_label_u64(" wall_ms=", t_parallel_end - t_parallel_start);
+            eprint_str("\n");
+            // BUG-6 investigation: did the numeric-default workaround fire?
+            main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
+            main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
+            eprint_str("\n");
+        }
 
         return CodegenPass2Result {
             mono_requests: all_mono_requests,
@@ -2931,7 +2934,7 @@ fn codegen_pass2(
             }
         }
 
-        if i % 500 == 0 {
+        if common.timings() && i % 500 == 0 {
             main_helpers.eprint_label_usize("\n  [fn ", i);
             main_helpers.eprint_label_usize("/", total_items);
             eprint_str("]");
@@ -3426,80 +3429,82 @@ fn codegen_pass2(
 
     // Perf diagnostics (Rev 4): print sub-phase totals so regressions in
     // any individual phase are immediately visible in build output.
-    main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
-    main_helpers.eprint_label_u64(" cache_ms=", t_cache_check_total);
-    main_helpers.eprint_label_u64(" mir_lower_ms=", t_mir_lower_total);
-    main_helpers.eprint_label_u64(" bc01_ms=", t_bc01_scan_total);
-    main_helpers.eprint_label_u64(" init_lin_ms=", t_init_lin_total);
-    main_helpers.eprint_label_u64(" codegen_ms=", t_codegen_total);
-    eprint_str("\n");
+    if common.timings() {
+        main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
+        main_helpers.eprint_label_u64(" cache_ms=", t_cache_check_total);
+        main_helpers.eprint_label_u64(" mir_lower_ms=", t_mir_lower_total);
+        main_helpers.eprint_label_u64(" bc01_ms=", t_bc01_scan_total);
+        main_helpers.eprint_label_u64(" init_lin_ms=", t_init_lin_total);
+        main_helpers.eprint_label_u64(" codegen_ms=", t_codegen_total);
+        eprint_str("\n");
 
-    // Sub-phase breakdown inside mir_lower itself (populated by
-    // mir_lower.lower_body and lower_body_with_const_info). These timers
-    // decompose the mir_lower_ms bucket above.
-    main_helpers.eprint_label_u64("  [mir_lower] setup_ms=", mir_lower.mir_lower_t_setup_ms());
-    main_helpers.eprint_label_u64(" expr_ms=", mir_lower.mir_lower_t_expr_ms());
-    main_helpers.eprint_label_u64(" finish_ms=", mir_lower.mir_lower_t_finish_ms());
-    main_helpers.eprint_label_u64(" resolve_locals_ms=", mir_lower.mir_lower_t_resolve_ms());
-    eprint_str("\n");
+        // Sub-phase breakdown inside mir_lower itself (populated by
+        // mir_lower.lower_body and lower_body_with_const_info). These timers
+        // decompose the mir_lower_ms bucket above.
+        main_helpers.eprint_label_u64("  [mir_lower] setup_ms=", mir_lower.mir_lower_t_setup_ms());
+        main_helpers.eprint_label_u64(" expr_ms=", mir_lower.mir_lower_t_expr_ms());
+        main_helpers.eprint_label_u64(" finish_ms=", mir_lower.mir_lower_t_finish_ms());
+        main_helpers.eprint_label_u64(" resolve_locals_ms=", mir_lower.mir_lower_t_resolve_ms());
+        eprint_str("\n");
 
-    // Sub-phase breakdown inside codegen.generate_function_with_ctx itself.
-    // These timers decompose the codegen_ms bucket above.
-    main_helpers.eprint_label_u64("  [codegen fn] setup_ms=", codegen.codegen_t_setup_ms());
-    main_helpers.eprint_label_u64(" escape_ms=", codegen.codegen_t_escape_ms());
-    main_helpers.eprint_label_u64(" allocas_ms=", codegen.codegen_t_allocas_ms());
-    main_helpers.eprint_label_u64(" blocks_ms=", codegen.codegen_t_blocks_ms());
-    main_helpers.eprint_label_u64(" footer_ms=", codegen.codegen_t_footer_ms());
-    eprint_str("\n");
+        // Sub-phase breakdown inside codegen.generate_function_with_ctx itself.
+        // These timers decompose the codegen_ms bucket above.
+        main_helpers.eprint_label_u64("  [codegen fn] setup_ms=", codegen.codegen_t_setup_ms());
+        main_helpers.eprint_label_u64(" escape_ms=", codegen.codegen_t_escape_ms());
+        main_helpers.eprint_label_u64(" allocas_ms=", codegen.codegen_t_allocas_ms());
+        main_helpers.eprint_label_u64(" blocks_ms=", codegen.codegen_t_blocks_ms());
+        main_helpers.eprint_label_u64(" footer_ms=", codegen.codegen_t_footer_ms());
+        eprint_str("\n");
 
-    // Convergence stats for analyze_init's fixed-point dataflow.
-    // total/calls = average iterations per fn; max = worst case;
-    // hit_cap > 0 means some fn did not converge in 100 iterations.
-    main_helpers.eprint_label_u64("  [mir_init] calls=", mir_init.init_call_count());
-    main_helpers.eprint_label_u64(" iter_total=", mir_init.init_iter_total());
-    main_helpers.eprint_label_u32(" iter_max=", mir_init.init_iter_max());
-    main_helpers.eprint_label_u32(" hit_cap=", mir_init.init_hit_cap());
-    main_helpers.eprint_label_u64(" setup_ms=", mir_init.init_t_setup_ms());
-    main_helpers.eprint_label_u64(" fixpoint_ms=", mir_init.init_t_fixpoint_ms());
-    main_helpers.eprint_label_u64(" error_pass_ms=", mir_init.init_t_error_pass_ms());
-    eprint_str("\n");
+        // Convergence stats for analyze_init's fixed-point dataflow.
+        // total/calls = average iterations per fn; max = worst case;
+        // hit_cap > 0 means some fn did not converge in 100 iterations.
+        main_helpers.eprint_label_u64("  [mir_init] calls=", mir_init.init_call_count());
+        main_helpers.eprint_label_u64(" iter_total=", mir_init.init_iter_total());
+        main_helpers.eprint_label_u32(" iter_max=", mir_init.init_iter_max());
+        main_helpers.eprint_label_u32(" hit_cap=", mir_init.init_hit_cap());
+        main_helpers.eprint_label_u64(" setup_ms=", mir_init.init_t_setup_ms());
+        main_helpers.eprint_label_u64(" fixpoint_ms=", mir_init.init_t_fixpoint_ms());
+        main_helpers.eprint_label_u64(" error_pass_ms=", mir_init.init_t_error_pass_ms());
+        eprint_str("\n");
 
-    // Per-arm breakdown of emit_statement (codegen blocks_ms hot path).
-    // 100% of selfhost statements are Assign; the place/type/rvalue split
-    // identifies which sub-call dominates.
-    main_helpers.eprint_label_u64("  [stmt] total_ms=", codegen_stmt.stmt_t_total_ms());
-    main_helpers.eprint_label_u64(" assign_ms=", codegen_stmt.stmt_t_assign_ms());
-    main_helpers.eprint_label_u64(" calls=", codegen_stmt.stmt_t_count_total());
-    main_helpers.eprint_label_u64(" assign_calls=", codegen_stmt.stmt_t_count_assign());
-    eprint_str("\n");
-    main_helpers.eprint_label_u64("  [stmt assign] place_ms=", codegen_stmt.stmt_t_assign_place_ms());
-    main_helpers.eprint_label_u64(" type_ms=", codegen_stmt.stmt_t_assign_type_ms());
-    main_helpers.eprint_label_u64(" rvalue_ms=", codegen_stmt.stmt_t_assign_rvalue_ms());
-    eprint_str("\n");
+        // Per-arm breakdown of emit_statement (codegen blocks_ms hot path).
+        // 100% of selfhost statements are Assign; the place/type/rvalue split
+        // identifies which sub-call dominates.
+        main_helpers.eprint_label_u64("  [stmt] total_ms=", codegen_stmt.stmt_t_total_ms());
+        main_helpers.eprint_label_u64(" assign_ms=", codegen_stmt.stmt_t_assign_ms());
+        main_helpers.eprint_label_u64(" calls=", codegen_stmt.stmt_t_count_total());
+        main_helpers.eprint_label_u64(" assign_calls=", codegen_stmt.stmt_t_count_assign());
+        eprint_str("\n");
+        main_helpers.eprint_label_u64("  [stmt assign] place_ms=", codegen_stmt.stmt_t_assign_place_ms());
+        main_helpers.eprint_label_u64(" type_ms=", codegen_stmt.stmt_t_assign_type_ms());
+        main_helpers.eprint_label_u64(" rvalue_ms=", codegen_stmt.stmt_t_assign_rvalue_ms());
+        eprint_str("\n");
 
-    // Per-Rvalue-kind breakdown. The Assign rvalue_ms bucket is the single
-    // biggest line in codegen pass2; this decomposes it by kind so future
-    // sessions can target the slowest arm directly.
-    main_helpers.eprint_label_u64("  [rvalue] use=", codegen_expr.rv_t_use_ms());
-    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_use());
-    main_helpers.eprint_label_u64(" ref=", codegen_expr.rv_t_ref_ms());
-    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_ref());
-    main_helpers.eprint_label_u64(" binop=", codegen_expr.rv_t_binop_ms());
-    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_binop());
-    main_helpers.eprint_label_u64(" agg=", codegen_expr.rv_t_agg_ms());
-    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_agg());
-    main_helpers.eprint_label_u64(" cast=", codegen_expr.rv_t_cast_ms());
-    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_cast());
-    eprint_str("\n");
+        // Per-Rvalue-kind breakdown. The Assign rvalue_ms bucket is the single
+        // biggest line in codegen pass2; this decomposes it by kind so future
+        // sessions can target the slowest arm directly.
+        main_helpers.eprint_label_u64("  [rvalue] use=", codegen_expr.rv_t_use_ms());
+        main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_use());
+        main_helpers.eprint_label_u64(" ref=", codegen_expr.rv_t_ref_ms());
+        main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_ref());
+        main_helpers.eprint_label_u64(" binop=", codegen_expr.rv_t_binop_ms());
+        main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_binop());
+        main_helpers.eprint_label_u64(" agg=", codegen_expr.rv_t_agg_ms());
+        main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_agg());
+        main_helpers.eprint_label_u64(" cast=", codegen_expr.rv_t_cast_ms());
+        main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_cast());
+        eprint_str("\n");
 
-    // BUG-6 investigation: did the numeric-default workaround actually fire?
-    main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
-    main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
-    eprint_str("\n");
+        // BUG-6 investigation: did the numeric-default workaround actually fire?
+        main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
+        main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
+        eprint_str("\n");
 
-    if skipped_count > 0 {
-        main_helpers.eprint_label_usize("\n  [skipped ", skipped_count);
-        eprint_str(" cached fns]");
+        if skipped_count > 0 {
+            main_helpers.eprint_label_usize("\n  [skipped ", skipped_count);
+            eprint_str(" cached fns]");
+        }
     }
 
     // Report top functions by IR size if --alloc-profile
@@ -3799,9 +3804,11 @@ fn try_load_cached_ir(output_path: &str, cache_dir: &str, source_hash: u64) -> b
     if !file_exists(cached_path.as_str()) { return false; }
     let cached_content: &str = file_read_to_string(cached_path.as_str());
     file_write_string(output_path, cached_content);
-    eprint_str("[CACHE HIT] ");
-    eprint_str(output_path);
-    eprint_str("\n");
+    if common.timings() {
+        eprint_str("[CACHE HIT] ");
+        eprint_str(output_path);
+        eprint_str("\n");
+    }
     true
 }
 
@@ -3884,17 +3891,17 @@ fn begin_codegen_module_with_adts(
     args: &Args,
     lower_result: &hir_lower_ctx.LowerResult,
 ) -> codegen_ctx.CodegenCtx {
-    eprint_str("[begin_streaming]");
+    if common.timings() { eprint_str("[begin_streaming]"); }
     let source_filename = source.file_name(path);
     let mod_count: u32 = lower_result.module_names.len() as u32;
     let main_unit = codegen.main_returns_unit(&lower_result.items);
     let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count, main_unit);
     ctx.trace_codegen = args.trace_codegen;
     ctx.vft_dispatch = args.vft_dispatch;
-    eprint_str("[done]");
+    if common.timings() { eprint_str("[done]"); }
 
     // Register builtin ADT types (Vec, String, HashMap, Box, Option, Result) in the ADT registry
-    eprint_str("[register_adts]");
+    if common.timings() { eprint_str("[register_adts]"); }
     codegen.register_builtin_adts(
         &mut ctx,
         &lower_result.builtin_vec_def,
@@ -3939,9 +3946,9 @@ fn begin_codegen_module_with_adts(
         &Option.Some(ref fid) => { ctx.frozen_def_id = fid.index; }
         &Option.None => {}
     }
-    eprint_str("[populate_adt]");
+    if common.timings() { eprint_str("[populate_adt]"); }
     codegen.populate_adt_registry(&mut ctx, &lower_result.items);
-    eprint_str("[done]");
+    if common.timings() { eprint_str("[done]"); }
 
     if args.dump_layouts {
         dump_adt_layouts(&ctx);
@@ -4261,7 +4268,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let mod_count: u32 = lower_result.module_names.len() as u32;
     let mut ctx = begin_codegen_module_with_adts(path, output_path, args, &lower_result);
 
-    eprint_str("[statics]");
+    if common.timings() { eprint_str("[statics]"); }
     // Collect static DefIds first - needed for name registration filtering.
     let static_def_ids = collect_static_def_ids(&lower_result);
 
@@ -4269,11 +4276,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // This must happen before any functions that reference statics.
     // Also registers static names in ctx using the interner.
     codegen_streaming.emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies, &lower_result.thread_local_def_ids);
-    eprint_str("[pass0_done]");
+    if common.timings() { eprint_str("[pass0_done]"); }
 
     // Passes 1a-1d: Register all def_names in codegen context
     register_codegen_names(&mut ctx, &lower_result, &typeck_result, &static_def_ids);
-    eprint_str("[pass1_done]");
+    if common.timings() { eprint_str("[pass1_done]"); }
 
     let handler_info = collect_and_register_handlers(&mut ctx, &lower_result);
 
@@ -4287,7 +4294,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Type-generic bodies are NOT skipped — they're compiled with type erasure as fallback.
     // Monomorphized copies are generated in pass 2b for calls needing concrete types.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &generics.const_generic_body_ids);
-    common.eprint_wrap_usize("[worklist:", worklist.items.len(), "]");
+    if common.timings() { common.eprint_wrap_usize("[worklist:", worklist.items.len(), "]"); }
 
     mem_profile_at(args, "Before codegen pass2", 0 as u64, hir_region, 0 as u64);
 
@@ -4306,7 +4313,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
-    eprint_str("[pass2_start]");
+    if common.timings() { eprint_str("[pass2_start]"); }
     let pass2_result = codegen_pass2(
         &mut ctx, &worklist, &lower_result, &typeck_result, output_path, args,
         generics.has_const_generics, &generics.const_generic_fn_set, &generics.const_generic_param_counts,
@@ -4314,7 +4321,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &generics.type_generic_fn_set, &typeck_result.type_generic_calls,
         &skip_modules,
     );
-    eprint_str("[pass2_done]");
+    if common.timings() { eprint_str("[pass2_done]"); }
 
     // Abort build if MIR lowering had errors (field resolution failures, etc.).
     // All functions were still processed to collect all errors, but the emitted IR
@@ -5607,7 +5614,7 @@ fn compile_monomorphized_bodies(
     // the inner type-generic callee and emits a MonoRequest for it.
     type_generic_fn_set: &Vec<u32>,
 ) {
-    common.eprint_wrap_usize("[mono:", pass2_result.mono_requests.len(), "]");
+    if common.timings() { common.eprint_wrap_usize("[mono:", pass2_result.mono_requests.len(), "]"); }
 
     // Shared MIR region for monomorphization — created once, reset between functions.
     let mono_mir_region = region_create(4194304, 8589934592);

@@ -743,6 +743,20 @@ pub fn copy_spanned_symbol(ss: &SpannedSymbol) -> SpannedSymbol {
 // has no compiler-module dependencies, so every module can use these helpers.
 
 /// Prints `prefix + int_value + suffix` to stderr.
+// Compiler-internal phase instrumentation is OFF unless --timings is passed.
+//
+// These decompositions were marked "permanent" in typeck_driver.blood and printed
+// on every compile, including a three-line hello world. A compiler that narrates
+// its own type checker to a user reads as a debugging harness, not a tool. The
+// numbers are still valuable -- they are just diagnostics, not output.
+//
+// Set once from main.blood after argument parsing; read from phases that have no
+// access to the parsed arguments.
+static mut TIMINGS_ENABLED: bool = false;
+
+pub fn set_timings(on: bool) { @unsafe { TIMINGS_ENABLED = on; } }
+pub fn timings() -> bool { @unsafe { TIMINGS_ENABLED } }
+
 pub fn eprint_wrap_i32(prefix: &str, value: i32, suffix: &str) {
     eprint_str(prefix);
     eprint_str(int_to_string(value));

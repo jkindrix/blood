@@ -167,21 +167,26 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     lower_external_module_fn_bodies(&mut ctx, &parsed_module_cache);
     let t_p4b_ms = blood_clock_millis() - t_p4b;
 
-    // Permanent instrumentation: print HIR lowering phase breakdown so
-    // regressions in any single phase are immediately visible in build logs.
-    common.eprint_wrap_u64("  [hir phases] p0=", t_p0_ms, " p1=");
-    common.eprint_wrap_u64("", t_p1_ms, " p2(decls)=");
-    common.eprint_wrap_u64("", t_p2_ms, " p3a(ext_decls)=");
-    common.eprint_wrap_u64("", t_p3a_ms, " p3pre(prelude+imports)=");
-    common.eprint_wrap_u64("", t_p3pre_ms, " p3b(main_decls)=");
-    common.eprint_wrap_u64("", t_p3b_ms, " p4(main_bodies)=");
-    common.eprint_wrap_u64("", t_p4_ms, " p4b(ext_bodies)=");
-    common.eprint_wrap_u64("", t_p4b_ms, "\n");
-    @unsafe {
-        common.eprint_wrap_u64("  [lem] calls=", LEM_CALL_COUNT, " read_ms=");
-        common.eprint_wrap_u64("", LEM_T_READ_MS, " parse_ms=");
-        common.eprint_wrap_u64("", LEM_T_PARSE_MS, " register_ms=");
-        common.eprint_wrap_u64("", LEM_T_REGISTER_MS, "\n");
+    // HIR lowering phase breakdown, gated on --timings. The build script passes
+    // --timings, so regressions stay visible in build logs without every user
+    // compile printing them.
+    if common.timings() {
+        common.eprint_wrap_u64("  [hir phases] p0=", t_p0_ms, " p1=");
+        common.eprint_wrap_u64("", t_p1_ms, " p2(decls)=");
+        common.eprint_wrap_u64("", t_p2_ms, " p3a(ext_decls)=");
+        common.eprint_wrap_u64("", t_p3a_ms, " p3pre(prelude+imports)=");
+        common.eprint_wrap_u64("", t_p3pre_ms, " p3b(main_decls)=");
+        common.eprint_wrap_u64("", t_p3b_ms, " p4(main_bodies)=");
+        common.eprint_wrap_u64("", t_p4_ms, " p4b(ext_bodies)=");
+        common.eprint_wrap_u64("", t_p4b_ms, "\n");
+    }
+    if common.timings() {
+        @unsafe {
+            common.eprint_wrap_u64("  [lem] calls=", LEM_CALL_COUNT, " read_ms=");
+            common.eprint_wrap_u64("", LEM_T_READ_MS, " parse_ms=");
+            common.eprint_wrap_u64("", LEM_T_PARSE_MS, " register_ms=");
+            common.eprint_wrap_u64("", LEM_T_REGISTER_MS, "\n");
+        }
     }
 
     // Check for errors from body lowering
