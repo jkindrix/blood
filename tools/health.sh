@@ -132,14 +132,18 @@ if [ "$GOLDEN_N" != "unknown" ]; then
 fi
 
 # --- CI ---------------------------------------------------------------------
-if [ -f .github/workflows/ci.yml ]; then
-    if $GREP -qE '^\s*(push|schedule):' .github/workflows/ci.yml; then
-        check "CI automation" ok "triggers active"
-    else
-        check "CI automation" fail "workflow_dispatch only — nothing runs unattended"
+unattended=""
+for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
+    [ -f "$wf" ] || continue
+    # A trigger is only unattended if it is not commented out.
+    if $GREP -qE '^\s*(push|schedule):' "$wf"; then
+        unattended+="$(basename "$wf") "
     fi
+done
+if [ -n "$unattended" ]; then
+    check "CI automation" ok "unattended: ${unattended% }"
 else
-    check "CI automation" fail "no ci.yml"
+    check "CI automation" fail "no workflow runs without a human triggering it"
 fi
 
 # --- working tree -----------------------------------------------------------
