@@ -20,7 +20,14 @@ export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$REPO_ROOT/src/selfhost/build/l
 
 [ -x "$BLOODC" ] || { echo "corpus: compiler not found: $BLOODC" >&2; exit 2; }
 
+# Build under an isolated HOME. The compiler reads $HOME/.blood/ (codebase store,
+# toolchain fallback); a developer machine has state there that a fresh CI runner
+# does not. Without this, `identity' passed locally against a codebase store left
+# over from March and failed in CI -- a false green from hidden machine state.
+ISOLATED_HOME="$(mktemp -d)"
+
 cleanup() {
+    rm -rf "$ISOLATED_HOME"
     [ "$KEEP" = "1" ] && return
     find "$CORPUS_DIR" -type d \( -name build -o -name '.blood-cache' \) -prune -exec rm -rf {} + 2>/dev/null
 }
@@ -32,8 +39,12 @@ declare -A ENTRY=( [identity]="main.blood" [brainfuck]="bf.blood" )
 # Known failures: tracked work, not regressions. See known-failures.txt.
 declare -A KNOWN=()
 if [ -f "$CORPUS_DIR/known-failures.txt" ]; then
-    while read -r name _; do
-        [ -n "$name" ] && [ "${name#\#}" = "$name" ] && KNOWN[$name]=1
+    # An entry starts in column 0. Indented lines continue the previous reason and
+    # must never register: a continuation beginning with a real project name
+    # would silently mask that project's regression.
+    while IFS= read -r line; do
+        case "$line" in ''|'#'*|[[:space:]]*) continue ;; esac
+        KNOWN[${line%%[[:space:]]*}]=1
     done < "$CORPUS_DIR/known-failures.txt"
 fi
 
@@ -52,7 +63,7 @@ for dir in "$CORPUS_DIR"/*/; do
         FAILED+=("$proj"); fail=$((fail+1)); continue
     fi
     lines=$(wc -l < "$src")
-    out=$(cd "$dir" && timeout 180 "$BLOODC" build "$entry" 2>&1)
+    out=$(cd "$dir" && HOME="$ISOLATED_HOME" timeout 180 "$BLOODC" build "$entry" 2>&1)
     rc=$?
     if [ $rc -eq 0 ]; then
         if [ -n "${KNOWN[$proj]:-}" ]; then
