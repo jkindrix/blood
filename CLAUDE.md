@@ -313,33 +313,92 @@ Run each tool with `--help` or see its header comments for detailed usage.
 - **Design evaluations**: `docs/design/IMPL_TRAIT.md`, `docs/design/COMPARISON_CHAINING.md`
 - **Compiler notes**: `src/selfhost/COMPILER_NOTES.md`
 - **Compiler perf notes**: `docs/internal/COMPILER_PERF.md` — dead-code linear-scan trap, closure rekeying trap, instrumentation timer reference, remaining hot spots
-- **Aether examples**: `~/blood-test/aether/`
+- **Real programs**: `corpus/` — 30 programs, 11,323 lines. (The previous flagship user
+  program, Aether, lived at `~/blood-test/aether/` outside version control and no longer
+  exists. That is why the corpus is now in the repository.)
 - **Bug history**: `tools/FAILURE_LOG.md`
 - **Session protocol**: `tools/AGENT_PROTOCOL.md`
 
 ## Current Work Intake
 
-Start with `.tmp/INDEX.md` for the file index. Working documents are organized by content type:
+**Run `./tools/health.sh` before anything else.** It measures the repository —
+compiler and seed age, runtime consistency, golden results and their staleness,
+phantom builtins, CI state, and whether README's claims still match reality. Every
+question below is answered from its output, not from memory and not from a document.
 
-- **`.tmp/WORK.md`** — What to work on next. Phases, milestones, blockers, deferred items.
-- **`.tmp/BUGS.md`** — All known bugs by compiler and severity.
-- **`.tmp/DECISIONS.md`** — Design decisions with the spec-first principle, 223-entry design reference, and decision provenance.
-- **`.tmp/GAPS.md`** — What's designed but not built, what was never designed.
+### What to work on next
 
-For methodology see `.tmp/METHODS.md`. For long-term plans see `.tmp/PLANS.md`. For deep-dive investigation logs see `.tmp/INVESTIGATIONS.md`.
+Work the first rule that fires. Do not skip ahead, and do not work two at once.
 
-Source material preserved in `.tmp/archive/` (26 files + tracks/).
+1. **Any `FAIL` in `./tools/health.sh`.** Fix it. Nothing else is in scope.
+2. **Any failure in `./corpus/run_corpus.sh`.** A real program that no longer compiles
+   outranks every internal gap, always. These are the only programs in the repository
+   written to be *used* rather than to exercise the compiler.
+3. **Any `PHANTOM` in `./tools/builtin-parity.sh`.** Pick one. Either implement it in
+   the runtime or reject it at typeck with a real diagnostic. Emitting a call to a symbol
+   that does not exist is not an acceptable third option.
+4. **The queue below**, in order. It is short on purpose.
 
-**To pick up work:**
-1. Read `.tmp/WORK.md` — items are organized by remediation phase (Phase 0 = soundness, up to Phase 6 = bounds/init), then non-remediation sections (compiler bugs, performance, test expansion, deferred items)
-2. Work phases in order: complete Phase N before moving to Phase N+1. Within non-remediation sections, prioritize by severity.
-3. For each item: read the relevant spec and both compilers. Check `.tmp/DECISIONS.md` for design context and `.tmp/GAPS.md` for implementation status.
-4. Follow the decision procedure:
-   - If the spec is right and the implementation is wrong → fix the code (`close-impl-to-spec`)
-   - If the spec has a genuine omission or Rust-ism → fix the spec with documented justification (`close-spec-to-impl`)
-   - If the answer is unclear → write a design evaluation, research the problem space (`open-question`)
-5. After completing work, update `.tmp/WORK.md` with results and verify (build + golden tests + bootstrap)
+### The queue
 
-**Phase-skip rules:** You may skip an item within a phase only if it is genuinely blocked (marked `open-question` with no resolution path, or has unmet prerequisites). When skipping, state the specific reason for each skipped item — do not dismiss a phase as a group. If all remaining items in a phase are blocked or deferred, you may proceed to the next phase after documenting why each was skipped.
+Finite and ordered. Add to it only when a measurement demands it — never from an audit,
+a survey, or a decomposition. If it grows past ~10 items, something has gone wrong.
 
-Items marked `[-]` are **deferred with re-evaluation triggers** — do not pick them up unless the trigger condition described in WORK.md is met.
+1. **Silence the compiler.** `typeck_driver.blood` eprints internal phase timings on
+   every compile; the comment calls it "permanent". `--timings` already exists and is
+   ignored by these sites. No one outside this repo can use a compiler that narrates its
+   own type checker.
+2. **Close the 17 phantom builtins.** Float printing (`print_f64`, `print_f32`, the
+   `_prec` family), file-handle I/O (`file_open`/`file_close`/`file_size`), `read_int`,
+   `print_bool`, `print_char`, `print_u64`, `parse_u*_radix`, `args_join`. A language
+   that cannot print an `f64` is not finished.
+3. **Corpus behaviour, not just compilation.** `run_corpus.sh` proves programs build. It
+   does not prove they are correct. Expected outputs are described in prose in
+   `corpus/WORKLOG.md`; turn them into assertions.
+4. **Verify the documentation's code compiles.** README's quick example uses
+   `with ParseErrorHandler handle {`, which does not match the form in
+   `tests/golden/t10_multi_handler_same_effect.blood`. Extract every fenced `blood` block
+   in `docs/` and `README.md`, compile it, fail on error.
+5. **Tag `v0.1.0` and publish a release artifact.** Seed, runtime, stdlib, one-line
+   install. 1,862 commits and zero tags reads as "not usable" to everyone who is not the
+   author.
+6. **Shrink the clone.** `.git` is 1.4 GB, of which ~1.3 GB is ninety committed copies of
+   a 15.6 MB seed binary. Releases remove the reason to clone history at all.
+7. **Decide concurrency.** `pthread_create`/`join` are wired; mutexes, channels, and the
+   M:N scheduler are not. Either build effect-based structured concurrency — the answer
+   the effect system makes uniquely available — or scope it out of v0.x and say so in
+   `docs/spec/CONCURRENCY.md`.
+
+### `.tmp/` is frozen. Do not take work from it.
+
+It holds ~100 documents and 1.6 MB of audits, backlogs, question lists, and gap
+enumerations. Read it as history when you need to know *why* something was decided —
+`.tmp/DECISIONS.md` is genuinely useful for that. Never read it to decide what to do.
+
+That machinery is why this project stalled. Sessions 97–110 were fourteen consecutive
+sessions implementing `==` for progressively more obscure reference shapes, each one a
+legitimately open item in a 95-item decomposed audit. The audit could always produce
+another item, so the work could never be finished, so it stopped instead. A previous
+attempt to fix this by writing a `STRATEGY.md` with a hard rule failed within four
+sessions, because this file still pointed at the old machinery.
+
+**The measurement is the backlog.** If no measurement is red and the queue is empty, the
+correct action is to write a new Blood program in `corpus/`, use the language for
+something real, and fix what that breaks.
+
+### Anti-tunnel rule
+
+If you have spent three consecutive sessions in one subsystem and no corpus program
+required it, stop and go to rule 2. Extending a dispatcher to one more shape always feels
+like progress and is the exact shape of the failure above.
+
+### Verifying your own work
+
+- `./tools/health.sh` — must exit 0 before you finish.
+- `./corpus/run_corpus.sh` — must not regress.
+- `./build_selfhost.sh test golden -q` — note that it reports `cached: N`; a cached pass
+  verifies less than it appears to. CI (`.github/workflows/health.yml`) runs them cold
+  weekly and on every push.
+- Never report a count from a grep without a positive control. The queries in
+  `tools/builtin-parity.sh` fail loudly if their control does not match, because a query
+  that silently matched nothing looks exactly like a clean result.
