@@ -355,10 +355,14 @@ a survey, or a decomposition. If it grows past ~10 items, something has gone wro
 3. **Corpus behaviour, not just compilation.** `run_corpus.sh` proves programs build. It
    does not prove they are correct. Expected outputs are described in prose in
    `corpus/WORKLOG.md`; turn them into assertions.
-4. **Verify the documentation's code compiles.** README's quick example uses
-   `with ParseErrorHandler handle {`, which does not match the form in
-   `tests/golden/t10_multi_handler_same_effect.blood`. Extract every fenced `blood` block
-   in `docs/` and `README.md`, compile it, fail on error.
+4. **Verify the documentation's code compiles.** Extract every fenced `blood` block in
+   `docs/` and `README.md`, compile it, fail on error. First known casualty, verified
+   2026-09-16: README's quick example uses `with ParseErrorHandler handle {` — a bare
+   handler path. `GRAMMAR.md` permits it (`WithHandleExpr ::= 'with' Expr 'handle'
+   Block`), and the compiler accepts it through typeck, then **emits IR that llc
+   rejects**, with no source diagnostic. `with Loud {} handle {}` works; `with Loud
+   handle {}` does not. Decide whether a bare fieldless-handler path denotes a value
+   (then codegen it) or not (then reject it at typeck) — invalid IR is wrong either way.
 5. **Tag `v0.1.0` and publish a release artifact.** Seed, runtime, stdlib, one-line
    install. 1,862 commits and zero tags reads as "not usable" to everyone who is not the
    author.
