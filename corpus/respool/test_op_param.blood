@@ -1,0 +1,30 @@
+// Test: handler op with parameter + multi-field state
+// EXPECT: got: 42
+// EXPECT: state: 1
+effect T {
+    op send(val: i32) -> ();
+}
+
+deep handler H for T {
+    let mut count: i32
+    let mut last: i32
+    return(x) {
+        let msg: &str = format!("state: {}", count);
+        println_str(msg);
+        x
+    }
+    op send(val) {
+        count = count + 1;
+        last = val;
+        print_str("got: ");
+        println_int(val);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with H { count: 0, last: 0 } handle {
+        perform T.send(42);
+    };
+    0
+}

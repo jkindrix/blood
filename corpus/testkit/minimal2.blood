@@ -1,0 +1,20 @@
+// Test: does handler return clause execute?
+// EXPECT: 99
+// EXPECT: 1
+effect T {
+    op pass() -> ();
+}
+
+deep handler R for T {
+    let mut p: i32
+    return(x) { println_int(p); x }
+    op pass() { p = p + 1; resume(()) }
+}
+
+fn main() -> i32 {
+    println_int(99);
+    with R { p: 0 } handle {
+        perform T.pass();
+    };
+    0
+}

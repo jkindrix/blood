@@ -1,0 +1,134 @@
+// Program 2: safeio — Resources that can't leak
+// Pillar 5: Isolation (Linear Types + Regions)
+//
+// Demonstrates:
+// 1. linear parameter qualifiers (fn close(linear h: Handle))
+// 2. Must-consume semantics (compiler rejects unused linear values)
+// 3. linear type annotations (let h: linear Handle = ...)
+// 4. linear fn callbacks (must be called exactly once)
+// 5. Linearity + effects interaction (effectful function taking linear handle)
+// 6. Region-scoped temporary buffers (region { } scratch space)
+
+// ============================================================
+// Part 1: Linear file handles — must close, can't leak
+// ============================================================
+
+struct FileHandle {
+    fd: i32,
+}
+
+/// Open a file, returning a handle that will be used linearly.
+fn open_file(path: &str) -> FileHandle {
+    let fd: i32 = path.len() as i32;
+    print_str("OPEN fd=");
+    println_int(fd);
+    FileHandle { fd: fd }
+}
+
+/// Read from a file handle (borrows, does not consume).
+fn read_all(h: &FileHandle) -> i32 {
+    print_str("READ fd=");
+    println_int(h.fd);
+    h.fd * 10
+}
+
+/// Close a file handle. Consumes the linear value.
+fn close_file(linear h: FileHandle) {
+    print_str("CLOSE fd=");
+    println_int(h.fd);
+}
+
+/// Process a file: open, read, close. Demonstrates correct linear lifecycle.
+fn process(path: &str) -> i32 {
+    let h: linear FileHandle = open_file(path);
+    let content: i32 = read_all(&h);
+    close_file(h);
+    content
+}
+
+// ============================================================
+// Part 2: linear fn — callbacks that execute exactly once
+// ============================================================
+
+/// Execute a callback exactly once (consumes the linear fn).
+fn run_once(linear callback: fn() -> ()) {
+    callback();
+}
+
+// ============================================================
+// Part 3: Region-scoped temporary buffer
+// ============================================================
+
+/// Process data with a region-scoped scratch buffer.
+fn process_with_scratch(data: i32) -> i32 {
+    let result: i32 = region {
+        let scratch: i32 = data * 2;
+        let temp: i32 = scratch + 1;
+        temp
+    };
+    result
+}
+
+// ============================================================
+// Part 4: Linearity + effects
+// ============================================================
+
+effect Log {
+    op log_msg(msg: &str) -> ();
+}
+
+/// Process a handle in an effectful context.
+fn process_with_logging(linear h: FileHandle) / {Log} {
+    let content: i32 = read_all(&h);
+    perform Log.log_msg("read complete");
+    print_str("CONTENT=");
+    println_int(content);
+    close_file(h);
+    perform Log.log_msg("handle closed");
+}
+
+deep handler VerboseLogger for Log {
+    return(x) { x }
+    op log_msg(msg) {
+        print_str("LOG: ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+// ============================================================
+// Main: exercise all features
+// ============================================================
+
+fn main() -> i32 {
+    // Part 1: Basic linear handle lifecycle
+    println_str("=== Part 1: Linear handle lifecycle ===");
+    let result1: i32 = process("test.txt");
+    print_str("result1=");
+    println_int(result1);
+    if result1 != 80 { return 1; }
+
+    // Part 2: linear fn callback
+    println_str("=== Part 2: linear fn callback ===");
+    let cleanup: linear fn() -> () = move || {
+        println_str("CLEANUP executed");
+    };
+    run_once(cleanup);
+
+    // Part 3: Region-scoped scratch
+    println_str("=== Part 3: Region scratch ===");
+    let result3: i32 = process_with_scratch(21);
+    print_str("result3=");
+    println_int(result3);
+    if result3 != 43 { return 3; }
+
+    // Part 4: Linearity + effects
+    println_str("=== Part 4: Linearity + effects ===");
+    let h4: linear FileHandle = open_file("data.csv");
+    with VerboseLogger {} handle {
+        process_with_logging(h4);
+    };
+
+    println_str("=== All parts passed ===");
+    0
+}

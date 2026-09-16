@@ -1,0 +1,561 @@
+// Combined Stress Test — Feature Interaction Matrix
+//
+// Tests interactions BETWEEN features, not features in isolation.
+// Every section combines at least 2 stress targets that have only
+// been tested separately before.
+//
+// Interaction matrix:
+//   A. Generic fn + effect annotation
+//   B. Trait method + effect propagation
+//   C. Recursive generic enum + effectful match
+//   D. Closure capture + effectful context
+//   E. Module type + generic struct field
+//   F. Where clause + effect on same fn
+//   G. HashMap lookup inside effectful recursive fn
+//   H. Supertrait + generic + effect combined
+//   I. Box<T> deref inside effectful match arm
+//   J. Vec<GenericEnum> push/iterate inside effect handler scope
+
+mod stdlib_hashmap;
+
+// ============================================================
+// Section 1: Core types
+// ============================================================
+
+// Generic recursive expression tree
+enum Expr<T> {
+    Val(T),
+    BinOp(i32, Box<Expr<T>>, Box<Expr<T>>),  // op_code, left, right
+    UnaryOp(i32, Box<Expr<T>>),               // op_code, operand
+    Lookup(i32),                               // variable id
+}
+
+// Multi-param generic (known selfhost bug — included deliberately)
+struct Tagged<K, V> {
+    tag: K,
+    data: V,
+}
+
+// Single-param wrapper
+struct Wrapper<T> {
+    inner: T,
+    label: i32,
+}
+
+// ============================================================
+// Section 2: Traits
+// ============================================================
+
+trait Describable {
+    fn describe(self: &Self) -> &str;
+}
+
+trait Evaluatable {
+    fn eval_to_int(self: &Self) -> i32;
+}
+
+// Supertrait
+trait NamedEval: Describable {
+    fn named_eval(self: &Self) -> i32;
+}
+
+struct IntEval {
+    value: i32,
+}
+
+impl Describable for IntEval {
+    fn describe(self: &Self) -> &str { "int-evaluator" }
+}
+
+impl Evaluatable for IntEval {
+    fn eval_to_int(self: &Self) -> i32 { self.value }
+}
+
+impl NamedEval for IntEval {
+    fn named_eval(self: &Self) -> i32 { self.value * 2 }
+}
+
+// Where clause function (stress F)
+fn describe_thing<T>(x: &T) -> &str where T: Describable {
+    x.describe()
+}
+
+fn eval_thing<T>(x: &T) -> i32 where T: Evaluatable {
+    x.eval_to_int()
+}
+
+// ============================================================
+// Section 3: Effects
+// ============================================================
+
+effect ComputeErr {
+    op fail(msg: &str) -> i32;
+}
+
+deep handler CatchErr for ComputeErr {
+    return(x) { x }
+    op fail(msg) {
+        print_str("ERROR: ");
+        println_str(msg);
+        0 - 1
+    }
+}
+
+effect Log {
+    op log(msg: &str) -> ();
+    op log_int(val: i32) -> ();
+    op get_count() -> i32;
+}
+
+deep handler Counter for Log {
+    let mut count: i32
+
+    return(x) { x }
+    op log(msg) { count += 1; resume(()) }
+    op log_int(val) { count += 1; resume(()) }
+    op get_count() { resume(count) }
+}
+
+// ============================================================
+// Section 4: Interaction A — Generic fn + effect annotation
+// ============================================================
+
+fn wrap_with_log<T>(val: T) -> Wrapper<T> / {Log} {
+    perform Log.log("wrapping value");
+    Wrapper { inner: val, label: 1 }
+}
+
+fn identity_logged<T>(x: T) -> T / {Log} {
+    perform Log.log("identity");
+    x
+}
+
+// ============================================================
+// Section 5: Interaction B — Trait method + effect propagation
+// ============================================================
+
+// Effectful computation via standalone functions (trait methods + effects
+// don't compose — effect annotations on trait impl methods are rejected
+// with "undeclared effects" even when the trait declares them. NEW FINDING.)
+
+struct SafeDiv {
+    num: i32,
+    den: i32,
+}
+
+fn safe_div_compute(s: &SafeDiv) -> i32 / {ComputeErr, Log} {
+    perform Log.log("computing safe division");
+    if s.den == 0 {
+        perform ComputeErr.fail("division by zero");
+        return 0;
+    }
+    s.num / s.den
+}
+
+struct Adder {
+    a: i32,
+    b: i32,
+}
+
+fn adder_compute(a: &Adder) -> i32 / {ComputeErr, Log} {
+    perform Log.log("computing addition");
+    a.a + a.b
+}
+
+// ============================================================
+// Section 6: Interaction C — Recursive generic enum + effectful match
+// ============================================================
+
+fn eval_expr(e: Expr<i32>, vars: &Vec<i32>) -> i32 / {ComputeErr, Log} {
+    perform Log.log("eval_expr");
+
+    match e {
+        Expr.Val(n) => n,
+
+        Expr.BinOp(opc, left, right) => {
+            // Interaction I: Box<T> deref inside effectful match arm
+            let l: i32 = eval_expr(*left, vars);
+            let r: i32 = eval_expr(*right, vars);
+
+            if opc ==0 { l + r }        // add
+            else if opc ==1 { l - r }   // sub
+            else if opc ==2 { l * r }   // mul
+            else if opc ==3 {           // div
+                if r == 0 {
+                    perform ComputeErr.fail("divide by zero in expr");
+                    return 0;
+                }
+                l / r
+            }
+            else {
+                perform ComputeErr.fail("unknown binop");
+                0
+            }
+        }
+
+        Expr.UnaryOp(opc, operand) => {
+            let val: i32 = eval_expr(*operand, vars);
+            if opc == 0 { 0 - val }  // negate
+            else { val }
+        }
+
+        Expr.Lookup(id) => {
+            if id < 0 || id >= vars.len() as i32 {
+                perform ComputeErr.fail("variable out of range");
+                return 0;
+            }
+            vars[id as usize]
+        }
+    }
+}
+
+// ============================================================
+// Section 7: Interaction D — Closure capture + effectful context
+// ============================================================
+
+fn map_with_effect(data: &Vec<i32>, f: fn(i32) -> i32) -> Vec<i32> / {Log} {
+    perform Log.log("map_with_effect");
+    let mut result: Vec<i32> = Vec.new();
+    for i in 0..data.len() as i32 {
+        let mapped: i32 = f(data[i as usize]);
+        result.push(mapped);
+    }
+    result
+}
+
+fn filter_with_effect(data: &Vec<i32>, pred: fn(i32) -> bool) -> Vec<i32> / {Log} {
+    perform Log.log("filter_with_effect");
+    let mut result: Vec<i32> = Vec.new();
+    for i in 0..data.len() as i32 {
+        let val: i32 = data[i as usize];
+        if pred(val) {
+            result.push(val);
+        }
+    }
+    result
+}
+
+fn sum_vec(data: &Vec<i32>) -> i32 {
+    let mut total: i32 = 0;
+    for i in 0..data.len() as i32 {
+        total += data[i as usize];
+    }
+    total
+}
+
+// ============================================================
+// Section 8: Interaction E — Module type + generic struct field
+// ============================================================
+
+struct Registry {
+    index: stdlib_hashmap.HashMapU64U32,
+    names: Vec<String>,
+    values: Vec<i32>,
+}
+
+fn registry_new() -> Registry {
+    Registry {
+        index: stdlib_hashmap.HashMapU64U32.new(),
+        names: Vec.new(),
+        values: Vec.new(),
+    }
+}
+
+fn registry_put(r: &mut Registry, name: String, val: i32) {
+    let h: u64 = stdlib_hashmap.hash_string(&name);
+    let idx: u32 = r.names.len() as u32;
+    r.index.insert(h, idx);
+    r.names.push(name);
+    r.values.push(val);
+}
+
+fn registry_get(r: &mut Registry, name: &str) -> i32 / {ComputeErr} {
+    let h: u64 = stdlib_hashmap.hash_str(name);
+    match r.index.get(h) {
+        Option.Some(idx) => {
+            r.values[idx as usize]
+        }
+        Option.None => {
+            perform ComputeErr.fail("key not found in registry");
+            0
+        }
+    }
+}
+
+// ============================================================
+// Section 9: Interaction F — Where clause + effect on same fn
+// ============================================================
+
+fn describe_and_log<T>(x: &T) -> &str / {Log} where T: Describable {
+    perform Log.log("describe_and_log");
+    x.describe()
+}
+
+fn eval_and_log<T>(x: &T) -> i32 / {Log} where T: Evaluatable {
+    perform Log.log("eval_and_log");
+    x.eval_to_int()
+}
+
+// ============================================================
+// Section 10: Interaction G — HashMap inside effectful recursive fn
+// ============================================================
+
+fn eval_expr_with_registry(e: Expr<i32>, r: &mut Registry) -> i32 / {ComputeErr, Log} {
+    perform Log.log("eval_with_registry");
+
+    match e {
+        Expr.Val(n) => n,
+        Expr.BinOp(opc, left, right) => {
+            let l: i32 = eval_expr_with_registry(*left, r);
+            let r_val: i32 = eval_expr_with_registry(*right, r);
+            if opc ==0 { l + r_val }
+            else if opc ==2 { l * r_val }
+            else { l - r_val }
+        }
+        Expr.UnaryOp(_, operand) => {
+            0 - eval_expr_with_registry(*operand, r)
+        }
+        Expr.Lookup(id) => {
+            // HashMap lookup inside effectful recursive function
+            if id == 0 { registry_get(r, "x") }
+            else if id == 1 { registry_get(r, "y") }
+            else if id == 2 { registry_get(r, "z") }
+            else {
+                perform ComputeErr.fail("unknown variable id");
+                0
+            }
+        }
+    }
+}
+
+// ============================================================
+// Section 11: Interaction J — Vec<GenericEnum> inside effect scope
+// ============================================================
+
+fn build_expr_list() -> Vec<Expr<i32>> / {Log} {
+    perform Log.log("building expr list");
+    let mut exprs: Vec<Expr<i32>> = Vec.new();
+    exprs.push(Expr.Val(10));
+    exprs.push(Expr.Val(20));
+    exprs.push(Expr.BinOp(0, Box.new(Expr.Val(3)), Box.new(Expr.Val(4))));
+    exprs
+}
+
+fn eval_all(exprs: Vec<Expr<i32>>, vars: &Vec<i32>) -> Vec<i32> / {ComputeErr, Log} {
+    let mut results: Vec<i32> = Vec.new();
+    let len: i32 = exprs.len() as i32;
+    // Can't iterate and consume from Vec directly, use index
+    // Actually we need to consume each Expr... build fresh ones
+    // This is a friction point: no way to move out of Vec by index
+
+    // Build and eval one at a time instead
+    let e1: Expr<i32> = Expr.Val(10);
+    results.push(eval_expr(e1, vars));
+
+    let e2: Expr<i32> = Expr.Val(20);
+    results.push(eval_expr(e2, vars));
+
+    let e3: Expr<i32> = Expr.BinOp(0, Box.new(Expr.Val(3)), Box.new(Expr.Val(4)));
+    results.push(eval_expr(e3, vars));
+
+    results
+}
+
+// ============================================================
+// Section 12: Interaction H — Supertrait + generic + effect
+// ============================================================
+
+fn named_eval_logged<T>(x: &T) -> i32 / {Log} where T: NamedEval {
+    perform Log.log("named_eval_logged");
+    let desc: &str = x.describe();  // from Describable supertrait
+    perform Log.log(desc);
+    x.named_eval()
+}
+
+// ============================================================
+// Entry point — run all interaction tests
+// ============================================================
+
+fn print_vec(v: &Vec<i32>) {
+    print_str("[");
+    for i in 0..v.len() as i32 {
+        if i > 0 { print_str(", "); }
+        print_int(v[i as usize]);
+    }
+    println_str("]");
+}
+
+fn main() -> i32 {
+    // === Test A: Generic fn + effect ===
+    println_str("=== A: Generic fn + effect ===");
+    let result_a: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let w: Wrapper<i32> = wrap_with_log(42);
+            let v: i32 = identity_logged(w.inner);
+            print_str("wrapped+identity: ");
+            println_int(v);
+            let c: i32 = perform Log.get_count();
+            print_str("log count: ");
+            println_int(c);
+            0
+        }
+    };
+
+    // === Test B: Trait method + effect ===
+    println_str("");
+    println_str("=== B: Trait method + effect ===");
+    let result_b: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let div1: SafeDiv = SafeDiv { num: 10, den: 3 };
+            let r1: i32 = safe_div_compute(&div1);
+            print_str("10/3 = ");
+            println_int(r1);
+
+            let add1: Adder = Adder { a: 15, b: 27 };
+            let r2: i32 = adder_compute(&add1);
+            print_str("15+27 = ");
+            println_int(r2);
+
+            let div0: SafeDiv = SafeDiv { num: 5, den: 0 };
+            let r3: i32 = safe_div_compute(&div0);
+            print_str("5/0 = ");
+            println_int(r3);
+            0
+        }
+    };
+
+    // === Test C: Recursive generic enum + effectful match ===
+    println_str("");
+    println_str("=== C: Recursive generic enum + effect ===");
+    let result_c: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let mut vars: Vec<i32> = Vec.new();
+            vars.push(100);
+            vars.push(200);
+
+            // (var[0] + var[1]) * 3 = (100 + 200) * 3 = 900
+            let expr: Expr<i32> = Expr.BinOp(2,
+                Box.new(Expr.BinOp(0,
+                    Box.new(Expr.Lookup(0)),
+                    Box.new(Expr.Lookup(1))
+                )),
+                Box.new(Expr.Val(3))
+            );
+            let val: i32 = eval_expr(expr, &vars);
+            print_str("(var0+var1)*3 = ");
+            println_int(val);
+
+            let evals: i32 = perform Log.get_count();
+            print_str("eval calls: ");
+            println_int(evals);
+            0
+        }
+    };
+
+    // === Test D: Closure capture + effectful context ===
+    println_str("");
+    println_str("=== D: Closure + effect ===");
+    let result_d: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let mut data: Vec<i32> = Vec.new();
+            data.push(1); data.push(2); data.push(3); data.push(4); data.push(5);
+
+            let doubled: Vec<i32> = map_with_effect(&data, |x| x * 2);
+            print_str("doubled: ");
+            print_vec(&doubled);
+
+            let threshold: i32 = 3;
+            let above: Vec<i32> = filter_with_effect(&data, |x| x > threshold);
+            print_str("above 3: ");
+            print_vec(&above);
+
+            print_str("sum doubled: ");
+            println_int(sum_vec(&doubled));
+            0
+        }
+    };
+
+    // === Test E: Module type + struct field ===
+    println_str("");
+    println_str("=== E: Module type in struct ===");
+    let result_e: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let mut reg: Registry = registry_new();
+
+            let mut k1: String = String.new();
+            k1.push_str("x");
+            registry_put(&mut reg, k1, 10);
+
+            let mut k2: String = String.new();
+            k2.push_str("y");
+            registry_put(&mut reg, k2, 20);
+
+            let vx: i32 = registry_get(&mut reg, "x");
+            print_str("registry x = ");
+            println_int(vx);
+
+            let vy: i32 = registry_get(&mut reg, "y");
+            print_str("registry y = ");
+            println_int(vy);
+            0
+        }
+    };
+
+    // === Test F: Where clause + effect ===
+    println_str("");
+    println_str("=== F: Where + effect ===");
+    let result_f: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let ie: IntEval = IntEval { value: 77 };
+            let desc: &str = describe_and_log(&ie);
+            print_str("describe: ");
+            println_str(desc);
+
+            let val: i32 = eval_and_log(&ie);
+            print_str("eval: ");
+            println_int(val);
+            0
+        }
+    };
+
+    // === Test G: HashMap inside effectful recursive fn ===
+    println_str("");
+    println_str("=== G: HashMap + effect + recursion ===");
+    let result_g: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let mut reg2: Registry = registry_new();
+            let mut kx: String = String.new();
+            kx.push_str("x");
+            registry_put(&mut reg2, kx, 5);
+
+            let mut ky: String = String.new();
+            ky.push_str("y");
+            registry_put(&mut reg2, ky, 7);
+
+            // x + y = 5 + 7 = 12
+            let expr_g: Expr<i32> = Expr.BinOp(0,
+                Box.new(Expr.Lookup(0)),
+                Box.new(Expr.Lookup(1))
+            );
+            let val_g: i32 = eval_expr_with_registry(expr_g, &mut reg2);
+            print_str("x+y via registry = ");
+            println_int(val_g);
+            0
+        }
+    };
+
+    // === Test H: Supertrait + generic + effect ===
+    println_str("");
+    println_str("=== H: Supertrait + generic + effect ===");
+    let result_h: i32 = with CatchErr {} handle {
+        with Counter { count: 0 } handle {
+            let ie2: IntEval = IntEval { value: 33 };
+            let val_h: i32 = named_eval_logged(&ie2);
+            print_str("named_eval: ");
+            println_int(val_h);
+            0
+        }
+    };
+
+    0
+}

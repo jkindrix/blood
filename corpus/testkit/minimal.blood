@@ -1,0 +1,23 @@
+// Minimal: user macro + effect
+macro check_pass {
+    ($a:expr, $b:expr) => {
+        if $a == $b { perform T.pass(); }
+    };
+}
+
+effect T {
+    op pass() -> ();
+}
+
+deep handler R for T {
+    let mut p: i32
+    return(x) { println_int(p); x }
+    op pass() { p = p + 1; resume(()) }
+}
+
+fn main() -> i32 {
+    with R { p: 0 } handle {
+        check_pass!(2 + 3, 5);
+    };
+    0
+}

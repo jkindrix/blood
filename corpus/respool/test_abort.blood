@@ -1,0 +1,42 @@
+// Test: non-resumptive abort op with 3-field state
+// EXPECT: checkout: 0
+// EXPECT: abort!
+// EXPECT: result: -1
+struct Entry { slot: i32 }
+effect Pool {
+    op checkout() -> Entry;
+    op checkin(e: Entry) -> ();
+    op abort(reason: &str) -> i32;
+}
+deep handler H for Pool {
+    let mut out: i32
+    let mut cap: i32
+    let mut next: i32
+    return(x) { x }
+    op checkout() {
+        let s: i32 = next;
+        next = next + 1;
+        out = out + 1;
+        print_str("checkout: ");
+        println_int(s);
+        resume(Entry { slot: s })
+    }
+    op checkin(e) {
+        out = out - 1;
+        resume(())
+    }
+    op abort(reason) {
+        println_str("abort!");
+        0 - 1
+    }
+}
+
+fn main() -> i32 {
+    let r: i32 = with H { out: 0, cap: 4, next: 0 } handle {
+        let _e: Entry = perform Pool.checkout();
+        perform Pool.abort("test")
+    };
+    let msg: &str = format!("result: {}", r);
+    println_str(msg);
+    0
+}

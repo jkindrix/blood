@@ -1,0 +1,31 @@
+// Test: second handler state field mutation
+// EXPECT: field0=3 field1=2
+effect T {
+    op inc_a() -> ();
+    op inc_b() -> ();
+}
+
+deep handler H for T {
+    let mut a: i32
+    let mut b: i32
+    return(x) {
+        print_str("field0=");
+        println_int(a);
+        print_str("field1=");
+        println_int(b);
+        x
+    }
+    op inc_a() { a = a + 1; resume(()) }
+    op inc_b() { b = b + 1; resume(()) }
+}
+
+fn main() -> i32 {
+    with H { a: 0, b: 0 } handle {
+        perform T.inc_a();
+        perform T.inc_a();
+        perform T.inc_a();
+        perform T.inc_b();
+        perform T.inc_b();
+    };
+    0
+}

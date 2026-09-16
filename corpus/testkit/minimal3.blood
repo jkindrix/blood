@@ -1,0 +1,21 @@
+// Test: handler return clause when result is assigned
+// EXPECT: 1
+// EXPECT: 42
+effect T {
+    op pass() -> ();
+}
+
+deep handler R for T {
+    let mut p: i32
+    return(x) { println_int(p); x }
+    op pass() { p = p + 1; resume(()) }
+}
+
+fn main() -> i32 {
+    let result: i32 = with R { p: 0 } handle {
+        perform T.pass();
+        42
+    };
+    println_int(result);
+    0
+}

@@ -1,0 +1,101 @@
+// testkit v2: macros + effects, no matches!, no match guards
+// EXPECT: Results: 10 passed, 0 failed
+
+macro assert_eq {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a != __b {
+            perform TestReport.fail("assert_eq");
+        } else {
+            perform TestReport.pass();
+        }
+    };
+}
+
+macro assert_ne {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a == __b {
+            perform TestReport.fail("assert_ne");
+        } else {
+            perform TestReport.pass();
+        }
+    };
+}
+
+macro expect {
+    ($a:expr, $b:expr) => {
+        let __ea: i32 = $a;
+        let __eb: i32 = $b;
+        if __ea == __eb { perform TestReport.pass(); } else { perform TestReport.fail("expect eq"); }
+    };
+    ($cond:expr) => {
+        if $cond { perform TestReport.pass(); } else { perform TestReport.fail("expect"); }
+    };
+}
+
+macro double_check {
+    ($x:expr, $expected:expr) => {
+        assert_eq!($x + $x, $expected)
+    };
+}
+
+effect TestReport {
+    op pass() -> ();
+    op fail(msg: &str) -> ();
+}
+
+deep handler TestRunner for TestReport {
+    let mut passed: i32
+    let mut failed: i32
+    return(x) {
+        let msg: &str = format!("Results: {} passed, {} failed", passed, failed);
+        println_str(msg);
+        x
+    }
+    op pass() {
+        passed = passed + 1;
+        resume(())
+    }
+    op fail(msg) {
+        failed = failed + 1;
+        print_str("FAIL: ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+fn test_arithmetic() / {TestReport} {
+    assert_eq!(2 + 3, 5);
+    assert_eq!(10 - 7, 3);
+    assert_eq!(4 * 3, 12);
+    assert_ne!(1 + 1, 3);
+}
+
+fn test_vec() / {TestReport} {
+    let nums: [i32; 5] = vec![10, 20, 30, 40, 50];
+    assert_eq!(nums[0], 10);
+    assert_eq!(nums[4], 50);
+}
+
+fn test_multi_rule() / {TestReport} {
+    expect!(true);
+    expect!(7, 7);
+}
+
+fn test_recursive() / {TestReport} {
+    double_check!(5, 10);
+    double_check!(3, 6);
+}
+
+fn main() -> i32 {
+    with TestRunner { passed: 0, failed: 0 } handle {
+        test_arithmetic();
+        test_vec();
+        test_multi_rule();
+        test_recursive();
+    };
+    0
+}

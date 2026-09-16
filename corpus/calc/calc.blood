@@ -1,0 +1,307 @@
+// Expression Calculator in Blood
+//
+// A recursive descent expression evaluator demonstrating Blood's
+// algebraic effect system, enums, pattern matching, and collections.
+//
+// Features exercised:
+//   - Enums with data variants (Token)
+//   - Pattern matching on enum variants
+//   - Algebraic effects for error handling (CalcErr)
+//   - Deep handlers (exception-style, no resume)
+//   - Structs (Eval state)
+//   - Vec<Token> collection
+//   - String building (joining CLI args)
+//   - Recursive descent parsing
+//   - f64 arithmetic and type casts
+//   - Command-line arguments
+//
+// Usage: calc <expression>
+//   Examples: calc "2 + 3 * 4"
+//             calc "(10 - 2) / 4"
+//             calc "3.14 * 2"
+
+// --- Token type ---
+
+enum Token {
+    Num(f64),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    LParen,
+    RParen,
+    End,
+}
+
+// --- Error effect ---
+
+effect CalcErr {
+    op raise(msg: &str) -> i32;
+}
+
+deep handler CatchCalcErr for CalcErr {
+    return(x) { x }
+
+    op raise(msg) {
+        print_str("Error: ");
+        println_str(msg);
+        1
+    }
+}
+
+// --- Parser state ---
+
+struct Eval {
+    pos: usize,
+}
+
+// --- Tokenizer ---
+
+fn tokenize(input: &str) -> Vec<Token> / {CalcErr} {
+    let bytes = input.as_bytes();
+    let len: usize = bytes.len();
+    let mut tokens: Vec<Token> = Vec.new();
+    let mut i: usize = 0;
+
+    while i < len {
+        let b: u8 = bytes[i];
+
+        if b == 32 || b == 9 || b == 10 || b == 13 {
+            i = i + 1;
+        } else if b == 43 {
+            tokens.push(Token.Plus);
+            i = i + 1;
+        } else if b == 45 {
+            tokens.push(Token.Minus);
+            i = i + 1;
+        } else if b == 42 {
+            tokens.push(Token.Star);
+            i = i + 1;
+        } else if b == 47 {
+            tokens.push(Token.Slash);
+            i = i + 1;
+        } else if b == 40 {
+            tokens.push(Token.LParen);
+            i = i + 1;
+        } else if b == 41 {
+            tokens.push(Token.RParen);
+            i = i + 1;
+        } else if b >= 48 && b <= 57 {
+            // Parse number: integer part
+            let mut result: f64 = 0.0;
+            while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+                let digit: i32 = bytes[i] as i32 - 48;
+                result = result * 10.0 + digit as f64;
+                i = i + 1;
+            }
+            // Decimal part
+            if i < len && bytes[i] == 46 {
+                i = i + 1;
+                let mut frac: f64 = 0.1;
+                while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+                    let digit: i32 = bytes[i] as i32 - 48;
+                    result = result + digit as f64 * frac;
+                    frac = frac * 0.1;
+                    i = i + 1;
+                }
+            }
+            tokens.push(Token.Num(result));
+        } else {
+            perform CalcErr.raise("unexpected character");
+        }
+    }
+
+    tokens.push(Token.End);
+    tokens
+}
+
+// --- Token inspection helpers ---
+
+fn is_addop(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Plus => true,
+        Token.Minus => true,
+        _ => false,
+    }
+}
+
+fn is_mulop(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Star => true,
+        Token.Slash => true,
+        _ => false,
+    }
+}
+
+fn is_plus(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Plus => true,
+        _ => false,
+    }
+}
+
+fn is_star(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Star => true,
+        _ => false,
+    }
+}
+
+fn is_minus_tok(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Minus => true,
+        _ => false,
+    }
+}
+
+fn is_lparen(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.LParen => true,
+        _ => false,
+    }
+}
+
+fn is_rparen(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.RParen => true,
+        _ => false,
+    }
+}
+
+fn is_end(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.End => true,
+        _ => false,
+    }
+}
+
+fn get_num(tokens: &Vec<Token>, pos: usize) -> f64 {
+    match tokens[pos] {
+        Token.Num(n) => n,
+        _ => 0.0,
+    }
+}
+
+fn is_num(tokens: &Vec<Token>, pos: usize) -> bool {
+    match tokens[pos] {
+        Token.Num(_) => true,
+        _ => false,
+    }
+}
+
+// --- Recursive descent parser/evaluator ---
+//
+// Grammar:
+//   expr    = term (('+' | '-') term)*
+//   term    = unary (('*' | '/') unary)*
+//   unary   = '-' unary | primary
+//   primary = NUMBER | '(' expr ')'
+
+fn parse_expr(tokens: &Vec<Token>, e: &mut Eval) -> f64 / {CalcErr} {
+    let mut left: f64 = parse_term(tokens, e);
+
+    while is_addop(tokens, e.pos) {
+        if is_plus(tokens, e.pos) {
+            e.pos = e.pos + 1;
+            let right: f64 = parse_term(tokens, e);
+            left = left + right;
+        } else {
+            e.pos = e.pos + 1;
+            let right: f64 = parse_term(tokens, e);
+            left = left - right;
+        }
+    }
+
+    left
+}
+
+fn parse_term(tokens: &Vec<Token>, e: &mut Eval) -> f64 / {CalcErr} {
+    let mut left: f64 = parse_unary(tokens, e);
+
+    while is_mulop(tokens, e.pos) {
+        if is_star(tokens, e.pos) {
+            e.pos = e.pos + 1;
+            let right: f64 = parse_unary(tokens, e);
+            left = left * right;
+        } else {
+            e.pos = e.pos + 1;
+            let right: f64 = parse_unary(tokens, e);
+            if right == 0.0 {
+                perform CalcErr.raise("division by zero");
+            }
+            left = left / right;
+        }
+    }
+
+    left
+}
+
+fn parse_unary(tokens: &Vec<Token>, e: &mut Eval) -> f64 / {CalcErr} {
+    if is_minus_tok(tokens, e.pos) {
+        e.pos = e.pos + 1;
+        let val: f64 = parse_unary(tokens, e);
+        0.0 - val
+    } else {
+        parse_primary(tokens, e)
+    }
+}
+
+fn parse_primary(tokens: &Vec<Token>, e: &mut Eval) -> f64 / {CalcErr} {
+    if is_num(tokens, e.pos) {
+        let n: f64 = get_num(tokens, e.pos);
+        e.pos = e.pos + 1;
+        n
+    } else if is_lparen(tokens, e.pos) {
+        e.pos = e.pos + 1;
+        let val: f64 = parse_expr(tokens, e);
+        if !is_rparen(tokens, e.pos) {
+            perform CalcErr.raise("expected ')'");
+        }
+        e.pos = e.pos + 1;
+        val
+    } else {
+        perform CalcErr.raise("expected number or '('");
+    }
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        println_str("Usage: calc <expression>");
+        println_str("  calc \"2 + 3 * 4\"");
+        println_str("  calc \"(10 - 2) / 4\"");
+        return 1;
+    }
+
+    // Join all args after program name (handles unquoted expressions)
+    let mut input: String = String.new();
+    let mut ai: i32 = 1;
+    while ai < argc {
+        if ai > 1 {
+            input.push(32 as char);
+        }
+        input.push_str(args_get(ai));
+        ai = ai + 1;
+    }
+
+    with CatchCalcErr {} handle {
+        let tokens: Vec<Token> = tokenize(input.as_str());
+        let mut e: Eval = Eval { pos: 0 };
+        let result: f64 = parse_expr(&tokens, &mut e);
+
+        if !is_end(&tokens, e.pos) {
+            perform CalcErr.raise("unexpected token after expression");
+        }
+
+        // Print integer form when possible
+        if result == floor(result) && result > -2147483648.0 && result < 2147483648.0 {
+            println_int(result as i32);
+        } else {
+            println_f64(result);
+        }
+
+        0
+    }
+}

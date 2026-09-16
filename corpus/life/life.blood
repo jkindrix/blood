@@ -1,0 +1,292 @@
+// Conway's Game of Life in Blood
+//
+// Simulates cellular automaton on a 2D grid loaded from a file.
+// Runs for N generations, printing each frame.
+//
+// Features exercised:
+//   - Compound assignment (+=, -=)
+//   - break / continue in loops
+//   - system() builtin (clear screen between frames)
+//   - Generic struct (Grid<T>)
+//   - Nested for loops with ranges
+//   - Vec<u8> as flat 2D grid
+//   - File I/O and byte-level parsing
+//
+// Usage: life <pattern_file> [generations]
+//   Default generations: 20
+//
+// Pattern file format:
+//   First line: width height
+//   Remaining lines: grid rows ('*' = alive, '.' = dead)
+
+// --- Generic wrapper (exercises generic structs) ---
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+fn pair_sum(p: Pair<i32>) -> i32 {
+    p.first + p.second
+}
+
+// --- Grid ---
+
+struct Grid {
+    cells: Vec<u8>,
+    width: i32,
+    height: i32,
+}
+
+fn grid_new(w: i32, h: i32) -> Grid {
+    let mut cells: Vec<u8> = Vec.new();
+    let total: i32 = w * h;
+    let mut i: i32 = 0;
+    while i < total {
+        cells.push(0);
+        i += 1;
+    }
+    Grid { cells: cells, width: w, height: h }
+}
+
+fn grid_get(g: &Grid, x: i32, y: i32) -> u8 {
+    if x < 0 || x >= g.width || y < 0 || y >= g.height {
+        return 0;
+    }
+    g.cells[(y * g.width + x) as usize]
+}
+
+fn grid_set(g: &mut Grid, x: i32, y: i32, val: u8) {
+    g.cells[(y * g.width + x) as usize] = val;
+}
+
+// Count live neighbors of cell (x, y)
+fn count_neighbors(g: &Grid, x: i32, y: i32) -> i32 {
+    let mut count: i32 = 0;
+    let mut dy: i32 = -1;
+    while dy <= 1 {
+        let mut dx: i32 = -1;
+        while dx <= 1 {
+            if dx == 0 && dy == 0 {
+                dx += 1;
+                continue;
+            }
+            if grid_get(g, x + dx, y + dy) == 1 {
+                count += 1;
+            }
+            dx += 1;
+        }
+        dy += 1;
+    }
+    count
+}
+
+// Advance one generation
+fn step(current: &Grid) -> Grid {
+    let mut next: Grid = grid_new(current.width, current.height);
+
+    for y in 0..current.height {
+        for x in 0..current.width {
+            let alive: u8 = grid_get(current, x, y);
+            let neighbors: i32 = count_neighbors(current, x, y);
+
+            if alive == 1 {
+                // Alive: survive with 2 or 3 neighbors
+                if neighbors == 2 || neighbors == 3 {
+                    grid_set(&mut next, x, y, 1);
+                }
+            } else {
+                // Dead: birth with exactly 3 neighbors
+                if neighbors == 3 {
+                    grid_set(&mut next, x, y, 1);
+                }
+            }
+        }
+    }
+
+    next
+}
+
+// Count total live cells
+fn population(g: &Grid) -> i32 {
+    let mut count: i32 = 0;
+    let total: i32 = g.width * g.height;
+    for i in 0..total {
+        if g.cells[i as usize] == 1 {
+            count += 1;
+        }
+    }
+    count
+}
+
+// Check if grid is all dead (early termination)
+fn is_dead(g: &Grid) -> bool {
+    let total: i32 = g.width * g.height;
+    let mut i: i32 = 0;
+    while i < total {
+        if g.cells[i as usize] == 1 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+// --- Display ---
+
+fn print_grid(g: &Grid) {
+    for y in 0..g.height {
+        let mut row: String = String.new();
+        for x in 0..g.width {
+            if grid_get(g, x, y) == 1 {
+                row.push(35 as char);   // '#'
+            } else {
+                row.push(46 as char);   // '.'
+            }
+        }
+        println(row.as_str());
+    }
+}
+
+fn print_header(g: i32, pop: i32) {
+    print_str("Gen ");
+    print_int(g);
+    print_str("  Pop ");
+    println_int(pop);
+}
+
+// --- Parsing ---
+
+fn load_grid(filename: &str) -> Grid {
+    let content: &str = file_read_to_string(filename);
+    let bytes = content.as_bytes();
+    let len: usize = bytes.len();
+
+    // Parse first line: width height (inline since as_bytes() returns [u8] not Vec<u8>)
+    let mut i: usize = 0;
+
+    // Skip whitespace
+    while i < len && (bytes[i] == 32 || bytes[i] == 9) {
+        i += 1;
+    }
+    // Parse width
+    let mut width: i32 = 0;
+    while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+        width = width * 10 + (bytes[i] as i32 - 48);
+        i += 1;
+    }
+    // Skip whitespace
+    while i < len && (bytes[i] == 32 || bytes[i] == 9) {
+        i += 1;
+    }
+    // Parse height
+    let mut height: i32 = 0;
+    while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+        height = height * 10 + (bytes[i] as i32 - 48);
+        i += 1;
+    }
+
+    // Skip to next line
+    while i < len && bytes[i] != 10 {
+        i += 1;
+    }
+    if i < len {
+        i += 1;
+    }
+
+    let mut g: Grid = grid_new(width, height);
+
+    // Parse grid rows
+    let mut y: i32 = 0;
+    while y < height && i < len {
+        let mut x: i32 = 0;
+        while x < width && i < len {
+            if bytes[i] == 10 || bytes[i] == 13 {
+                break;
+            }
+            if bytes[i] == 42 {
+                // '*' = alive
+                grid_set(&mut g, x, y, 1);
+            }
+            x += 1;
+            i += 1;
+        }
+        // Skip to next line
+        while i < len && bytes[i] != 10 {
+            i += 1;
+        }
+        if i < len {
+            i += 1;
+        }
+        y += 1;
+    }
+
+    g
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        println_str("Usage: life <pattern_file> [generations]");
+        println_str("  Pattern file: first line 'width height', then grid rows (* = alive, . = dead)");
+        return 1;
+    }
+
+    let filename: &str = args_get(1);
+    if !file_exists(filename) {
+        print_str("Error: file not found: ");
+        println_str(filename);
+        return 1;
+    }
+
+    // Parse generations count
+    let mut max_gens: i32 = 20;
+    if argc >= 3 {
+        let arg: &str = args_get(2);
+        let arg_bytes = arg.as_bytes();
+        let mut n: i32 = 0;
+        for i in 0..arg_bytes.len() as i32 {
+            let b: u8 = arg_bytes[i as usize];
+            if b >= 48 && b <= 57 {
+                n = n * 10 + (b as i32 - 48);
+            }
+        }
+        if n > 0 {
+            max_gens = n;
+        }
+    }
+
+    let mut grid: Grid = load_grid(filename);
+
+    // Exercise generic struct
+    let dims: Pair<i32> = Pair { first: grid.width, second: grid.height };
+    print_str("Grid: ");
+    print_int(dims.first);
+    print_str("x");
+    println_int(dims.second);
+    print_str("Cells: ");
+    println_int(pair_sum(dims));
+    println_str("");
+
+    // Run simulation
+    let mut step_num: i32 = 0;
+    while step_num <= max_gens {
+        print_header(step_num, population(&grid));
+        print_grid(&grid);
+        println_str("");
+
+        if step_num < max_gens {
+            // Check for extinction — use break for early termination
+            if is_dead(&grid) {
+                println_str("Population extinct.");
+                break;
+            }
+            grid = step(&grid);
+        }
+        step_num += 1;
+    }
+
+    0
+}

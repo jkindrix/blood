@@ -1,0 +1,304 @@
+// Numerical Statistics Tool in Blood
+//
+// Reads integers from a file (one per line) and computes statistics
+// using higher-order functions and closures.
+//
+// Features exercised:
+//   - Closures (|x| x * 2) as values and arguments
+//   - Higher-order functions (map, filter, count, any taking fn params)
+//   - Tuple types and tuple destructuring via match
+//   - Closure variable capture from enclosing scope
+//   - Function composition (compose two closures)
+//   - Vec<i32> collection building and iteration
+//   - f64 arithmetic (mean, variance, standard deviation)
+//   - sqrt() builtin
+//   - File I/O with line parsing
+//
+// Usage: numstat <file>
+
+// --- Higher-order functions over Vec<i32> ---
+
+fn vec_map(v: &Vec<i32>, f: fn(i32) -> i32) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+    while i < v.len() {
+        result.push(f(v[i]));
+        i = i + 1;
+    }
+    result
+}
+
+fn vec_filter(v: &Vec<i32>, pred: fn(i32) -> bool) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+    while i < v.len() {
+        if pred(v[i]) {
+            result.push(v[i]);
+        }
+        i = i + 1;
+    }
+    result
+}
+
+fn vec_count(v: &Vec<i32>, pred: fn(i32) -> bool) -> i32 {
+    let mut c: i32 = 0;
+    let mut i: usize = 0;
+    while i < v.len() {
+        if pred(v[i]) {
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    c
+}
+
+fn vec_any(v: &Vec<i32>, pred: fn(i32) -> bool) -> bool {
+    let mut i: usize = 0;
+    while i < v.len() {
+        if pred(v[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
+}
+
+fn vec_sum(v: &Vec<i32>) -> i32 {
+    let mut s: i32 = 0;
+    let mut i: usize = 0;
+    while i < v.len() {
+        s = s + v[i];
+        i = i + 1;
+    }
+    s
+}
+
+// --- Tuple-returning functions ---
+
+fn min_max(v: &Vec<i32>) -> (i32, i32) {
+    let mut lo: i32 = v[0];
+    let mut hi: i32 = v[0];
+    let mut i: usize = 1;
+    while i < v.len() {
+        if v[i] < lo { lo = v[i]; }
+        if v[i] > hi { hi = v[i]; }
+        i = i + 1;
+    }
+    (lo, hi)
+}
+
+fn sum_and_count(v: &Vec<i32>, pred: fn(i32) -> bool) -> (i32, i32) {
+    let mut s: i32 = 0;
+    let mut c: i32 = 0;
+    let mut i: usize = 0;
+    while i < v.len() {
+        if pred(v[i]) {
+            s = s + v[i];
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    (s, c)
+}
+
+// --- Function composition ---
+
+fn compose(f: fn(i32) -> i32, g: fn(i32) -> i32, x: i32) -> i32 {
+    f(g(x))
+}
+
+// --- Number parsing ---
+
+fn parse_numbers(content: &str) -> Vec<i32> {
+    let bytes = content.as_bytes();
+    let len: usize = bytes.len();
+    let mut nums: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+
+    while i < len {
+        // Skip whitespace
+        while i < len && (bytes[i] == 32 || bytes[i] == 9 || bytes[i] == 10 || bytes[i] == 13) {
+            i = i + 1;
+        }
+        if i >= len {
+            break;
+        }
+
+        // Check for negative sign
+        let mut negative: bool = false;
+        if bytes[i] == 45 {
+            negative = true;
+            i = i + 1;
+        }
+
+        // Parse digits
+        let mut has_digit: bool = false;
+        let mut val: i32 = 0;
+        while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+            val = val * 10 + (bytes[i] as i32 - 48);
+            has_digit = true;
+            i = i + 1;
+        }
+
+        if has_digit {
+            if negative {
+                nums.push(0 - val);
+            } else {
+                nums.push(val);
+            }
+        }
+
+        // Skip rest of line (handles non-numeric content)
+        while i < len && bytes[i] != 10 {
+            i = i + 1;
+        }
+    }
+
+    nums
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        println_str("Usage: numstat <file>");
+        return 1;
+    }
+
+    let filename: &str = args_get(1);
+    if !file_exists(filename) {
+        print_str("Error: file not found: ");
+        println_str(filename);
+        return 1;
+    }
+
+    let content: &str = file_read_to_string(filename);
+    let nums: Vec<i32> = parse_numbers(content);
+    let n: i32 = nums.len() as i32;
+
+    if n == 0 {
+        println_str("No numbers found in file.");
+        return 1;
+    }
+
+    // --- Basic statistics ---
+    let sum: i32 = vec_sum(&nums);
+
+    // Tuple destructuring via match
+    let bounds: (i32, i32) = min_max(&nums);
+    let mut min_val: i32 = 0;
+    let mut max_val: i32 = 0;
+    match bounds {
+        (lo, hi) => {
+            min_val = lo;
+            max_val = hi;
+        }
+    }
+
+    // Mean (f64 for precision)
+    let mean: f64 = sum as f64 / n as f64;
+
+    // Variance: sum((x - mean)^2) / n
+    let mut var_sum: f64 = 0.0;
+    let mut vi: usize = 0;
+    while vi < nums.len() {
+        let diff: f64 = nums[vi] as f64 - mean;
+        var_sum = var_sum + diff * diff;
+        vi = vi + 1;
+    }
+    let variance: f64 = var_sum / n as f64;
+    let std_dev: f64 = sqrt(variance);
+
+    // --- Closure-based statistics ---
+
+    // Count even/odd using closures
+    let even_count: i32 = vec_count(&nums, |x| x % 2 == 0);
+    let odd_count: i32 = vec_count(&nums, |x| x % 2 != 0);
+
+    // Check for negatives
+    let has_neg: bool = vec_any(&nums, |x| x < 0);
+    let neg_count: i32 = vec_count(&nums, |x| x < 0);
+    let pos_count: i32 = vec_count(&nums, |x| x > 0);
+
+    // Map: compute squares, then sum
+    let squares: Vec<i32> = vec_map(&nums, |x| x * x);
+    let sum_of_squares: i32 = vec_sum(&squares);
+
+    // Filter: get only positive values
+    let positives: Vec<i32> = vec_filter(&nums, |x| x > 0);
+    let pos_sum: i32 = vec_sum(&positives);
+
+    // Closure with capture: count values above mean
+    let threshold: i32 = mean as i32;
+    let above_mean: i32 = vec_count(&nums, |x| x > threshold);
+
+    // Compose closures: double then add 10
+    let composed: i32 = compose(|x| x + 10, |x| x * 2, 5);
+
+    // Tuple from sum_and_count with closure
+    let even_stats: (i32, i32) = sum_and_count(&nums, |x| x % 2 == 0);
+    let mut even_sum: i32 = 0;
+    let mut even_n: i32 = 0;
+    match even_stats {
+        (s, c) => {
+            even_sum = s;
+            even_n = c;
+        }
+    }
+
+    // --- Output ---
+
+    println_str("=== Number Statistics ===");
+    println_str("");
+
+    print_str("Count:          ");
+    println_int(n);
+    print_str("Sum:            ");
+    println_int(sum);
+    print_str("Min:            ");
+    println_int(min_val);
+    print_str("Max:            ");
+    println_int(max_val);
+    print_str("Range:          ");
+    println_int(max_val - min_val);
+    print_str("Mean:           ");
+    println_f64(mean);
+    print_str("Variance:       ");
+    println_f64(variance);
+    print_str("Std Dev:        ");
+    println_f64(std_dev);
+
+    println_str("");
+    println_str("--- Distribution ---");
+    print_str("Even count:     ");
+    println_int(even_count);
+    print_str("Odd count:      ");
+    println_int(odd_count);
+    print_str("Positive:       ");
+    println_int(pos_count);
+    print_str("Negative:       ");
+    println_int(neg_count);
+    print_str("Zero:           ");
+    println_int(n - pos_count - neg_count);
+    print_str("Above mean:     ");
+    println_int(above_mean);
+
+    println_str("");
+    println_str("--- Derived ---");
+    print_str("Sum of squares: ");
+    println_int(sum_of_squares);
+    print_str("Sum of positive:");
+    println_int(pos_sum);
+    print_str("Even sum:       ");
+    println_int(even_sum);
+    print_str("Even count:     ");
+    println_int(even_n);
+
+    println_str("");
+    println_str("--- Composition test ---");
+    print_str("compose(+10, *2, 5) = ");
+    println_int(composed);
+
+    0
+}

@@ -1,0 +1,267 @@
+// btask — Task runner with effect-isolated execution
+//
+// Task functions declare capabilities via effects (Shell, Log, Abort).
+// They perform operations without knowing HOW they're fulfilled.
+// Handler STATE controls runtime behavior — same pipeline code,
+// different outcomes based on handler configuration.
+//
+// Usage: btask [--dry-run|-n] [-f Taskfile]
+//
+// Taskfile format:
+//   # comment
+//   name: shell command
+
+// ===== String Helpers =====
+
+fn is_space(b: u8) -> bool { b == 32 || b == 9 || b == 10 || b == 13 }
+
+fn is_blank(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if !is_space(bytes[i]) { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+fn trim_str(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    if len == 0 { return String.new(); }
+    let mut lo: usize = 0;
+    while lo < len && is_space(bytes[lo]) { lo = lo + 1; }
+    let mut hi: usize = len;
+    while hi > lo && is_space(bytes[hi - 1]) { hi = hi - 1; }
+    let mut out: String = String.new();
+    let mut i: usize = lo;
+    while i < hi { out.push(bytes[i] as char); i = i + 1; }
+    out
+}
+
+fn substr_str(text: &str, start: usize, end: usize) -> String {
+    let bytes = text.as_bytes();
+    let mut out: String = String.new();
+    let stop: usize = if end > bytes.len() { bytes.len() } else { end };
+    let mut i: usize = start;
+    while i < stop { out.push(bytes[i] as char); i = i + 1; }
+    out
+}
+
+fn find_byte(text: &str, ch: u8) -> i32 {
+    let bytes = text.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == ch { return i as i32; }
+        i = i + 1;
+    }
+    0 - 1
+}
+
+fn split_lines(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    let mut lines: Vec<String> = Vec.new();
+    let mut cur: String = String.new();
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 10 { lines.push(cur); cur = String.new(); }
+        else if bytes[i] != 13 { cur.push(bytes[i] as char); }
+        i = i + 1;
+    }
+    if cur.len() > 0 { lines.push(cur); }
+    lines
+}
+
+// ===== Data =====
+
+struct Task {
+    name: String,
+    cmd: String,
+}
+
+fn parse_taskfile(path: &str) -> Vec<Task> {
+    let content: &str = file_read_to_string(path);
+    let lines: Vec<String> = split_lines(content);
+    let mut tasks: Vec<Task> = Vec.new();
+    let mut i: usize = 0;
+    while i < lines.len() {
+        let line: &str = lines[i].as_str();
+        if !is_blank(line) {
+            let bytes = line.as_bytes();
+            if bytes[0] != 35 {
+                let colon: i32 = find_byte(line, 58);
+                if colon > 0 {
+                    let raw_name: String = substr_str(line, 0, colon as usize);
+                    let name: String = trim_str(raw_name.as_str());
+                    let raw_cmd: String = substr_str(line, (colon + 1) as usize, bytes.len());
+                    let cmd: String = trim_str(raw_cmd.as_str());
+                    if name.len() > 0 && cmd.len() > 0 {
+                        tasks.push(Task { name: name, cmd: cmd });
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    tasks
+}
+
+// ===== Effects =====
+//
+// These declare WHAT the pipeline needs — not HOW.
+// The pipeline functions perform these operations
+// without knowing if they're real, simulated, or counted.
+
+effect Shell {
+    op exec(cmd: &str) -> i32;
+}
+
+effect Log {
+    op info(msg: &str) -> ();
+    op warn(msg: &str) -> ();
+}
+
+effect Abort {
+    op fail(msg: &str) -> i32;
+}
+
+// ===== Handlers =====
+//
+// Handler STATE controls runtime behavior. Same handler definition,
+// different initialization — the pipeline code doesn't change.
+//
+// dry=0: real execution (runs commands, aborts on failure)
+// dry=1: preview mode (prints commands, soft abort)
+
+deep handler TaskShell for Shell {
+    let mut dry: i32
+
+    return(x) { x }
+    op exec(cmd) {
+        if dry != 0 {
+            print_str("  [dry] ");
+            println_str(cmd);
+            resume(0)
+        } else {
+            resume(system(cmd))
+        }
+    }
+}
+
+deep handler TaskLog for Log {
+    let mut passed: i32
+    let mut warned: i32
+
+    return(x) { x }
+    op info(msg) {
+        passed += 1;
+        print_str("  [ok] ");
+        println_str(msg);
+        resume(())
+    }
+    op warn(msg) {
+        warned += 1;
+        print_str("  [!!] ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+deep handler TaskAbort for Abort {
+    let mut dry: i32
+
+    return(x) { x }
+    op fail(msg) {
+        if dry != 0 {
+            print_str("  [dry:fail] ");
+        } else {
+            print_str("  [FAIL] ");
+        }
+        println_str(msg);
+        0 - 1
+    }
+}
+
+// ===== Pipeline Logic =====
+//
+// These functions declare effects but contain NO actual I/O.
+// They work identically regardless of handler configuration.
+
+fn run_task(name: &str, cmd: &str) / {Shell, Log, Abort} {
+    perform Log.info(name);
+    let code: i32 = perform Shell.exec(cmd);
+    if code != 0 {
+        perform Log.warn("non-zero exit");
+        perform Abort.fail(name);
+    }
+}
+
+fn run_all(tasks: &Vec<Task>, count: i32) / {Shell, Log, Abort} {
+    let mut i: i32 = 0;
+    while i < count {
+        let name: &str = tasks[i as usize].name.as_str();
+        let cmd: &str = tasks[i as usize].cmd.as_str();
+        run_task(name, cmd);
+        i += 1;
+    }
+    perform Log.info("all tasks complete");
+}
+
+// ===== Entry Point =====
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    let mut dry_run: bool = false;
+    let mut taskfile: String = String.new();
+    taskfile.push_str("Taskfile");
+
+    let mut i: i32 = 1;
+    while i < argc {
+        let arg: &str = args_get(i);
+        if str_eq(arg, "--dry-run") || str_eq(arg, "-n") {
+            dry_run = true;
+        } else if str_eq(arg, "-f") && i + 1 < argc {
+            i += 1;
+            taskfile = String.new();
+            taskfile.push_str(args_get(i));
+        } else {
+            print_str("Unknown: ");
+            println_str(arg);
+            println_str("Usage: btask [--dry-run|-n] [-f Taskfile]");
+            return 1;
+        }
+        i += 1;
+    }
+
+    if !file_exists(taskfile.as_str()) {
+        print_str("Not found: ");
+        println_str(taskfile.as_str());
+        return 1;
+    }
+
+    let tasks: Vec<Task> = parse_taskfile(taskfile.as_str());
+    let n: i32 = tasks.len() as i32;
+    print_int(n);
+    println_str(" tasks loaded");
+
+    if n == 0 { return 0; }
+
+    // Same pipeline, different handler state
+    let mode: i32 = if dry_run { 1 } else { 0 };
+
+    let result: i32 = with TaskShell { dry: mode } handle {
+        with TaskLog { passed: 0, warned: 0 } handle {
+            with TaskAbort { dry: mode } handle {
+                run_all(&tasks, n);
+                0
+            }
+        }
+    };
+
+    if result != 0 {
+        println_str("Pipeline failed");
+    }
+
+    result
+}

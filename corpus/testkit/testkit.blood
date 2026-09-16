@@ -1,0 +1,126 @@
+// Proving Ground Program 8: testkit - Test framework with user-defined macros
+// EXPECT: Results: 11 passed
+
+// Part 1: User-defined assertion macros
+// These expand to code that performs effects - the key new combination.
+
+macro assert_eq {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a != __b {
+            perform TestReport.fail("assert_eq");
+        } else {
+            perform TestReport.pass();
+        }
+    };
+}
+
+macro assert_ne {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a == __b {
+            perform TestReport.fail("assert_ne");
+        } else {
+            perform TestReport.pass();
+        }
+    };
+}
+
+// Multi-rule macro: dispatches by arity (first-match semantics)
+macro expect {
+    ($a:expr, $b:expr) => {
+        let __ea: i32 = $a;
+        let __eb: i32 = $b;
+        if __ea == __eb { perform TestReport.pass(); } else { perform TestReport.fail("expect eq"); }
+    };
+    ($cond:expr) => {
+        if $cond { perform TestReport.pass(); } else { perform TestReport.fail("expect"); }
+    };
+}
+
+// Recursive macro: expands to assert_eq invocation
+macro double_check {
+    ($x:expr, $expected:expr) => {
+        assert_eq!($x + $x, $expected)
+    };
+}
+
+// Part 2: Effect + Handler infrastructure
+
+effect TestReport {
+    op pass() -> ();
+    op fail(msg: &str) -> ();
+}
+
+// Single-field state (multi-field handler state has a known bug)
+deep handler TestRunner for TestReport {
+    let mut passed: i32
+    return(x) {
+        let msg: &str = format!("Results: {} passed", passed);
+        println_str(msg);
+        x
+    }
+    op pass() {
+        passed = passed + 1;
+        resume(())
+    }
+    op fail(msg) {
+        print_str("FAIL: ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+// Part 3: Test functions
+
+// User macros expanding to effect performs
+fn test_arithmetic() / {TestReport} {
+    assert_eq!(2 + 3, 5);
+    assert_eq!(10 - 7, 3);
+    assert_eq!(4 * 3, 12);
+    assert_ne!(1 + 1, 3);
+}
+
+// Built-in vec! macro + user assert macro
+fn test_vec() / {TestReport} {
+    let nums: [i32; 5] = vec![10, 20, 30, 40, 50];
+    assert_eq!(nums[0], 10);
+    assert_eq!(nums[4], 50);
+}
+
+// Multi-rule macro: 1-arg and 2-arg dispatch
+fn test_multi_rule() / {TestReport} {
+    expect!(true);
+    expect!(7, 7);
+}
+
+// Recursive macro: double_check! -> assert_eq!
+fn test_recursive() / {TestReport} {
+    double_check!(5, 10);
+    double_check!(3, 6);
+}
+
+// Built-in matches! macro (implemented but previously untested)
+fn test_matches() / {TestReport} {
+    let x: i32 = 42;
+    if matches!(x, 42) {
+        perform TestReport.pass();
+    } else {
+        perform TestReport.fail("matches!");
+    }
+}
+
+// Part 4: Main
+
+fn main() -> i32 {
+    with TestRunner { passed: 0 } handle {
+        test_arithmetic();
+        test_vec();
+        test_multi_rule();
+        test_recursive();
+        test_matches();
+    };
+    0
+}

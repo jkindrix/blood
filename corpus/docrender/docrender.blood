@@ -1,0 +1,267 @@
+// Proving Ground Program 13: docrender - Document renderer (capstone)
+// All-pillar integration: P1 (regions) + P3 (effects) + P4 (dispatch) + P5 (linear)
+// Plus: closures, pattern matching, match guards, macros, handler state
+//
+// EXPECT: === Plain ===
+// EXPECT: # Welcome
+// EXPECT: This is a test document.
+// EXPECT: *important*
+// EXPECT: ## Details
+// EXPECT: More content here.
+// EXPECT: === Decorated ===
+// EXPECT: [H1] Welcome
+// EXPECT: [P] This is a test document.
+// EXPECT: [EM] important
+// EXPECT: [H2] Details
+// EXPECT: [P] More content here.
+// EXPECT: === Custom ===
+// EXPECT: <Welcome>
+// EXPECT: === Stats ===
+// EXPECT: nodes: 6, depth: 1
+// EXPECT: === Closed ===
+// EXPECT: document closed
+
+// Part 1: Macros for assertion
+
+macro assert_eq {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a != __b {
+            println_str("ASSERT FAILED");
+        }
+    };
+}
+
+// Part 2: Document tree (recursive enum with Box)
+
+enum Node {
+    Heading(i32, String),
+    Paragraph(String),
+    Emphasis(String),
+    Section(Vec<Node>),
+}
+
+// Linear document handle (P5 - must be closed)
+struct Document {
+    root: Vec<Node>,
+    title: String,
+}
+
+fn new_document(title: &str) -> Document {
+    let mut t: String = String.new();
+    let bytes = title.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() { t.push(bytes[i] as char); i += 1; }
+    Document { root: Vec.new(), title: t }
+}
+
+fn close_document(linear doc: Document) {
+    println_str("document closed");
+}
+
+// Part 3: Output effect (P3 - swappable rendering)
+
+effect Output {
+    op write(text: &str) -> ();
+    op newline() -> ();
+}
+
+// Output handler (P3 - handler with state for mode tracking)
+deep handler TextOutput for Output {
+    return(x) { x }
+    op write(text) { print_str(text); resume(()) }
+    op newline() { println_str(""); resume(()) }
+}
+
+// Part 4: Dispatch for node rendering (P4)
+
+fn render_heading(level: i32, text: &str, plain: bool) / {Output} {
+    if plain {
+        // Plain: # Heading or ## Heading
+        if level == 1 {
+            perform Output.write("# ");
+        } else {
+            perform Output.write("## ");
+        }
+        perform Output.write(text);
+    } else {
+        // Decorated: [H1] Heading
+        if level == 1 {
+            perform Output.write("[H1] ");
+        } else {
+            perform Output.write("[H2] ");
+        }
+        perform Output.write(text);
+    }
+    perform Output.newline();
+}
+
+fn render_paragraph(text: &str, plain: bool) / {Output} {
+    if !plain {
+        perform Output.write("[P] ");
+    }
+    perform Output.write(text);
+    perform Output.newline();
+}
+
+fn render_emphasis(text: &str, plain: bool) / {Output} {
+    if plain {
+        perform Output.write("*");
+        perform Output.write(text);
+        perform Output.write("*");
+    } else {
+        perform Output.write("[EM] ");
+        perform Output.write(text);
+    }
+    perform Output.newline();
+}
+
+// Render a node tree via pattern matching (P10-style)
+fn render_node(node: &Node, plain: bool) / {Output} {
+    match node {
+        &Node.Heading(level, ref text) => {
+            render_heading(level, text.as_str(), plain);
+        },
+        &Node.Paragraph(ref text) => {
+            render_paragraph(text.as_str(), plain);
+        },
+        &Node.Emphasis(ref text) => {
+            render_emphasis(text.as_str(), plain);
+        },
+        &Node.Section(ref children) => {
+            let mut i: usize = 0;
+            while i < children.len() {
+                render_node(&children[i], plain);
+                i += 1;
+            }
+        },
+    }
+}
+
+fn render_all(nodes: &Vec<Node>, plain: bool) / {Output} {
+    let mut i: usize = 0;
+    while i < nodes.len() {
+        render_node(&nodes[i], plain);
+        i += 1;
+    }
+}
+
+// Part 5: Closures for custom formatting (P9-style)
+
+fn render_with_formatter(nodes: &Vec<Node>, f: fn(&Node) -> ()) {
+    let mut i: usize = 0;
+    while i < nodes.len() {
+        f(&nodes[i]);
+        i += 1;
+    }
+}
+
+// Part 6: Tree analysis using pattern matching + match guards + if-let (P10-style)
+
+fn count_nodes(nodes: &Vec<Node>) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: usize = 0;
+    while i < nodes.len() {
+        total = total + count_node(&nodes[i]);
+        i += 1;
+    }
+    total
+}
+
+fn count_node(node: &Node) -> i32 {
+    match node {
+        &Node.Section(ref children) => 1 + count_nodes(children),
+        _ => 1,
+    }
+}
+
+fn max_depth(nodes: &Vec<Node>) -> i32 {
+    let mut d: i32 = 0;
+    let mut i: usize = 0;
+    while i < nodes.len() {
+        let nd: i32 = node_depth(&nodes[i]);
+        if nd > d { d = nd; }
+        i += 1;
+    }
+    d
+}
+
+fn node_depth(node: &Node) -> i32 {
+    if let &Node.Section(ref children) = node {
+        1 + max_depth(children)
+    } else {
+        0
+    }
+}
+
+fn format_heading_only(node: &Node) {
+    match node {
+        &Node.Heading(_, ref text) => {
+            print_str("<");
+            print_str(text.as_str());
+            println_str(">");
+        },
+        _ => {},
+    }
+}
+
+// Part 8: String helpers
+
+fn make_string(s: &str) -> String {
+    let mut result: String = String.new();
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() { result.push(bytes[i] as char); i += 1; }
+    result
+}
+
+// Part 8: Tests - all pillars together
+
+fn main() -> i32 {
+    // Build document tree
+    let doc: linear Document = new_document("Test Doc");
+    let mut nodes: Vec<Node> = Vec.new();
+    nodes.push(Node.Heading(1, make_string("Welcome")));
+    nodes.push(Node.Paragraph(make_string("This is a test document.")));
+    nodes.push(Node.Emphasis(make_string("important")));
+
+    // Nested section (tests recursive structure)
+    let mut section_children: Vec<Node> = Vec.new();
+    section_children.push(Node.Heading(2, make_string("Details")));
+    section_children.push(Node.Paragraph(make_string("More content here.")));
+    nodes.push(Node.Section(section_children));
+
+    // Test 1: Plain text rendering (P3 - effect handler)
+    println_str("=== Plain ===");
+    with TextOutput {} handle {
+        render_all(&nodes, true);
+    };
+
+    // Test 2: Decorated rendering (P3 - same handler, different render mode)
+    println_str("=== Decorated ===");
+    with TextOutput {} handle {
+        render_all(&nodes, false);
+    };
+
+    // Test 3: Custom formatter via closure (P9-style)
+    println_str("=== Custom ===");
+    render_with_formatter(&nodes, |node| {
+        format_heading_only(node);
+    });
+
+    // Test 4: Tree stats via pattern matching + if-let
+    println_str("=== Stats ===");
+    let n: i32 = count_nodes(&nodes);
+    let d: i32 = max_depth(&nodes);
+    let stats: &str = format!("nodes: {}, depth: {}", n, d);
+    println_str(stats);
+    assert_eq!(n, 6);
+    assert_eq!(d, 1);
+
+    // Test 5: Linear document lifecycle (P5)
+    println_str("=== Closed ===");
+    close_document(doc);
+
+    0
+}

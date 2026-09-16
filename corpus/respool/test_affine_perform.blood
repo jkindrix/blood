@@ -1,0 +1,19 @@
+// Test: affine variable from perform
+// EXPECT: got 5
+// EXPECT: used
+struct Entry { slot: i32 }
+effect T { op get() -> Entry; }
+deep handler H for T {
+    return(x) { x }
+    op get() { resume(Entry { slot: 5 }) }
+}
+fn work() / {T} {
+    let e: affine Entry = perform T.get();
+    print_str("got ");
+    println_int(e.slot);
+    println_str("used");
+}
+fn main() -> i32 {
+    with H {} handle { work(); };
+    0
+}

@@ -1,0 +1,611 @@
+// md2html — Markdown to HTML converter written in Blood
+//
+// Usage: md2html <input.md> [-o output.html]
+//
+// Supported:
+//   # through ###### headings
+//   **bold** and *italic*
+//   `code spans`
+//   ``` fenced code blocks ```
+//   - unordered lists (- or *)
+//   1. ordered lists
+//   > blockquotes
+//   --- horizontal rules
+//   [text](url) links
+//   Paragraphs (blank-line separated)
+
+// ===== String Helpers =====
+
+fn is_space(b: u8) -> bool {
+    b == 32 || b == 9 || b == 10 || b == 13
+}
+
+fn is_digit(b: u8) -> bool {
+    b >= 48 && b <= 57
+}
+
+fn starts_with(text: &str, prefix: &str) -> bool {
+    let tb = text.as_bytes();
+    let pb = prefix.as_bytes();
+    if pb.len() > tb.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < pb.len() {
+        if tb[i] != pb[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+fn substr(text: &str, start: usize, end: usize) -> String {
+    let bytes = text.as_bytes();
+    let mut out: String = String.new();
+    let stop: usize = if end > bytes.len() { bytes.len() } else { end };
+    let mut i: usize = start;
+    while i < stop {
+        out.push(bytes[i] as char);
+        i = i + 1;
+    }
+    out
+}
+
+fn trim(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    if len == 0 {
+        return String.new();
+    }
+    let mut lo: usize = 0;
+    while lo < len && is_space(bytes[lo]) {
+        lo = lo + 1;
+    }
+    let mut hi: usize = len;
+    while hi > lo && is_space(bytes[hi - 1]) {
+        hi = hi - 1;
+    }
+    substr(text, lo, hi)
+}
+
+fn is_blank(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if !is_space(bytes[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+fn count_leading_char(text: &str, ch: u8) -> i32 {
+    let bytes = text.as_bytes();
+    let mut n: i32 = 0;
+    while (n as usize) < bytes.len() && bytes[n as usize] == ch {
+        n += 1;
+    }
+    n
+}
+
+fn split_lines(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    let mut lines: Vec<String> = Vec.new();
+    let mut cur: String = String.new();
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 10 {
+            lines.push(cur);
+            cur = String.new();
+        } else if bytes[i] != 13 {
+            cur.push(bytes[i] as char);
+        }
+        i = i + 1;
+    }
+    if cur.len() > 0 {
+        lines.push(cur);
+    }
+    lines
+}
+
+fn int_to_str(val: i32) -> String {
+    let mut out: String = String.new();
+    if val == 0 {
+        out.push(48 as char);
+        return out;
+    }
+    let mut v: i32 = val;
+    let mut digits: Vec<i32> = Vec.new();
+    while v > 0 {
+        digits.push(v % 10);
+        v = v / 10;
+    }
+    let mut d: usize = digits.len();
+    while d > 0 {
+        d = d - 1;
+        out.push((48 + digits[d]) as u8 as char);
+    }
+    out
+}
+
+// ===== HTML Escaping =====
+
+fn escape_html(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: String = String.new();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 38 {
+            out.push_str("&amp;");
+        } else if bytes[i] == 60 {
+            out.push_str("&lt;");
+        } else if bytes[i] == 62 {
+            out.push_str("&gt;");
+        } else if bytes[i] == 34 {
+            out.push_str("&quot;");
+        } else {
+            out.push(bytes[i] as char);
+        }
+        i = i + 1;
+    }
+    out
+}
+
+// ===== Inline Formatting =====
+
+fn process_inline(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    let mut out: String = String.new();
+    let mut i: usize = 0;
+
+    while i < len {
+        // ** bold **
+        if bytes[i] == 42 && i + 1 < len && bytes[i + 1] == 42 {
+            let start: usize = i + 2;
+            let mut end: usize = start;
+            let mut found: bool = false;
+            while end + 1 < len {
+                if bytes[end] == 42 && bytes[end + 1] == 42 {
+                    found = true;
+                    break;
+                }
+                end = end + 1;
+            }
+            if found && end > start {
+                out.push_str("<strong>");
+                let inner: String = substr(text, start, end);
+                let esc: String = escape_html(inner.as_str());
+                out.push_str(esc.as_str());
+                out.push_str("</strong>");
+                i = end + 2;
+            } else {
+                out.push(42 as char);
+                i = i + 1;
+            }
+        }
+        // * italic * (single, not double)
+        else if bytes[i] == 42 {
+            let start: usize = i + 1;
+            let mut end: usize = start;
+            let mut found: bool = false;
+            while end < len {
+                if bytes[end] == 42 {
+                    found = true;
+                    break;
+                }
+                end = end + 1;
+            }
+            if found && end > start {
+                out.push_str("<em>");
+                let inner: String = substr(text, start, end);
+                let esc: String = escape_html(inner.as_str());
+                out.push_str(esc.as_str());
+                out.push_str("</em>");
+                i = end + 1;
+            } else {
+                out.push(42 as char);
+                i = i + 1;
+            }
+        }
+        // ` code span `
+        else if bytes[i] == 96 {
+            let start: usize = i + 1;
+            let mut end: usize = start;
+            let mut found: bool = false;
+            while end < len {
+                if bytes[end] == 96 {
+                    found = true;
+                    break;
+                }
+                end = end + 1;
+            }
+            if found {
+                out.push_str("<code>");
+                let inner: String = substr(text, start, end);
+                let esc: String = escape_html(inner.as_str());
+                out.push_str(esc.as_str());
+                out.push_str("</code>");
+                i = end + 1;
+            } else {
+                out.push(96 as char);
+                i = i + 1;
+            }
+        }
+        // [text](url) link
+        else if bytes[i] == 91 {
+            let ts: usize = i + 1;
+            let mut te: usize = ts;
+            let mut found_bracket: bool = false;
+            while te < len {
+                if bytes[te] == 93 {
+                    found_bracket = true;
+                    break;
+                }
+                te = te + 1;
+            }
+            if found_bracket && te + 1 < len && bytes[te + 1] == 40 {
+                let us: usize = te + 2;
+                let mut ue: usize = us;
+                let mut found_paren: bool = false;
+                while ue < len {
+                    if bytes[ue] == 41 {
+                        found_paren = true;
+                        break;
+                    }
+                    ue = ue + 1;
+                }
+                if found_paren {
+                    let link_text: String = substr(text, ts, te);
+                    let link_url: String = substr(text, us, ue);
+                    out.push_str("<a href=\"");
+                    out.push_str(link_url.as_str());
+                    out.push_str("\">");
+                    let esc: String = escape_html(link_text.as_str());
+                    out.push_str(esc.as_str());
+                    out.push_str("</a>");
+                    i = ue + 1;
+                } else {
+                    out.push(91 as char);
+                    i = i + 1;
+                }
+            } else {
+                out.push(91 as char);
+                i = i + 1;
+            }
+        }
+        // HTML special chars
+        else if bytes[i] == 38 { out.push_str("&amp;"); i = i + 1; }
+        else if bytes[i] == 60 { out.push_str("&lt;"); i = i + 1; }
+        else if bytes[i] == 62 { out.push_str("&gt;"); i = i + 1; }
+        else {
+            out.push(bytes[i] as char);
+            i = i + 1;
+        }
+    }
+
+    out
+}
+
+// ===== Block Detection =====
+
+fn is_hr_line(text: &str) -> bool {
+    let t: String = trim(text);
+    let bytes = t.as_bytes();
+    let len: usize = bytes.len();
+    if len < 3 {
+        return false;
+    }
+    let ch: u8 = bytes[0];
+    if ch != 45 && ch != 42 && ch != 95 {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] != ch && !is_space(bytes[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+fn is_ol_start(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    if len < 3 || !is_digit(bytes[0]) {
+        return false;
+    }
+    let mut dp: usize = 1;
+    while dp < len && is_digit(bytes[dp]) {
+        dp = dp + 1;
+    }
+    dp + 1 < len && bytes[dp] == 46 && bytes[dp + 1] == 32
+}
+
+fn ol_text_start(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut dp: usize = 0;
+    while dp < bytes.len() && is_digit(bytes[dp]) {
+        dp = dp + 1;
+    }
+    dp + 2
+}
+
+// ===== Main Conversion =====
+
+fn convert(content: &str) -> String {
+    let lines: Vec<String> = split_lines(content);
+    let nlines: usize = lines.len();
+    let mut html: String = String.new();
+
+    // State
+    let mut in_code: bool = false;
+    let mut code_buf: String = String.new();
+    let mut in_ul: bool = false;
+    let mut in_ol: bool = false;
+    let mut in_bq: bool = false;
+    let mut in_para: bool = false;
+    let mut para_buf: String = String.new();
+
+    // HTML preamble
+    html.push_str("<!DOCTYPE html>\n<html>\n<head>\n");
+    html.push_str("  <meta charset=\"utf-8\">\n");
+    html.push_str("  <title>Document</title>\n");
+    html.push_str("  <style>\n");
+    html.push_str("    body { max-width: 800px; margin: 40px auto; padding: 0 20px; ");
+    html.push_str("font-family: sans-serif; line-height: 1.6; }\n");
+    html.push_str("    pre { background: #f4f4f4; padding: 16px; overflow-x: auto; ");
+    html.push_str("border-radius: 4px; }\n");
+    html.push_str("    code { background: #f4f4f4; padding: 2px 6px; ");
+    html.push_str("border-radius: 3px; font-size: 0.9em; }\n");
+    html.push_str("    pre code { background: none; padding: 0; }\n");
+    html.push_str("    blockquote { border-left: 4px solid #ddd; margin-left: 0; ");
+    html.push_str("padding-left: 16px; color: #666; }\n");
+    html.push_str("    hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }\n");
+    html.push_str("    a { color: #0366d6; text-decoration: none; }\n");
+    html.push_str("    a:hover { text-decoration: underline; }\n");
+    html.push_str("  </style>\n");
+    html.push_str("</head>\n<body>\n");
+
+    let mut i: usize = 0;
+    while i < nlines {
+        let line: &str = lines[i].as_str();
+        let line_bytes = line.as_bytes();
+        let line_len: usize = line_bytes.len();
+
+        // --- Inside fenced code block ---
+        if in_code {
+            if starts_with(line, "```") {
+                html.push_str("<pre><code>");
+                let esc: String = escape_html(code_buf.as_str());
+                html.push_str(esc.as_str());
+                html.push_str("</code></pre>\n");
+                code_buf = String.new();
+                in_code = false;
+            } else {
+                if code_buf.len() > 0 {
+                    code_buf.push(10 as char);
+                }
+                code_buf.push_str(line);
+            }
+        }
+        // --- Fenced code block opening ---
+        else if starts_with(line, "```") {
+            if in_para {
+                html.push_str("<p>");
+                let p: String = process_inline(para_buf.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</p>\n");
+                para_buf = String.new();
+                in_para = false;
+            }
+            if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+            if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+            if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+            in_code = true;
+        }
+        // --- Blank line ---
+        else if is_blank(line) {
+            if in_para {
+                html.push_str("<p>");
+                let p: String = process_inline(para_buf.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</p>\n");
+                para_buf = String.new();
+                in_para = false;
+            }
+            if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+            if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+            if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+        }
+        // --- Horizontal rule ---
+        else if is_hr_line(line) {
+            if in_para {
+                html.push_str("<p>");
+                let p: String = process_inline(para_buf.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</p>\n");
+                para_buf = String.new();
+                in_para = false;
+            }
+            if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+            if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+            if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+            html.push_str("<hr>\n");
+        }
+        // --- Everything else: headings, lists, blockquotes, paragraphs ---
+        else {
+            let hashes: i32 = count_leading_char(line, 35);
+
+            // Heading: # through ######
+            if hashes > 0 && hashes <= 6 && (hashes as usize) < line_len && line_bytes[hashes as usize] == 32 {
+                if in_para {
+                    html.push_str("<p>");
+                    let p: String = process_inline(para_buf.as_str());
+                    html.push_str(p.as_str());
+                    html.push_str("</p>\n");
+                    para_buf = String.new();
+                    in_para = false;
+                }
+                if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+                if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+                if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+
+                let h_content: String = substr(line, (hashes + 1) as usize, line_len);
+                let h_trimmed: String = trim(h_content.as_str());
+                let level: String = int_to_str(hashes);
+                html.push_str("<h");
+                html.push_str(level.as_str());
+                html.push_str(">");
+                let p: String = process_inline(h_trimmed.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</h");
+                html.push_str(level.as_str());
+                html.push_str(">\n");
+            }
+            // Unordered list: "- " or "* "
+            else if line_len >= 2 && ((line_bytes[0] == 45 && line_bytes[1] == 32) || (line_bytes[0] == 42 && line_bytes[1] == 32)) {
+                if in_para {
+                    html.push_str("<p>");
+                    let p: String = process_inline(para_buf.as_str());
+                    html.push_str(p.as_str());
+                    html.push_str("</p>\n");
+                    para_buf = String.new();
+                    in_para = false;
+                }
+                if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+                if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+                if !in_ul {
+                    html.push_str("<ul>\n");
+                    in_ul = true;
+                }
+                let item: String = substr(line, 2, line_len);
+                let item_trimmed: String = trim(item.as_str());
+                html.push_str("  <li>");
+                let p: String = process_inline(item_trimmed.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</li>\n");
+            }
+            // Ordered list: "N. "
+            else if is_ol_start(line) {
+                if in_para {
+                    html.push_str("<p>");
+                    let p: String = process_inline(para_buf.as_str());
+                    html.push_str(p.as_str());
+                    html.push_str("</p>\n");
+                    para_buf = String.new();
+                    in_para = false;
+                }
+                if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+                if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+                if !in_ol {
+                    html.push_str("<ol>\n");
+                    in_ol = true;
+                }
+                let start_pos: usize = ol_text_start(line);
+                let item: String = substr(line, start_pos, line_len);
+                let item_trimmed: String = trim(item.as_str());
+                html.push_str("  <li>");
+                let p: String = process_inline(item_trimmed.as_str());
+                html.push_str(p.as_str());
+                html.push_str("</li>\n");
+            }
+            // Blockquote: "> " or ">"
+            else if line_len >= 1 && line_bytes[0] == 62 {
+                if in_para {
+                    html.push_str("<p>");
+                    let p: String = process_inline(para_buf.as_str());
+                    html.push_str(p.as_str());
+                    html.push_str("</p>\n");
+                    para_buf = String.new();
+                    in_para = false;
+                }
+                if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+                if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+                if !in_bq {
+                    html.push_str("<blockquote>\n");
+                    in_bq = true;
+                }
+                let bq_start: usize = if line_len >= 2 && line_bytes[1] == 32 { 2 } else { 1 };
+                let bq_text: String = substr(line, bq_start, line_len);
+                let bq_trimmed: String = trim(bq_text.as_str());
+                if bq_trimmed.len() > 0 {
+                    html.push_str("<p>");
+                    let p: String = process_inline(bq_trimmed.as_str());
+                    html.push_str(p.as_str());
+                    html.push_str("</p>\n");
+                }
+            }
+            // Paragraph (default)
+            else {
+                if in_ul { html.push_str("</ul>\n"); in_ul = false; }
+                if in_ol { html.push_str("</ol>\n"); in_ol = false; }
+                if in_bq { html.push_str("</blockquote>\n"); in_bq = false; }
+                if in_para {
+                    para_buf.push(32 as char);
+                    para_buf.push_str(line);
+                } else {
+                    para_buf.push_str(line);
+                    in_para = true;
+                }
+            }
+        }
+
+        i = i + 1;
+    }
+
+    // Close any remaining open blocks
+    if in_code {
+        html.push_str("<pre><code>");
+        let esc: String = escape_html(code_buf.as_str());
+        html.push_str(esc.as_str());
+        html.push_str("</code></pre>\n");
+    }
+    if in_para {
+        html.push_str("<p>");
+        let p: String = process_inline(para_buf.as_str());
+        html.push_str(p.as_str());
+        html.push_str("</p>\n");
+    }
+    if in_ul { html.push_str("</ul>\n"); }
+    if in_ol { html.push_str("</ol>\n"); }
+    if in_bq { html.push_str("</blockquote>\n"); }
+
+    html.push_str("</body>\n</html>\n");
+    html
+}
+
+// ===== Entry Point =====
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        println_str("Usage: md2html <input.md> [-o output.html]");
+        return 1;
+    }
+
+    let input_path: &str = args_get(1);
+    if !file_exists(input_path) {
+        print_str("Error: file not found: ");
+        println_str(input_path);
+        return 1;
+    }
+
+    let content: &str = file_read_to_string(input_path);
+    let html: String = convert(content);
+
+    if argc >= 4 && str_eq(args_get(2), "-o") {
+        let output_path: &str = args_get(3);
+        file_write_string(output_path, html.as_str());
+        print_str("Wrote ");
+        println_str(output_path);
+    } else {
+        print_str(html.as_str());
+    }
+
+    0
+}

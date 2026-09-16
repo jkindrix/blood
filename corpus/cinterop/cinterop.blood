@@ -1,0 +1,100 @@
+// Proving Ground Program 11: cinterop - C library wrapper with linear safety
+// New features: bridge function calls, bridge structs, @unsafe blocks,
+//               pointer casts, raw pointer ops, linear wrappers for C resources
+//
+// EXPECT: allocated 64 bytes
+// EXPECT: byte 0: 0
+// EXPECT: filled ok
+// EXPECT: byte 0: 42
+// EXPECT: byte 63: 42
+// EXPECT: freed
+// EXPECT: abs(-99) = 99
+// EXPECT: round-trip ok
+
+// Part 1: Bridge declarations for libc functions
+
+bridge "C" libc {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8) -> ();
+    fn memset(ptr: *mut u8, val: i32, len: usize) -> *mut u8;
+    fn abs(x: i32) -> i32;
+}
+
+// Part 2: Linear buffer wrapper - guarantees free is called
+
+struct CBuffer {
+    ptr: *mut u8,
+    size: usize,
+}
+
+fn alloc_buffer(size: usize) -> CBuffer {
+    let ptr: *mut u8 = libc.malloc(size);
+    let msg: &str = format!("allocated {} bytes", size as i32);
+    println_str(msg);
+    CBuffer { ptr: ptr, size: size }
+}
+
+fn read_byte(buf: &CBuffer, offset: usize) -> i32 {
+    let byte_ptr: *const u8 = @unsafe {
+        let base: usize = buf.ptr as usize;
+        let addr: usize = base + offset;
+        addr as *const u8
+    };
+    let val: u8 = @unsafe { *byte_ptr };
+    val as i32
+}
+
+fn fill_buffer(buf: &CBuffer, val: i32) {
+    libc.memset(buf.ptr, val, buf.size);
+}
+
+fn free_buffer(linear buf: CBuffer) {
+    libc.free(buf.ptr);
+    println_str("freed");
+}
+
+// Part 3: Tests
+
+fn main() -> i32 {
+    // Test 1: allocate, read, fill, read, free (linear lifecycle)
+    let buf: linear CBuffer = alloc_buffer(64);
+
+    // Read zero-initialized (calloc via malloc on Linux zeroes pages)
+    let b0: i32 = read_byte(&buf, 0);
+    print_str("byte 0: ");
+    println_int(b0);
+
+    // Fill with value 42
+    fill_buffer(&buf, 42);
+    println_str("filled ok");
+
+    // Verify fill
+    let b1: i32 = read_byte(&buf, 0);
+    print_str("byte 0: ");
+    println_int(b1);
+    let b2: i32 = read_byte(&buf, 63);
+    print_str("byte 63: ");
+    println_int(b2);
+
+    // Free (consumes linear handle)
+    free_buffer(buf);
+
+    // Test 2: bridge function call (abs from libc)
+    let neg: i32 = libc.abs(0 - 99);
+    let msg: &str = format!("abs(-99) = {}", neg);
+    println_str(msg);
+
+    // Test 3: pointer round-trip via @unsafe casts
+    let x: i32 = 777;
+    let p: *const i32 = &x as *const i32;
+    let addr: usize = @unsafe { p as usize };
+    let p2: *const i32 = @unsafe { addr as *const i32 };
+    let val: i32 = @unsafe { *p2 };
+    if val == 777 {
+        println_str("round-trip ok");
+    } else {
+        println_str("round-trip FAIL");
+    }
+
+    0
+}

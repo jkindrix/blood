@@ -1,0 +1,278 @@
+// Effect System Stress Test in Blood
+//
+// Compiler stress test: deep effect composition, multiple effects
+// across recursive calls, handler nesting at depth 3+.
+//
+// Stress targets:
+//   1. Triple-nested handlers in real computation (not just golden test)
+//   2. Effects across recursive function calls (effect evidence at depth)
+//   3. Multiple effects in single function: / {A, B, C}
+//   4. Handler state mutation across recursive calls
+//   5. Effect-based interpreter pattern (eval with State + Error + Log)
+//   6. Four effects composed: / {EvalErr, EvalState, EvalLog, EvalIO}
+
+// ============================================================
+// Mini expression language
+// ============================================================
+
+enum Expr {
+    Lit(i32),
+    Add(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Neg(Box<Expr>),
+    Let(i32, Box<Expr>, Box<Expr>),   // Let(var_id, value, body)
+    Var(i32),                          // Var(var_id)
+    If(Box<Expr>, Box<Expr>, Box<Expr>), // If(cond, then, else)
+    Print(Box<Expr>),                  // Print value, return it
+}
+
+// ============================================================
+// Effects for interpreter
+// ============================================================
+
+// Effect 1: evaluation errors
+effect EvalErr {
+    op err(msg: &str) -> i32;
+}
+
+deep handler CatchEvalErr for EvalErr {
+    return(x) { x }
+    op err(msg) {
+        print_str("EVAL ERROR: ");
+        println_str(msg);
+        0 - 1
+    }
+}
+
+// Effect 2: variable state (simple: 26 variables indexed 0-25)
+effect EvalState {
+    op get_var(id: i32) -> i32;
+    op set_var(id: i32, val: i32) -> ();
+}
+
+deep handler VarStore for EvalState {
+    let mut vars: Vec<i32>
+
+    return(x) { x }
+    op get_var(id) {
+        if id >= 0 && id < vars.len() as i32 {
+            resume(vars[id as usize])
+        } else {
+            resume(0)
+        }
+    }
+    op set_var(id, val) {
+        while vars.len() as i32 <= id {
+            vars.push(0);
+        }
+        vars[id as usize] = val;
+        resume(())
+    }
+}
+
+// Effect 3: output log
+effect EvalLog {
+    op log_eval(depth: i32, msg: &str) -> ();
+    op get_eval_count() -> i32;
+}
+
+deep handler EvalLogger for EvalLog {
+    let mut eval_count: i32
+
+    return(x) { x }
+    op log_eval(depth, msg) {
+        eval_count += 1;
+        resume(())
+    }
+    op get_eval_count() { resume(eval_count) }
+}
+
+// Effect 4: I/O (print capture)
+effect EvalIO {
+    op io_print(val: i32) -> ();
+    op get_output_count() -> i32;
+}
+
+deep handler CaptureIO for EvalIO {
+    let mut output_count: i32
+
+    return(x) { x }
+    op io_print(val) {
+        print_str("  > ");
+        println_int(val);
+        output_count += 1;
+        resume(())
+    }
+    op get_output_count() { resume(output_count) }
+}
+
+// ============================================================
+// Evaluator — carries all 4 effects (stress target #6)
+// ============================================================
+
+fn eval(e: Expr, depth: i32) -> i32 / {EvalErr, EvalState, EvalLog, EvalIO} {
+    perform EvalLog.log_eval(depth, "eval");
+
+    match e {
+        Expr.Lit(n) => n,
+
+        Expr.Add(left, right) => {
+            let l: i32 = eval(*left, depth + 1);
+            let r: i32 = eval(*right, depth + 1);
+            l + r
+        }
+
+        Expr.Mul(left, right) => {
+            let l: i32 = eval(*left, depth + 1);
+            let r: i32 = eval(*right, depth + 1);
+            l * r
+        }
+
+        Expr.Neg(inner) => {
+            0 - eval(*inner, depth + 1)
+        }
+
+        Expr.Let(var_id, value_expr, body) => {
+            let val: i32 = eval(*value_expr, depth + 1);
+            perform EvalState.set_var(var_id, val);
+            eval(*body, depth + 1)
+        }
+
+        Expr.Var(var_id) => {
+            perform EvalState.get_var(var_id)
+        }
+
+        Expr.If(cond, then_branch, else_branch) => {
+            let c: i32 = eval(*cond, depth + 1);
+            if c != 0 {
+                eval(*then_branch, depth + 1)
+            } else {
+                eval(*else_branch, depth + 1)
+            }
+        }
+
+        Expr.Print(inner) => {
+            let val: i32 = eval(*inner, depth + 1);
+            perform EvalIO.io_print(val);
+            val
+        }
+    }
+}
+
+// ============================================================
+// Expression builders (readability helpers)
+// ============================================================
+
+fn lit(n: i32) -> Expr { Expr.Lit(n) }
+
+fn add(a: Expr, b: Expr) -> Expr {
+    Expr.Add(Box.new(a), Box.new(b))
+}
+
+fn mul(a: Expr, b: Expr) -> Expr {
+    Expr.Mul(Box.new(a), Box.new(b))
+}
+
+fn neg(a: Expr) -> Expr {
+    Expr.Neg(Box.new(a))
+}
+
+fn let_bind(var_id: i32, value: Expr, body: Expr) -> Expr {
+    Expr.Let(var_id, Box.new(value), Box.new(body))
+}
+
+fn var(id: i32) -> Expr { Expr.Var(id) }
+
+fn if_expr(cond: Expr, then_e: Expr, else_e: Expr) -> Expr {
+    Expr.If(Box.new(cond), Box.new(then_e), Box.new(else_e))
+}
+
+fn print_expr(e: Expr) -> Expr {
+    Expr.Print(Box.new(e))
+}
+
+// ============================================================
+// Entry point — quadruple-nested handlers (stress target #1)
+// ============================================================
+
+fn run_expr(e: Expr) -> i32 {
+    let result: i32 = with CatchEvalErr {} handle {
+        with VarStore { vars: Vec.new() } handle {
+            with EvalLogger { eval_count: 0 } handle {
+                with CaptureIO { output_count: 0 } handle {
+                    let val: i32 = eval(e, 0);
+
+                    let evals: i32 = perform EvalLog.get_eval_count();
+                    let outputs: i32 = perform EvalIO.get_output_count();
+
+                    print_str("  result: ");
+                    println_int(val);
+                    print_str("  eval calls: ");
+                    println_int(evals);
+                    print_str("  outputs: ");
+                    println_int(outputs);
+                    val
+                }
+            }
+        }
+    };
+    result
+}
+
+fn main() -> i32 {
+    // Test 1: simple arithmetic
+    println_str("=== Test 1: 2 + 3 * 4 ===");
+    let e1: Expr = add(lit(2), mul(lit(3), lit(4)));
+    run_expr(e1);
+
+    // Test 2: nested let bindings
+    // let x = 10 in let y = 20 in x + y
+    println_str("");
+    println_str("=== Test 2: let x=10 in let y=20 in x+y ===");
+    let e2: Expr = let_bind(0, lit(10),
+                    let_bind(1, lit(20),
+                      add(var(0), var(1))));
+    run_expr(e2);
+
+    // Test 3: if expression
+    // if 1 then 42 else 0
+    println_str("");
+    println_str("=== Test 3: if 1 then 42 else 0 ===");
+    let e3: Expr = if_expr(lit(1), lit(42), lit(0));
+    run_expr(e3);
+
+    // Test 4: print + complex expression
+    // let x = 5 in print(x * x + 1)
+    println_str("");
+    println_str("=== Test 4: let x=5 in print(x*x+1) ===");
+    let e4: Expr = let_bind(0, lit(5),
+                    print_expr(add(mul(var(0), var(0)), lit(1))));
+    run_expr(e4);
+
+    // Test 5: negation
+    println_str("");
+    println_str("=== Test 5: -(3 + 4) ===");
+    let e5: Expr = neg(add(lit(3), lit(4)));
+    run_expr(e5);
+
+    // Test 6: deeper nesting — stress recursive effects
+    // let a = 2 in let b = 3 in let c = 4 in print(a * b + c)
+    println_str("");
+    println_str("=== Test 6: let a=2,b=3,c=4 in print(a*b+c) ===");
+    let e6: Expr = let_bind(0, lit(2),
+                    let_bind(1, lit(3),
+                      let_bind(2, lit(4),
+                        print_expr(add(mul(var(0), var(1)), var(2))))));
+    run_expr(e6);
+
+    // Test 7: if with computation in branches
+    // if (1 + 1) then print(100) else print(200)
+    println_str("");
+    println_str("=== Test 7: if (1+1) then print(100) else print(200) ===");
+    let e7: Expr = if_expr(add(lit(1), lit(1)),
+                    print_expr(lit(100)),
+                    print_expr(lit(200)));
+    run_expr(e7);
+
+    0
+}

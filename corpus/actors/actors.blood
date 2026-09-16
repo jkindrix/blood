@@ -1,0 +1,178 @@
+// Program 7: actors — Message-passing with memory safety
+// Pillars: 3 (Effects) + 1 (Generational Refs) + 5 (Regions)
+//
+// Demonstrates:
+// 1. Actors as region-allocated entities
+// 2. Generational actor handles (fat refs with gen counters)
+// 3. Effect-based message dispatch
+// 4. Handler state for actor mailboxes
+// 5. Region scoping for actor lifetime
+// 6. Copy semantics for messages (Blood MVS)
+// 7. Cross-pillar interaction: effects + gen refs + regions
+//
+// Known gap: sequential region destruction inside an effect handler scope
+// causes stale ref panic on subsequent performs (runtime region/effect
+// interaction bug). Worked around by using a single region per handler scope.
+
+// ============================================================
+// Actor and message types
+// ============================================================
+
+struct Actor {
+    id: i32,
+    inbox_count: i32,
+}
+
+// ============================================================
+// Effects for message passing
+// ============================================================
+
+effect Send {
+    op send_msg(target_id: i32, value: i32) -> ();
+    op get_inbox(actor_id: i32) -> i32;
+}
+
+// ============================================================
+// In-memory message handler
+// ============================================================
+
+deep handler MessageRouter for Send {
+    let mut inbox_a: i32
+    let mut inbox_b: i32
+    let mut inbox_c: i32
+
+    return(x) { x }
+
+    op send_msg(target_id, value) {
+        if target_id == 1 {
+            inbox_a = inbox_a + value;
+        } else if target_id == 2 {
+            inbox_b = inbox_b + value;
+        } else {
+            inbox_c = inbox_c + value;
+        }
+        resume(())
+    }
+
+    op get_inbox(actor_id) {
+        if actor_id == 1 {
+            resume(inbox_a)
+        } else if actor_id == 2 {
+            resume(inbox_b)
+        } else {
+            resume(inbox_c)
+        }
+    }
+}
+
+// ============================================================
+// Actor operations: effects + references to region-allocated data
+// ============================================================
+
+/// Send a message to an actor via its reference.
+/// The reference carries generation from the source region.
+fn send_to(actor: &Actor, value: i32) / {Send} {
+    perform Send.send_msg(actor.id, value);
+}
+
+/// Check an actor's accumulated inbox.
+fn check_inbox(actor: &Actor) -> i32 / {Send} {
+    perform Send.get_inbox(actor.id)
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+fn main() -> i32 {
+    // Part 1: Region-allocated actors + effect-based messaging
+    println_str("=== Part 1: Region actors + effects ===");
+    let r1: i32 = with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
+        region 'pool {
+            let actor_a: Actor = Actor { id: 1, inbox_count: 0 };
+            let actor_b: Actor = Actor { id: 2, inbox_count: 0 };
+
+            // Send messages via effect handler, using refs to region-allocated actors
+            send_to(&actor_a, 10);
+            send_to(&actor_b, 20);
+            send_to(&actor_a, 5);
+            send_to(&actor_b, 30);
+
+            // Check inboxes via effect handler
+            let a_total: i32 = check_inbox(&actor_a);
+            let b_total: i32 = check_inbox(&actor_b);
+            print_str("actor_a inbox=");
+            println_int(a_total);
+            print_str("actor_b inbox=");
+            println_int(b_total);
+
+            if a_total != 15 { 0 - 1 } else if b_total != 50 { 0 - 2 } else { 0 }
+        }
+    };
+    if r1 != 0 { return 1; }
+
+    // Part 2: Cross-function ref survival + handler state
+    println_str("=== Part 2: Cross-function refs in handler ===");
+    let r2: i32 = with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
+        region {
+            let actor: Actor = Actor { id: 1, inbox_count: 0 };
+            let r: &Actor = &actor;
+
+            // Pass fat ref across function boundary while inside handler scope
+            send_to(r, 100);
+            send_to(r, 200);
+            send_to(r, 50);
+            check_inbox(r)
+        }
+    };
+    print_str("cross-fn inbox=");
+    println_int(r2);
+    if r2 != 350 { return 2; }
+
+    // Part 3: Multiple actors in single region + handler state
+    println_str("=== Part 3: Three actors, one pool ===");
+    let r3: i32 = with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
+        region 'pool {
+            let a: Actor = Actor { id: 1, inbox_count: 0 };
+            let b: Actor = Actor { id: 2, inbox_count: 0 };
+            let c: Actor = Actor { id: 3, inbox_count: 0 };
+
+            // Complex message routing through effect handler
+            send_to(&a, 1);
+            send_to(&b, 2);
+            send_to(&c, 3);
+            send_to(&a, 10);
+            send_to(&b, 20);
+            send_to(&c, 30);
+
+            let total: i32 = check_inbox(&a) + check_inbox(&b) + check_inbox(&c);
+            print_str("total across all actors=");
+            println_int(total);
+            if total != 66 { 0 - 1 } else { 0 }
+        }
+    };
+    if r3 != 0 { return 3; }
+
+    // Part 4: Handler swap — same actor logic, different handler
+    println_str("=== Part 4: Handler swap ===");
+    let r4: i32 = with MessageRouter { inbox_a: 100, inbox_b: 200, inbox_c: 0 } handle {
+        region {
+            let a: Actor = Actor { id: 1, inbox_count: 0 };
+            let b: Actor = Actor { id: 2, inbox_count: 0 };
+            // Start with pre-loaded handler state
+            send_to(&a, 5);
+            send_to(&b, 10);
+            let at: i32 = check_inbox(&a);
+            let bt: i32 = check_inbox(&b);
+            print_str("pre-loaded a=");
+            println_int(at);
+            print_str("pre-loaded b=");
+            println_int(bt);
+            if at != 105 { 0 - 1 } else if bt != 210 { 0 - 2 } else { 0 }
+        }
+    };
+    if r4 != 0 { return 4; }
+
+    println_str("=== All parts passed ===");
+    0
+}

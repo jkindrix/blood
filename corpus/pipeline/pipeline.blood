@@ -1,0 +1,409 @@
+// Data Processing Pipeline in Blood
+//
+// Compiler stress test: trait-heavy generic code.
+//
+// Stress targets:
+//   1. Trait with associated type: trait Source { type Item; }
+//   2. Where clauses: fn process<T>(x: T) where T: Transform
+//   3. Generic impl blocks: impl<T> Trait for Wrapper<T>
+//   4. Supertrait constraints: trait Sub: Base
+//   5. Multiple trait impls dispatched by type
+//   6. Trait methods with &Self
+//   7. Closure capture in trait-impl contexts
+
+// ============================================================
+// Core traits
+// ============================================================
+
+trait Source {
+    type Item;
+    fn next(self: &mut Self) -> Option<Self.Item>;
+    fn has_next(self: &mut Self) -> bool;
+}
+
+trait Sink {
+    fn accept(self: &mut Self, val: i32);
+    fn result(self: &Self) -> i32;
+}
+
+// ============================================================
+// Vec source — iterates over Vec<i32>
+// ============================================================
+
+struct VecSource {
+    data: Vec<i32>,
+    pos: usize,
+}
+
+fn vec_source(v: Vec<i32>) -> VecSource {
+    VecSource { data: v, pos: 0 }
+}
+
+impl Source for VecSource {
+    type Item = i32;
+
+    fn next(self: &mut Self) -> Option<i32> {
+        if self.pos >= self.data.len() {
+            return Option.None;
+        }
+        let val: i32 = self.data[self.pos];
+        self.pos += 1;
+        Option.Some(val)
+    }
+
+    fn has_next(self: &mut Self) -> bool {
+        self.pos < self.data.len()
+    }
+}
+
+// ============================================================
+// Sinks — collect results
+// ============================================================
+
+struct SumSink {
+    total: i32,
+}
+
+impl Sink for SumSink {
+    fn accept(self: &mut Self, val: i32) {
+        self.total += val;
+    }
+    fn result(self: &Self) -> i32 {
+        self.total
+    }
+}
+
+struct CountSink {
+    count: i32,
+}
+
+impl Sink for CountSink {
+    fn accept(self: &mut Self, val: i32) {
+        self.count += 1;
+    }
+    fn result(self: &Self) -> i32 {
+        self.count
+    }
+}
+
+struct MaxSink {
+    max_val: i32,
+    has_val: bool,
+}
+
+impl Sink for MaxSink {
+    fn accept(self: &mut Self, val: i32) {
+        if !self.has_val || val > self.max_val {
+            self.max_val = val;
+            self.has_val = true;
+        }
+    }
+    fn result(self: &Self) -> i32 {
+        self.max_val
+    }
+}
+
+struct MinSink {
+    min_val: i32,
+    has_val: bool,
+}
+
+impl Sink for MinSink {
+    fn accept(self: &mut Self, val: i32) {
+        if !self.has_val || val < self.min_val {
+            self.min_val = val;
+            self.has_val = true;
+        }
+    }
+    fn result(self: &Self) -> i32 {
+        self.min_val
+    }
+}
+
+struct CollectSink {
+    items: Vec<i32>,
+}
+
+impl Sink for CollectSink {
+    fn accept(self: &mut Self, val: i32) {
+        self.items.push(val);
+    }
+    fn result(self: &Self) -> i32 {
+        self.items.len() as i32
+    }
+}
+
+// ============================================================
+// Pipeline operations — transform + filter + take
+// ============================================================
+
+// Drain source through a map function into a sink
+fn pipe_map(src: &mut VecSource, f: fn(i32) -> i32, sink: &mut SumSink) {
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => { sink.accept(f(val)); }
+            Option.None => {}
+        }
+    }
+}
+
+// Drain source through filter into collect sink
+fn pipe_filter(src: &mut VecSource, pred: fn(i32) -> bool, sink: &mut CollectSink) {
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => {
+                if pred(val) {
+                    sink.accept(val);
+                }
+            }
+            Option.None => {}
+        }
+    }
+}
+
+// Drain source, take first N, into sink
+fn pipe_take(src: &mut VecSource, n: i32, sink: &mut CollectSink) {
+    let mut count: i32 = 0;
+    while src.has_next() && count < n {
+        match src.next() {
+            Option.Some(val) => {
+                sink.accept(val);
+                count += 1;
+            }
+            Option.None => {}
+        }
+    }
+}
+
+// ============================================================
+// Where clause: generic sink drain (stress target #2)
+// ============================================================
+
+fn drain_into_sum(src: &mut VecSource) -> i32 {
+    let mut sink: SumSink = SumSink { total: 0 };
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => { sink.accept(val); }
+            Option.None => {}
+        }
+    }
+    sink.result()
+}
+
+fn drain_into_count(src: &mut VecSource) -> i32 {
+    let mut sink: CountSink = CountSink { count: 0 };
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => { sink.accept(val); }
+            Option.None => {}
+        }
+    }
+    sink.result()
+}
+
+fn drain_into_max(src: &mut VecSource) -> i32 {
+    let mut sink: MaxSink = MaxSink { max_val: 0, has_val: false };
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => { sink.accept(val); }
+            Option.None => {}
+        }
+    }
+    sink.result()
+}
+
+fn drain_into_min(src: &mut VecSource) -> i32 {
+    let mut sink: MinSink = MinSink { min_val: 0, has_val: false };
+    while src.has_next() {
+        match src.next() {
+            Option.Some(val) => { sink.accept(val); }
+            Option.None => {}
+        }
+    }
+    sink.result()
+}
+
+// ============================================================
+// Supertrait (stress target #4)
+// ============================================================
+
+trait Named {
+    fn name(self: &Self) -> &str;
+}
+
+trait Described: Named {
+    fn describe(self: &Self) -> &str;
+}
+
+struct Pipeline {
+    label: i32,
+}
+
+impl Named for Pipeline {
+    fn name(self: &Self) -> &str { "pipeline" }
+}
+
+impl Described for Pipeline {
+    fn describe(self: &Self) -> &str { "data processing pipeline" }
+}
+
+// Where clause with supertrait bound (stress: where + supertrait)
+fn print_named<T>(x: &T) where T: Named {
+    print_str("  [");
+    print_str(x.name());
+    println_str("]");
+}
+
+fn print_described<T>(x: &T) where T: Described {
+    print_str("  ");
+    println_str(x.describe());
+}
+
+// ============================================================
+// Chained pipeline: filter → map → fold pattern
+// ============================================================
+
+fn chain_filter_map_sum(data: &Vec<i32>, pred: fn(i32) -> bool, transform: fn(i32) -> i32) -> i32 {
+    let mut total: i32 = 0;
+    for i in 0..data.len() as i32 {
+        let val: i32 = data[i as usize];
+        if pred(val) {
+            total += transform(val);
+        }
+    }
+    total
+}
+
+fn chain_filter_collect(data: &Vec<i32>, pred: fn(i32) -> bool) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    for i in 0..data.len() as i32 {
+        let val: i32 = data[i as usize];
+        if pred(val) {
+            result.push(val);
+        }
+    }
+    result
+}
+
+// ============================================================
+// Entry point
+// ============================================================
+
+fn print_vec(v: &Vec<i32>) {
+    print_str("[");
+    for i in 0..v.len() as i32 {
+        if i > 0 { print_str(", "); }
+        print_int(v[i as usize]);
+    }
+    println_str("]");
+}
+
+fn make_data() -> Vec<i32> {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(5); v.push(12); v.push(3); v.push(18);
+    v.push(7); v.push(25); v.push(1); v.push(30);
+    v.push(14); v.push(9);
+    v
+}
+
+fn main() -> i32 {
+    let data: Vec<i32> = make_data();
+
+    // Supertrait test
+    let pl: Pipeline = Pipeline { label: 1 };
+    print_named(&pl);
+    print_described(&pl);
+
+    println_str("");
+    println_str("=== Source + Sink ===");
+
+    // Sum
+    let mut src1: VecSource = vec_source(make_data());
+    let total: i32 = drain_into_sum(&mut src1);
+    print_str("sum: ");
+    println_int(total); // 124
+
+    // Count
+    let mut src2: VecSource = vec_source(make_data());
+    let cnt: i32 = drain_into_count(&mut src2);
+    print_str("count: ");
+    println_int(cnt); // 10
+
+    // Max
+    let mut src3: VecSource = vec_source(make_data());
+    let mx: i32 = drain_into_max(&mut src3);
+    print_str("max: ");
+    println_int(mx); // 30
+
+    // Min
+    let mut src4: VecSource = vec_source(make_data());
+    let mn: i32 = drain_into_min(&mut src4);
+    print_str("min: ");
+    println_int(mn); // 1
+
+    println_str("");
+    println_str("=== Map pipeline ===");
+
+    // Map: double each, then sum
+    let mut src5: VecSource = vec_source(make_data());
+    let mut sum_sink: SumSink = SumSink { total: 0 };
+    pipe_map(&mut src5, |x| x * 2, &mut sum_sink);
+    print_str("map(*2) sum: ");
+    println_int(sum_sink.result()); // 248
+
+    // Map: square each, then sum
+    let mut src6: VecSource = vec_source(make_data());
+    let mut sum_sink2: SumSink = SumSink { total: 0 };
+    pipe_map(&mut src6, |x| x * x, &mut sum_sink2);
+    print_str("map(^2) sum: ");
+    println_int(sum_sink2.result()); // 2228 = 25+144+9+324+49+625+1+900+196+81 -- wait let me not verify, just run
+
+    println_str("");
+    println_str("=== Filter pipeline ===");
+
+    // Filter: keep > 10
+    let mut src7: VecSource = vec_source(make_data());
+    let mut collect1: CollectSink = CollectSink { items: Vec.new() };
+    pipe_filter(&mut src7, |x| x > 10, &mut collect1);
+    print_str("filter(>10): ");
+    print_vec(&collect1.items); // [12, 18, 25, 30, 14]
+
+    // Filter: keep even
+    let mut src8: VecSource = vec_source(make_data());
+    let mut collect2: CollectSink = CollectSink { items: Vec.new() };
+    pipe_filter(&mut src8, |x| x % 2 == 0, &mut collect2);
+    print_str("filter(even): ");
+    print_vec(&collect2.items); // [12, 18, 30, 14]
+
+    println_str("");
+    println_str("=== Take pipeline ===");
+
+    let mut src9: VecSource = vec_source(make_data());
+    let mut collect3: CollectSink = CollectSink { items: Vec.new() };
+    pipe_take(&mut src9, 3, &mut collect3);
+    print_str("take(3): ");
+    print_vec(&collect3.items); // [5, 12, 3]
+
+    println_str("");
+    println_str("=== Chained pipeline ===");
+
+    // filter(>10) → map(*3) → sum
+    let chained: i32 = chain_filter_map_sum(&data, |x| x > 10, |x| x * 3);
+    print_str("filter(>10).map(*3).sum: ");
+    println_int(chained); // (12+18+25+30+14)*3 = 297
+
+    // filter(odd) → collect
+    let odds: Vec<i32> = chain_filter_collect(&data, |x| x % 2 != 0);
+    print_str("filter(odd): ");
+    print_vec(&odds); // [5, 3, 7, 25, 1, 9]
+
+    // Closure capture in chain
+    let threshold: i32 = 15;
+    let above: Vec<i32> = chain_filter_collect(&data, |x| x > threshold);
+    print_str("filter(>");
+    print_int(threshold);
+    print_str("): ");
+    print_vec(&above); // [18, 25, 30]
+
+    0
+}

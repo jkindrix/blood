@@ -1,0 +1,75 @@
+// strutil — Reusable string utilities
+
+fn is_space(b: u8) -> bool {
+    b == 32 || b == 9 || b == 10 || b == 13
+}
+
+fn is_blank(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if !is_space(bytes[i]) { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+fn trim(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    if len == 0 { return String.new(); }
+    let mut lo: usize = 0;
+    while lo < len && is_space(bytes[lo]) { lo = lo + 1; }
+    let mut hi: usize = len;
+    while hi > lo && is_space(bytes[hi - 1]) { hi = hi - 1; }
+    let mut out: String = String.new();
+    let mut i: usize = lo;
+    while i < hi {
+        out.push(bytes[i] as char);
+        i = i + 1;
+    }
+    out
+}
+
+fn substr(text: &str, start: usize, end: usize) -> String {
+    let bytes = text.as_bytes();
+    let mut out: String = String.new();
+    let stop: usize = if end > bytes.len() { bytes.len() } else { end };
+    let mut i: usize = start;
+    while i < stop {
+        out.push(bytes[i] as char);
+        i = i + 1;
+    }
+    out
+}
+
+fn find_byte(text: &str, ch: u8) -> i32 {
+    let bytes = text.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == ch { return i as i32; }
+        i = i + 1;
+    }
+    0 - 1
+}
+
+fn split_lines(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    let mut lines: Vec<String> = Vec.new();
+    let mut cur: String = String.new();
+    let mut i: usize = 0;
+    while i < len {
+        if bytes[i] == 10 {
+            lines.push(cur);
+            cur = String.new();
+        } else if bytes[i] != 13 {
+            cur.push(bytes[i] as char);
+        }
+        i = i + 1;
+    }
+    if cur.len() > 0 {
+        lines.push(cur);
+    }
+    lines
+}

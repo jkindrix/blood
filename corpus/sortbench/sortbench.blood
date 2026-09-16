@@ -1,0 +1,346 @@
+// Sorting Algorithm Benchmark in Blood
+//
+// Implements and benchmarks three sorting algorithms, demonstrating
+// Blood features not covered by previous projects.
+//
+// Features exercised:
+//   - for loops with ranges (0..n)
+//   - Generics (generic identity/swap patterns)
+//   - Effects with resume and mutable handler state (RNG)
+//   - Timing builtins (blood_clock_nanos)
+//   - Vec mutation (v[i] = v[j] through &mut Vec)
+//   - Inherent impl blocks (methods on Stats struct)
+//   - Multiple functions composing over shared data
+//   - u64 arithmetic
+//
+// Usage: sortbench [size]
+//   Default size: 1000
+
+// --- Generic utility functions ---
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+// --- Random number effect (LCG PRNG with state) ---
+
+effect Rng {
+    op next() -> u64;
+}
+
+deep handler LcgRng for Rng {
+    let mut seed: u64
+
+    return(x) { x }
+
+    op next() {
+        // LCG parameters (Numerical Recipes)
+        seed = seed * 6364136223846793005 + 1442695040888963407;
+        resume(seed)
+    }
+}
+
+// Generate a random i32 in [0, bound)
+fn rand_i32(bound: i32) -> i32 / {Rng} {
+    let val: u64 = perform Rng.next();
+    let positive: i32 = (val >> 33) as i32;
+    if positive < 0 {
+        (0 - positive) % bound
+    } else {
+        positive % bound
+    }
+}
+
+// Fill a Vec with random values
+fn fill_random(v: &mut Vec<i32>, n: i32) / {Rng} {
+    for i in 0..n {
+        v.push(rand_i32(10000));
+    }
+}
+
+// --- Vec utilities ---
+
+fn swap(v: &mut Vec<i32>, a: usize, b: usize) {
+    let tmp: i32 = v[a];
+    v[a] = v[b];
+    v[b] = tmp;
+}
+
+fn copy_vec(src: &Vec<i32>) -> Vec<i32> {
+    let mut dst: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+    while i < src.len() {
+        dst.push(src[i]);
+        i = i + 1;
+    }
+    dst
+}
+
+fn is_sorted(v: &Vec<i32>) -> bool {
+    if v.len() < 2 {
+        return true;
+    }
+    let mut i: usize = 1;
+    while i < v.len() {
+        if v[i] < v[i - 1] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+// --- Sorting algorithms ---
+
+// Bubble sort: O(n^2) - simple but slow
+fn bubble_sort(v: &mut Vec<i32>) {
+    let n: usize = v.len();
+    if n < 2 {
+        return;
+    }
+    let mut i: usize = 0;
+    while i < n - 1 {
+        let mut swapped: bool = false;
+        let mut j: usize = 0;
+        while j < n - 1 - i {
+            if v[j] > v[j + 1] {
+                swap(v, j, j + 1);
+                swapped = true;
+            }
+            j = j + 1;
+        }
+        if !swapped {
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+// Insertion sort: O(n^2) - good for small/nearly-sorted data
+fn insertion_sort(v: &mut Vec<i32>) {
+    let n: usize = v.len();
+    let mut i: usize = 1;
+    while i < n {
+        let key: i32 = v[i];
+        let mut j: usize = i;
+        while j > 0 && v[j - 1] > key {
+            v[j] = v[j - 1];
+            j = j - 1;
+        }
+        v[j] = key;
+        i = i + 1;
+    }
+}
+
+// Quicksort: O(n log n) average - fast general-purpose
+fn quicksort(v: &mut Vec<i32>) {
+    let n: usize = v.len();
+    if n < 2 {
+        return;
+    }
+    qs_helper(v, 0, n - 1);
+}
+
+fn qs_helper(v: &mut Vec<i32>, low: usize, high: usize) {
+    if high <= low {
+        return;
+    }
+    // Use insertion sort for small subarrays
+    if high - low < 10 {
+        qs_insertion(v, low, high);
+        return;
+    }
+    let mut lt: usize = 0;
+    let mut gt: usize = 0;
+    qs_partition3(v, low, high, &mut lt, &mut gt);
+    if lt > 0 {
+        qs_helper(v, low, lt - 1);
+    }
+    if gt < high {
+        qs_helper(v, gt + 1, high);
+    }
+}
+
+fn qs_partition3(v: &mut Vec<i32>, low: usize, high: usize, out_lt: &mut usize, out_gt: &mut usize) {
+    // Median-of-three pivot selection
+    let mid: usize = low + (high - low) / 2;
+    if v[mid] < v[low] {
+        swap(v, low, mid);
+    }
+    if v[high] < v[low] {
+        swap(v, low, high);
+    }
+    if v[mid] < v[high] {
+        swap(v, mid, high);
+    }
+    let pivot: i32 = v[high];
+
+    // Three-way partition (Dutch National Flag):
+    // [low..lt) < pivot, [lt..gt] == pivot, (gt..high] > pivot
+    let mut lt: usize = low;
+    let mut i: usize = low;
+    let mut gt: usize = high;
+    while i <= gt {
+        if v[i] < pivot {
+            swap(v, lt, i);
+            lt = lt + 1;
+            i = i + 1;
+        } else if v[i] > pivot {
+            swap(v, i, gt);
+            if gt == 0 {
+                break;
+            }
+            gt = gt - 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    *out_lt = lt;
+    *out_gt = gt;
+}
+
+fn qs_insertion(v: &mut Vec<i32>, low: usize, high: usize) {
+    let mut i: usize = low + 1;
+    while i <= high {
+        let key: i32 = v[i];
+        let mut j: usize = i;
+        while j > low && v[j - 1] > key {
+            v[j] = v[j - 1];
+            j = j - 1;
+        }
+        v[j] = key;
+        i = i + 1;
+    }
+}
+
+// --- Benchmark statistics ---
+
+struct Stats {
+    name_tag: i32,
+    nanos: u64,
+    size: i32,
+    sorted_ok: bool,
+}
+
+impl Stats {
+    fn print(self) {
+        // Print algorithm name
+        if self.name_tag == 1 {
+            print_str("bubble    ");
+        } else if self.name_tag == 2 {
+            print_str("insertion ");
+        } else if self.name_tag == 3 {
+            print_str("quicksort ");
+        }
+
+        // Time in microseconds
+        let micros: u64 = self.nanos / 1000;
+        print_u64(micros);
+        print_str(" us  ");
+
+        // Correctness
+        if self.sorted_ok {
+            println_str("OK");
+        } else {
+            println_str("FAIL");
+        }
+    }
+}
+
+// --- Benchmark runner ---
+
+fn bench_bubble(data: &Vec<i32>) -> Stats {
+    let mut v: Vec<i32> = copy_vec(data);
+    let t0: u64 = blood_clock_nanos();
+    bubble_sort(&mut v);
+    let t1: u64 = blood_clock_nanos();
+    let ok: bool = is_sorted(&v);
+    Stats { name_tag: 1, nanos: t1 - t0, size: v.len() as i32, sorted_ok: ok }
+}
+
+fn bench_insertion(data: &Vec<i32>) -> Stats {
+    let mut v: Vec<i32> = copy_vec(data);
+    let t0: u64 = blood_clock_nanos();
+    insertion_sort(&mut v);
+    let t1: u64 = blood_clock_nanos();
+    let ok: bool = is_sorted(&v);
+    Stats { name_tag: 2, nanos: t1 - t0, size: v.len() as i32, sorted_ok: ok }
+}
+
+fn bench_quicksort(data: &Vec<i32>) -> Stats {
+    let mut v: Vec<i32> = copy_vec(data);
+    let t0: u64 = blood_clock_nanos();
+    quicksort(&mut v);
+    let t1: u64 = blood_clock_nanos();
+    let ok: bool = is_sorted(&v);
+    Stats { name_tag: 3, nanos: t1 - t0, size: v.len() as i32, sorted_ok: ok }
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    // Parse size from args (default 1000)
+    let mut size: i32 = 1000;
+    let argc: i32 = args_count();
+    if argc >= 2 {
+        // Simple integer parsing from first arg
+        let arg: &str = args_get(1);
+        let bytes = arg.as_bytes();
+        let mut n: i32 = 0;
+        for i in 0..bytes.len() as i32 {
+            let b: u8 = bytes[i as usize];
+            if b >= 48 && b <= 57 {
+                n = n * 10 + (b as i32 - 48);
+            }
+        }
+        if n > 0 {
+            size = n;
+        }
+    }
+
+    print_str("Sorting benchmark: n=");
+    println_int(size);
+    println_str("---");
+
+    // Generate random data using the Rng effect
+    let mut data: Vec<i32> = Vec.new();
+    with LcgRng { seed: 12345 } handle {
+        fill_random(&mut data, size);
+    };
+
+    // Verify data was generated
+    print_str("Generated ");
+    print_int(data.len() as i32);
+    println_str(" random elements");
+    println_str("");
+
+    // Run benchmarks (each gets a fresh copy of the data)
+    print_str("Algorithm  Time       Result\n");
+    print_str("---------- ---------- ------\n");
+
+    // Only run bubble sort for small sizes (it's O(n^2))
+    if size <= 5000 {
+        let s1: Stats = bench_bubble(&data);
+        s1.print();
+    } else {
+        println_str("bubble     (skipped - n > 5000)");
+    }
+
+    let s2: Stats = bench_insertion(&data);
+    s2.print();
+
+    let s3: Stats = bench_quicksort(&data);
+    s3.print();
+
+    println_str("");
+
+    // Verify the generic identity function works (exercises generics)
+    let check: i32 = identity(42);
+    if check != 42 {
+        println_str("Generic identity failed");
+        return 1;
+    }
+
+    println_str("All sorts verified correct.");
+    0
+}

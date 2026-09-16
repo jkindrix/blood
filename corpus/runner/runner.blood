@@ -1,0 +1,251 @@
+// Build Script Runner in Blood
+//
+// Reads a script file containing shell commands (one per line),
+// executes each with system(), and reports results.
+//
+// Features exercised:
+//   - system() builtin for shell command execution
+//   - Multiple composed effects (State + RunErr) in one function
+//   - Generic enum (Outcome<T> with Ok/Err variants)
+//   - Nested with...handle blocks
+//   - Effect handler with mutable state (tracking pass/fail counts)
+//   - Pattern matching on generic enum variants
+//
+// Usage: runner <script_file>
+//
+// Script format:
+//   - One command per line
+//   - Lines starting with '#' are comments
+//   - Empty lines are skipped
+
+// --- Generic enum for results ---
+
+enum Outcome<T> {
+    Ok(T),
+    Err(i32),
+}
+
+fn is_ok(r: Outcome<i32>) -> bool {
+    match r {
+        Outcome.Ok(_) => true,
+        Outcome.Err(_) => false,
+    }
+}
+
+fn unwrap_err(r: Outcome<i32>) -> i32 {
+    match r {
+        Outcome.Ok(_) => 0,
+        Outcome.Err(code) => code,
+    }
+}
+
+// --- Effects ---
+
+// State effect: tracks how many commands have passed/failed
+effect Counter {
+    op get_pass() -> i32;
+    op get_fail() -> i32;
+    op inc_pass() -> ();
+    op inc_fail() -> ();
+}
+
+deep handler RunCounter for Counter {
+    let mut passed: i32
+    let mut failed: i32
+
+    return(x) { x }
+
+    op get_pass() { resume(passed) }
+    op get_fail() { resume(failed) }
+    op inc_pass() { passed += 1; resume(()) }
+    op inc_fail() { failed += 1; resume(()) }
+}
+
+// Error effect: abort on fatal errors
+effect RunErr {
+    op fatal(msg: &str) -> i32;
+}
+
+deep handler CatchRunErr for RunErr {
+    return(x) { x }
+
+    op fatal(msg) {
+        print_str("FATAL: ");
+        println_str(msg);
+        1
+    }
+}
+
+// --- Command execution ---
+
+fn run_command(cmd: &str) -> Outcome<i32> {
+    let exit_code: i32 = system(cmd);
+    if exit_code == 0 {
+        Outcome.Ok(0)
+    } else {
+        Outcome.Err(exit_code)
+    }
+}
+
+// --- Script parsing ---
+
+fn is_comment_or_empty(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let len: usize = bytes.len();
+    if len == 0 {
+        return true;
+    }
+    // Skip leading whitespace
+    let mut i: usize = 0;
+    while i < len && (bytes[i] == 32 || bytes[i] == 9) {
+        i += 1;
+    }
+    if i >= len {
+        return true;
+    }
+    // Comment line
+    if bytes[i] == 35 {
+        return true;
+    }
+    false
+}
+
+// Extract lines from content, returns Vec<String>
+fn split_lines(content: &str) -> Vec<String> {
+    let bytes = content.as_bytes();
+    let len: usize = bytes.len();
+    let mut lines: Vec<String> = Vec.new();
+    let mut i: usize = 0;
+
+    while i < len {
+        let mut line: String = String.new();
+        while i < len && bytes[i] != 10 {
+            if bytes[i] != 13 {
+                line.push(bytes[i] as char);
+            }
+            i += 1;
+        }
+        lines.push(line);
+        if i < len {
+            i += 1;
+        }
+    }
+
+    lines
+}
+
+// Trim leading/trailing whitespace from a String, return new String
+fn trim(s: &String) -> String {
+    let bytes = s.as_str().as_bytes();
+    let len: usize = bytes.len();
+
+    // Find start
+    let mut start: usize = 0;
+    while start < len && (bytes[start] == 32 || bytes[start] == 9) {
+        start += 1;
+    }
+
+    // Find end
+    let mut end: usize = len;
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
+        end -= 1;
+    }
+
+    let mut result: String = String.new();
+    let mut i: usize = start;
+    while i < end {
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+// --- Main execution with composed effects ---
+
+fn execute_script(lines: &Vec<String>) -> i32 / {Counter, RunErr} {
+    let total: i32 = lines.len() as i32;
+    let mut cmd_num: i32 = 0;
+
+    let mut i: usize = 0;
+    while i < lines.len() {
+        let line: String = trim(&lines[i]);
+
+        if is_comment_or_empty(line.as_str()) {
+            i += 1;
+            continue;
+        }
+
+        cmd_num += 1;
+        print_str("[");
+        print_int(cmd_num);
+        print_str("] ");
+        println(line.as_str());
+
+        let result: Outcome<i32> = run_command(line.as_str());
+
+        match result {
+            Outcome.Ok(_) => {
+                println_str("    -> OK");
+                perform Counter.inc_pass();
+            }
+            Outcome.Err(code) => {
+                print_str("    -> FAIL (exit ");
+                print_int(code);
+                println_str(")");
+                perform Counter.inc_fail();
+            }
+        }
+
+        i += 1;
+    }
+
+    // Report summary using effect ops
+    let p: i32 = perform Counter.get_pass();
+    let f: i32 = perform Counter.get_fail();
+
+    println_str("");
+    println_str("=== Summary ===");
+    print_str("Passed: ");
+    println_int(p);
+    print_str("Failed: ");
+    println_int(f);
+    print_str("Total:  ");
+    println_int(p + f);
+
+    if f > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        println_str("Usage: runner <script_file>");
+        println_str("  Runs shell commands from a script file, one per line.");
+        println_str("  Lines starting with '#' are comments.");
+        return 1;
+    }
+
+    let filename: &str = args_get(1);
+    if !file_exists(filename) {
+        print_str("Error: file not found: ");
+        println_str(filename);
+        return 1;
+    }
+
+    let content: &str = file_read_to_string(filename);
+    let lines: Vec<String> = split_lines(content);
+
+    // Nested effect handlers: Counter (state) wrapping RunErr (abort)
+    let exit_code: i32 = with RunCounter { passed: 0, failed: 0 } handle {
+        with CatchRunErr {} handle {
+            execute_script(&lines)
+        }
+    };
+
+    exit_code
+}

@@ -1,0 +1,25 @@
+// Test: handler op with struct param
+// EXPECT: got slot 5
+// EXPECT: count: 1
+struct Entry { slot: i32 }
+effect T { op send(e: Entry) -> (); }
+deep handler H for T {
+    let mut count: i32
+    return(x) {
+        let msg: &str = format!("count: {}", count);
+        println_str(msg);
+        x
+    }
+    op send(e) {
+        count = count + 1;
+        print_str("got slot ");
+        println_int(e.slot);
+        resume(())
+    }
+}
+fn main() -> i32 {
+    with H { count: 0 } handle {
+        perform T.send(Entry { slot: 5 });
+    };
+    0
+}

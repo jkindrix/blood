@@ -1,0 +1,31 @@
+// Test: 3-field state + op with param
+// EXPECT: got: 42
+// EXPECT: a=1 b=0 c=42
+effect T {
+    op send(val: i32) -> ();
+}
+
+deep handler H for T {
+    let mut a: i32
+    let mut b: i32
+    let mut c: i32
+    return(x) {
+        let msg: &str = format!("a={} b={} c={}", a, b, c);
+        println_str(msg);
+        x
+    }
+    op send(val) {
+        a = a + 1;
+        c = val;
+        print_str("got: ");
+        println_int(val);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with H { a: 0, b: 0, c: 0 } handle {
+        perform T.send(42);
+    };
+    0
+}

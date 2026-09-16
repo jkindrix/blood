@@ -1,0 +1,292 @@
+// Morse Code Translator in Blood
+//
+// Encodes text to Morse code and decodes Morse code to text.
+//
+// Features exercised:
+//   - Trait with self: &Self (by-reference trait methods)
+//   - Trait default methods (default implementation in trait body)
+//   - env_get() builtin (for optional separator config)
+//   - for loops with usize bounds
+//   - Compound assignments: -=, *=, /=, %=
+//   - str_eq for Morse pattern matching
+//
+// Usage:
+//   morse encode <text>
+//   morse decode <morse_string>
+//
+// Morse format: dots='.', dashes='-', letter sep=' ', word sep='/'
+
+// --- Trait with default method and &Self ---
+
+trait Codec {
+    fn name(self: &Self) -> &str;
+
+    // Default method: wraps encode/decode with header
+    fn describe(self: &Self) -> &str {
+        self.name()
+    }
+}
+
+struct MorseEncoder {}
+struct MorseDecoder {}
+
+impl Codec for MorseEncoder {
+    fn name(self: &Self) -> &str { "encoder" }
+}
+
+impl Codec for MorseDecoder {
+    fn name(self: &Self) -> &str { "decoder" }
+    // Override default
+    fn describe(self: &Self) -> &str { "morse-decoder" }
+}
+
+// --- Morse lookup tables ---
+
+// Returns Morse pattern for an uppercase ASCII letter (A=65..Z=90)
+fn letter_to_morse(ch: u8) -> &str {
+    let idx: i32 = ch as i32 - 65;
+    if idx == 0 { return ".-"; }       // A
+    if idx == 1 { return "-..."; }     // B
+    if idx == 2 { return "-.-."; }     // C
+    if idx == 3 { return "-.."; }      // D
+    if idx == 4 { return "."; }        // E
+    if idx == 5 { return "..-."; }     // F
+    if idx == 6 { return "--."; }      // G
+    if idx == 7 { return "...."; }     // H
+    if idx == 8 { return ".."; }       // I
+    if idx == 9 { return ".---"; }     // J
+    if idx == 10 { return "-.-"; }     // K
+    if idx == 11 { return ".-.."; }    // L
+    if idx == 12 { return "--"; }      // M
+    if idx == 13 { return "-."; }      // N
+    if idx == 14 { return "---"; }     // O
+    if idx == 15 { return ".--."; }    // P
+    if idx == 16 { return "--.-"; }    // Q
+    if idx == 17 { return ".-."; }     // R
+    if idx == 18 { return "..."; }     // S
+    if idx == 19 { return "-"; }       // T
+    if idx == 20 { return "..-"; }     // U
+    if idx == 21 { return "...-"; }    // V
+    if idx == 22 { return ".--"; }     // W
+    if idx == 23 { return "-..-"; }    // X
+    if idx == 24 { return "-.--"; }    // Y
+    if idx == 25 { return "--.."; }    // Z
+    ""
+}
+
+// Returns Morse pattern for a digit (0=48..9=57)
+fn digit_to_morse(ch: u8) -> &str {
+    let idx: i32 = ch as i32 - 48;
+    if idx == 0 { return "-----"; }
+    if idx == 1 { return ".----"; }
+    if idx == 2 { return "..---"; }
+    if idx == 3 { return "...--"; }
+    if idx == 4 { return "....-"; }
+    if idx == 5 { return "....."; }
+    if idx == 6 { return "-...."; }
+    if idx == 7 { return "--..."; }
+    if idx == 8 { return "---.."; }
+    if idx == 9 { return "----."; }
+    ""
+}
+
+fn to_upper(b: u8) -> u8 {
+    if b >= 97 && b <= 122 { b - 32 } else { b }
+}
+
+fn is_alpha(b: u8) -> bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+}
+
+fn is_digit(b: u8) -> bool {
+    b >= 48 && b <= 57
+}
+
+// --- Encoding ---
+
+fn encode(text: &str, sep: &str) -> String {
+    let bytes = text.as_bytes();
+    let len: usize = bytes.len();
+    let mut out: String = String.new();
+    let mut need_sep: bool = false;
+    let mut char_count: i32 = 0;
+
+    for i in 0usize..len {
+        let b: u8 = bytes[i];
+
+        if b == 32 {
+            // Word boundary
+            if need_sep {
+                out.push_str(" / ");
+                need_sep = false;
+            }
+            continue;
+        }
+
+        let upper: u8 = to_upper(b);
+        let mut morse: &str = "";
+
+        if is_alpha(upper) {
+            morse = letter_to_morse(upper);
+        } else if is_digit(b) {
+            morse = digit_to_morse(b);
+        } else {
+            continue;
+        }
+
+        if str_len(morse) == 0 {
+            continue;
+        }
+
+        if need_sep {
+            out.push_str(sep);
+        }
+        out.push_str(morse);
+        need_sep = true;
+        char_count += 1;
+    }
+
+    // Exercise compound assignments beyond +=
+    let mut stats_total: i32 = char_count;
+    stats_total *= 2;     // double it
+    stats_total /= 2;     // halve it back
+    stats_total -= 0;     // no-op subtract
+    let remainder: i32 = stats_total % 10;
+    let mut rem_var: i32 = stats_total;
+    rem_var %= 10;        // modulo assign
+
+    out
+}
+
+// --- Decoding ---
+
+fn morse_to_char(pattern: &str) -> u8 {
+    // Letters
+    if str_eq(pattern, ".-") { return 65; }      // A
+    if str_eq(pattern, "-...") { return 66; }    // B
+    if str_eq(pattern, "-.-.") { return 67; }    // C
+    if str_eq(pattern, "-..") { return 68; }     // D
+    if str_eq(pattern, ".") { return 69; }       // E
+    if str_eq(pattern, "..-.") { return 70; }    // F
+    if str_eq(pattern, "--.") { return 71; }     // G
+    if str_eq(pattern, "....") { return 72; }    // H
+    if str_eq(pattern, "..") { return 73; }      // I
+    if str_eq(pattern, ".---") { return 74; }    // J
+    if str_eq(pattern, "-.-") { return 75; }     // K
+    if str_eq(pattern, ".-..") { return 76; }    // L
+    if str_eq(pattern, "--") { return 77; }      // M
+    if str_eq(pattern, "-.") { return 78; }      // N
+    if str_eq(pattern, "---") { return 79; }     // O
+    if str_eq(pattern, ".--.") { return 80; }    // P
+    if str_eq(pattern, "--.-") { return 81; }    // Q
+    if str_eq(pattern, ".-.") { return 82; }     // R
+    if str_eq(pattern, "...") { return 83; }     // S
+    if str_eq(pattern, "-") { return 84; }       // T
+    if str_eq(pattern, "..-") { return 85; }     // U
+    if str_eq(pattern, "...-") { return 86; }    // V
+    if str_eq(pattern, ".--") { return 87; }     // W
+    if str_eq(pattern, "-..-") { return 88; }    // X
+    if str_eq(pattern, "-.--") { return 89; }    // Y
+    if str_eq(pattern, "--..") { return 90; }    // Z
+    // Digits
+    if str_eq(pattern, "-----") { return 48; }   // 0
+    if str_eq(pattern, ".----") { return 49; }   // 1
+    if str_eq(pattern, "..---") { return 50; }   // 2
+    if str_eq(pattern, "...--") { return 51; }   // 3
+    if str_eq(pattern, "....-") { return 52; }   // 4
+    if str_eq(pattern, ".....") { return 53; }   // 5
+    if str_eq(pattern, "-....") { return 54; }   // 6
+    if str_eq(pattern, "--...") { return 55; }   // 7
+    if str_eq(pattern, "---..") { return 56; }   // 8
+    if str_eq(pattern, "----.") { return 57; }   // 9
+    63 // '?' for unknown
+}
+
+fn decode(morse: &str) -> String {
+    let bytes = morse.as_bytes();
+    let len: usize = bytes.len();
+    let mut out: String = String.new();
+    let mut pattern: String = String.new();
+
+    for i in 0usize..len {
+        let b: u8 = bytes[i];
+
+        if b == 46 || b == 45 {
+            // '.' or '-' — accumulate pattern
+            pattern.push(b as char);
+        } else if b == 32 || b == 47 || i == len - 1 {
+            // Space, slash, or end — flush pattern
+            if b == 46 || b == 45 {
+                pattern.push(b as char);
+            }
+            if str_len(pattern.as_str()) > 0 {
+                let ch: u8 = morse_to_char(pattern.as_str());
+                out.push(ch as char);
+                pattern = String.new();
+            }
+            // Slash = word separator
+            if b == 47 {
+                out.push(32 as char);
+            }
+        }
+    }
+
+    // Flush any remaining pattern
+    if str_len(pattern.as_str()) > 0 {
+        let ch: u8 = morse_to_char(pattern.as_str());
+        out.push(ch as char);
+    }
+
+    out
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 3 {
+        println_str("Usage: morse <encode|decode> <text...>");
+        return 1;
+    }
+
+    let mode: &str = args_get(1);
+
+    // Join remaining args into one string
+    let mut input: String = String.new();
+    let mut i: i32 = 2;
+    while i < argc {
+        if i > 2 {
+            input.push(32 as char);
+        }
+        input.push_str(args_get(i));
+        i += 1;
+    }
+
+    // Check env for custom separator (exercises env_get)
+    let env_sep: &str = env_get("MORSE_SEP");
+    let sep: &str = if str_len(env_sep) > 0 { env_sep } else { " " };
+
+    // Exercise trait with &Self
+    let enc: MorseEncoder = MorseEncoder {};
+    let dec: MorseDecoder = MorseDecoder {};
+
+    if str_eq(mode, "encode") {
+        print_str("[");
+        print_str(enc.describe());  // Uses default method
+        print_str("] ");
+        let result: String = encode(input.as_str(), sep);
+        println(result.as_str());
+    } else if str_eq(mode, "decode") {
+        print_str("[");
+        print_str(dec.describe());  // Uses overridden method
+        print_str("] ");
+        let result: String = decode(input.as_str());
+        println(result.as_str());
+    } else {
+        print_str("Unknown mode: ");
+        println_str(mode);
+        return 1;
+    }
+
+    0
+}

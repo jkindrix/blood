@@ -1,0 +1,48 @@
+// Test: handler pass+fail counts both work
+// EXPECT: FAIL: deliberate
+// EXPECT: Results: 2 passed, 1 failed
+macro assert_eq {
+    ($a:expr, $b:expr) => {
+        let __a: i32 = $a;
+        let __b: i32 = $b;
+        if __a != __b {
+            perform TestReport.fail("assert_eq");
+        } else {
+            perform TestReport.pass();
+        }
+    };
+}
+
+effect TestReport {
+    op pass() -> ();
+    op fail(msg: &str) -> ();
+}
+
+deep handler TestRunner for TestReport {
+    let mut passed: i32
+    let mut failed: i32
+    return(x) {
+        let msg: &str = format!("Results: {} passed, {} failed", passed, failed);
+        println_str(msg);
+        x
+    }
+    op pass() {
+        passed = passed + 1;
+        resume(())
+    }
+    op fail(msg) {
+        failed = failed + 1;
+        print_str("FAIL: ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with TestRunner { passed: 0, failed: 0 } handle {
+        assert_eq!(1, 1);
+        perform TestReport.fail("deliberate");
+        assert_eq!(2, 2);
+    };
+    0
+}

@@ -1,0 +1,44 @@
+// Test: affine checkout + use_entry + checkin with 3-field handler
+// EXPECT: checkout: slot 0
+// EXPECT: using slot 0
+// EXPECT: checkin: slot 0
+struct PoolEntry { slot: i32 }
+effect Pool {
+    op checkout() -> PoolEntry;
+    op checkin(entry: PoolEntry) -> ();
+}
+deep handler H for Pool {
+    let mut out: i32
+    let mut cap: i32
+    let mut next: i32
+    return(x) { x }
+    op checkout() {
+        let s: i32 = next;
+        next = next + 1;
+        out = out + 1;
+        print_str("checkout: slot ");
+        println_int(s);
+        resume(PoolEntry { slot: s })
+    }
+    op checkin(entry) {
+        out = out - 1;
+        print_str("checkin: slot ");
+        println_int(entry.slot);
+        resume(())
+    }
+}
+fn use_entry(entry: &PoolEntry) {
+    print_str("using slot ");
+    println_int(entry.slot);
+}
+fn work() / {Pool} {
+    let entry: linear PoolEntry = perform Pool.checkout();
+    use_entry(&entry);
+    perform Pool.checkin(entry);
+}
+fn main() -> i32 {
+    with H { out: 0, cap: 4, next: 0 } handle {
+        work();
+    };
+    0
+}

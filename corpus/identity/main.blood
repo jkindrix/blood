@@ -1,0 +1,58 @@
+// Program 5: identity — Code addressed by content, not name
+// Pillar 2: Identity (Content-Addressing)
+//
+// Demonstrates:
+// 1. Content hashing (--emit=hashes shows BLAKE3-256 hashes per function)
+// 2. Codebase storage (--store-codebase persists definitions)
+// 3. Hash-based import (use hash("prefix") resolves by content, not path)
+// 4. Per-function content cache (unchanged functions skip recompilation)
+//
+// Workflow:
+//   Step 1: blood build --store-codebase --emit=hashes mathlib.blood
+//   Step 2: blood build main.blood  (this file — uses hash imports)
+//
+// The hash imports below resolve through the codebase, proving that
+// functions are addressed by WHAT they compute, not WHERE they live.
+
+// Import by content hash — resolved through the codebase.
+use hash("a13d");  // factorial (a13d7e0a...)
+use hash("40f0");  // fibonacci (40f0cddc...)
+use hash("2ceb");  // gcd       (2ceb8131...)
+
+mod mathlib;
+
+fn main() -> i32 {
+    // Part 1: factorial imported by content hash
+    println_str("=== Part 1: factorial by hash ===");
+    let f5: i32 = factorial(5);
+    print_str("factorial(5)=");
+    println_int(f5);
+    if f5 != 120 { return 1; }
+
+    let f10: i32 = factorial(10);
+    print_str("factorial(10)=");
+    println_int(f10);
+    if f10 != 3628800 { return 2; }
+
+    // Part 2: fibonacci imported by content hash
+    println_str("=== Part 2: fibonacci by hash ===");
+    let fib10: i32 = fibonacci(10);
+    print_str("fibonacci(10)=");
+    println_int(fib10);
+    if fib10 != 55 { return 3; }
+
+    // Part 3: gcd imported by content hash
+    println_str("=== Part 3: gcd by hash ===");
+    let g: i32 = gcd(48, 18);
+    print_str("gcd(48,18)=");
+    println_int(g);
+    if g != 6 { return 4; }
+
+    let g2: i32 = gcd(100, 75);
+    print_str("gcd(100,75)=");
+    println_int(g2);
+    if g2 != 25 { return 5; }
+
+    println_str("=== All parts passed ===");
+    0
+}

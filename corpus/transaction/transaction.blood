@@ -1,0 +1,177 @@
+// Program 6: transaction — Database transactions that can't be misused
+// Pillars: 3 (Effects) + 5 (Linear Types)
+//
+// Demonstrates:
+// 1. Linear transaction handle (must consume via commit or rollback)
+// 2. Effect for DB operations (query, insert)
+// 3. Handler swap: production handler vs in-memory test handler
+// 4. Non-resumptive abort handler for error cases
+// 5. Combining linearity checking with effect checking
+//
+// A transaction handle is linear: the compiler guarantees every
+// begin() is paired with exactly one commit() or rollback().
+
+// ============================================================
+// Part 1: Effects — the DB operation interface
+// ============================================================
+
+effect DB {
+    op query_balance(account: i32) -> i32;
+    op update_balance(account: i32, new_balance: i32) -> ();
+}
+
+effect Abort {
+    op fail(reason: &str) -> i32;
+}
+
+// ============================================================
+// Part 2: Linear transaction handle
+// ============================================================
+
+struct Transaction {
+    id: i32,
+}
+
+/// Begin a transaction — returns a linear handle.
+fn begin_tx(id: i32) -> Transaction / {DB} {
+    print_str("BEGIN tx=");
+    println_int(id);
+    Transaction { id: id }
+}
+
+/// Commit a transaction — consumes the linear handle.
+fn commit_tx(linear tx: Transaction) / {DB} {
+    print_str("COMMIT tx=");
+    println_int(tx.id);
+}
+
+/// Rollback a transaction — consumes the linear handle.
+fn rollback_tx(linear tx: Transaction) {
+    print_str("ROLLBACK tx=");
+    println_int(tx.id);
+}
+
+// ============================================================
+// Part 3: Business logic — transfer between accounts
+// ============================================================
+
+/// Transfer funds between accounts.
+/// The linear tx handle ensures commit or rollback MUST happen.
+/// Uses if-else to guarantee exactly one consumption path for tx.
+fn transfer(from: i32, to: i32, amount: i32) -> i32 / {DB, Abort} {
+    let tx: linear Transaction = begin_tx(1);
+    let balance: i32 = perform DB.query_balance(from);
+    let ok: bool = balance >= amount;
+    if ok {
+        perform DB.update_balance(from, balance - amount);
+        let to_balance: i32 = perform DB.query_balance(to);
+        perform DB.update_balance(to, to_balance + amount);
+        commit_tx(tx);
+        amount
+    } else {
+        rollback_tx(tx);
+        let abort_result: i32 = perform Abort.fail("insufficient funds");
+        abort_result
+    }
+}
+
+/// Simple deposit (no abort needed).
+fn deposit(account: i32, amount: i32) / {DB} {
+    let tx: linear Transaction = begin_tx(2);
+    let balance: i32 = perform DB.query_balance(account);
+    perform DB.update_balance(account, balance + amount);
+    commit_tx(tx);
+}
+
+// ============================================================
+// Part 4: In-memory test handler
+// ============================================================
+
+// Simple in-memory "database" — just two accounts with balances.
+deep handler TestDB for DB {
+    let mut balance_a: i32
+    let mut balance_b: i32
+
+    return(x) { x }
+
+    op query_balance(account) {
+        if account == 1 {
+            resume(balance_a)
+        } else {
+            resume(balance_b)
+        }
+    }
+
+    op update_balance(account, new_balance) {
+        if account == 1 {
+            balance_a = new_balance;
+        } else {
+            balance_b = new_balance;
+        }
+        resume(())
+    }
+}
+
+// Non-resumptive abort handler — captures the error.
+deep handler CatchAbort for Abort {
+    return(x) { x }
+
+    op fail(reason) {
+        print_str("ABORT: ");
+        println_str(reason);
+        0 - 1  // return error code, don't resume
+    }
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+fn main() -> i32 {
+    // Part 1: Successful transfer
+    println_str("=== Part 1: Successful transfer ===");
+    let r1: i32 = with TestDB { balance_a: 1000, balance_b: 500 } handle {
+        with CatchAbort {} handle {
+            transfer(1, 2, 200)
+        }
+    };
+    print_str("transfer result=");
+    println_int(r1);
+    if r1 != 200 { return 1; }
+
+    // Part 2: Failed transfer (insufficient funds) — abort + rollback
+    println_str("=== Part 2: Insufficient funds ===");
+    let r2: i32 = with TestDB { balance_a: 100, balance_b: 500 } handle {
+        with CatchAbort {} handle {
+            transfer(1, 2, 999)
+        }
+    };
+    print_str("abort result=");
+    println_int(r2);
+    // CatchAbort returns -1 on fail
+    if r2 != 0 - 1 { return 2; }
+
+    // Part 3: Deposit (simple linear + effect, no abort)
+    println_str("=== Part 3: Deposit ===");
+    with TestDB { balance_a: 0, balance_b: 0 } handle {
+        deposit(1, 500);
+    };
+    println_str("deposit done");
+
+    // Part 4: Handler swap — same business logic, different handler
+    println_str("=== Part 4: Handler swap ===");
+    let r4: i32 = with TestDB { balance_a: 2000, balance_b: 100 } handle {
+        with CatchAbort {} handle {
+            // Same transfer function, different initial balances
+            let t1: i32 = transfer(1, 2, 300);
+            let t2: i32 = transfer(2, 1, 50);
+            t1 + t2
+        }
+    };
+    print_str("swap result=");
+    println_int(r4);
+    if r4 != 350 { return 4; }
+
+    println_str("=== All parts passed ===");
+    0
+}

@@ -1,0 +1,169 @@
+// Number Guessing Game in Blood
+//
+// Interactive game: the computer picks a random number 1-100,
+// the player guesses with hints until correct.
+//
+// Features exercised:
+//   - read_line() builtin — first test of stdin input
+//   - str_len() builtin — detect EOF (empty string)
+//   - Interactive read-eval-print loop
+//   - Effect with resume (Rng) for random number generation
+//   - while true + break pattern for game loop
+//
+// Usage: guess
+
+// --- Random number generation ---
+
+effect Rng {
+    op next() -> u64;
+}
+
+deep handler LcgRng for Rng {
+    let mut seed: u64
+
+    return(x) { x }
+
+    op next() {
+        seed = seed * 6364136223846793005 + 1442695040888963407;
+        resume(seed)
+    }
+}
+
+fn rand_range(lo: i32, hi: i32) -> i32 / {Rng} {
+    let val: u64 = perform Rng.next();
+    let positive: i32 = (val >> 33) as i32;
+    let range: i32 = hi - lo + 1;
+    let r: i32 = if positive < 0 { 0 - positive } else { positive };
+    lo + r % range
+}
+
+// --- Parse integer from string ---
+
+fn parse_i32(s: &str) -> i32 {
+    let bytes = s.as_bytes();
+    let len: usize = bytes.len();
+    let mut i: usize = 0;
+
+    // Skip whitespace
+    while i < len && (bytes[i] == 32 || bytes[i] == 9) {
+        i += 1;
+    }
+
+    if i >= len {
+        return 0 - 1;
+    }
+
+    let mut negative: bool = false;
+    if bytes[i] == 45 {
+        negative = true;
+        i += 1;
+    }
+
+    let mut val: i32 = 0;
+    let mut has_digit: bool = false;
+    while i < len && bytes[i] >= 48 && bytes[i] <= 57 {
+        val = val * 10 + (bytes[i] as i32 - 48);
+        has_digit = true;
+        i += 1;
+    }
+
+    if !has_digit {
+        return 0 - 1;
+    }
+
+    if negative { 0 - val } else { val }
+}
+
+// --- Game logic ---
+
+fn play_round(target: i32) -> i32 {
+    let mut attempts: i32 = 0;
+
+    while true {
+        print_str("Your guess: ");
+        let line: String = read_line();
+
+        // EOF detection: read_line returns empty string on EOF
+        if str_len(line.as_str()) == 0 {
+            println_str("");
+            println_str("(EOF — giving up)");
+            return 0 - 1;
+        }
+
+        let guess: i32 = parse_i32(line.as_str());
+
+        if guess < 1 || guess > 100 {
+            println_str("Enter a number between 1 and 100.");
+            continue;
+        }
+
+        attempts += 1;
+
+        if guess < target {
+            println_str("Too low!");
+        } else if guess > target {
+            println_str("Too high!");
+        } else {
+            println_str("Correct!");
+            break;
+        }
+    }
+
+    attempts
+}
+
+// --- Entry point ---
+
+fn main() -> i32 {
+    println_str("=== Number Guessing Game ===");
+    println_str("I'm thinking of a number between 1 and 100.");
+    println_str("");
+
+    let seed_val: u64 = blood_clock_nanos();
+
+    let mut total_games: i32 = 0;
+    let mut total_guesses: i32 = 0;
+
+    with LcgRng { seed: seed_val } handle {
+        while true {
+            let target: i32 = rand_range(1, 100);
+
+            let attempts: i32 = play_round(target);
+
+            // EOF during play
+            if attempts < 0 {
+                break;
+            }
+
+            total_games += 1;
+            total_guesses += attempts;
+
+            print_str("You got it in ");
+            print_int(attempts);
+            println_str(" guesses!");
+            println_str("");
+
+            print_str("Play again? (y/n): ");
+            let answer: String = read_line();
+            if str_len(answer.as_str()) == 0 {
+                break;
+            }
+            let answer_bytes = answer.as_str().as_bytes();
+            // Continue if first char is 'y' or 'Y'
+            if answer_bytes[0] != 121 && answer_bytes[0] != 89 {
+                break;
+            }
+            println_str("");
+            println_str("I'm thinking of a new number between 1 and 100.");
+        }
+    };
+
+    println_str("");
+    println_str("=== Stats ===");
+    print_str("Games played: ");
+    println_int(total_games);
+    print_str("Total guesses: ");
+    println_int(total_guesses);
+
+    0
+}

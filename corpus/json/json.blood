@@ -1,0 +1,623 @@
+// JSON Parser and Serializer in Blood
+//
+// Compiler stress test: exercises features known to be fragile.
+//
+// Stress targets:
+//   1. Multi-param generic: Entry<K, V> nested inside Vec
+//   2. Multi-module: mod stdlib_hashmap for HashMap usage
+//   3. Triple-nested effect handlers: ParseErr + ParseState + ParseLog
+//   4. Recursive enum with nested generics: Vec<Entry<String, Json>>
+//   5. HashMap with complex value types (hash-to-u64 keyed)
+//
+// Usage:
+//   json parse <file> [-c]
+//   json roundtrip <file>
+
+mod stdlib_hashmap;
+
+// ============================================================
+// Multi-param generic struct (stress target #1)
+// ============================================================
+
+struct Entry<K, V> {
+    key: K,
+    val: V,
+}
+
+fn entry_new(k: String, v: Json) -> Entry<String, Json> {
+    Entry { key: k, val: v }
+}
+
+// ============================================================
+// JSON value type (stress target #4: recursive enum w/ nested generics)
+// ============================================================
+
+enum Json {
+    Null,
+    Bool(bool),
+    Number(f64),
+    Str(String),
+    Array(Vec<Json>),
+    Object(Vec<Entry<String, Json>>),
+}
+
+// ============================================================
+// Effects (stress target #3: triple-nested handlers)
+// ============================================================
+
+// Effect 1: parse errors (abort-style)
+effect ParseErr {
+    op fail(msg: &str) -> i32;
+}
+
+deep handler CatchParseErr for ParseErr {
+    return(x) { x }
+    op fail(msg) {
+        print_str("Parse error: ");
+        println_str(msg);
+        1
+    }
+}
+
+// Effect 2: parser state (position tracking via effect)
+effect ParseState {
+    op get_pos() -> usize;
+    op set_pos(p: usize) -> ();
+    op get_depth() -> i32;
+    op inc_depth() -> ();
+    op dec_depth() -> ();
+}
+
+deep handler ParserCtx for ParseState {
+    let mut pos: usize
+    let mut depth: i32
+
+    return(x) { x }
+    op get_pos() { resume(pos) }
+    op set_pos(p) { pos = p; resume(()) }
+    op get_depth() { resume(depth) }
+    op inc_depth() { depth += 1; resume(()) }
+    op dec_depth() { depth -= 1; resume(()) }
+}
+
+// Effect 3: parse logging (diagnostics)
+effect ParseLog {
+    op log(msg: &str) -> ();
+    op get_log_count() -> i32;
+}
+
+deep handler LogCollector for ParseLog {
+    let mut count: i32
+
+    return(x) { x }
+    op log(msg) {
+        count += 1;
+        resume(())
+    }
+    op get_log_count() { resume(count) }
+}
+
+// ============================================================
+// Parser (uses all 3 effects)
+// ============================================================
+
+struct Source {
+    bytes: Vec<u8>,
+    len: usize,
+}
+
+fn source_new(input: &str) -> Source {
+    let src = input.as_bytes();
+    let len: usize = src.len();
+    let mut bytes: Vec<u8> = Vec.new();
+    for i in 0..len as i32 {
+        bytes.push(src[i as usize]);
+    }
+    Source { bytes: bytes, len: len }
+}
+
+fn peek(s: &mut Source) -> u8 / {ParseState} {
+    let pos: usize = perform ParseState.get_pos();
+    if pos >= s.len { 0 } else { s.bytes[pos] }
+}
+
+fn advance(s: &mut Source) -> u8 / {ParseState} {
+    let pos: usize = perform ParseState.get_pos();
+    if pos >= s.len { return 0; }
+    let b: u8 = s.bytes[pos];
+    perform ParseState.set_pos(pos + 1);
+    b
+}
+
+fn skip_ws(s: &mut Source) / {ParseState} {
+    let mut pos: usize = perform ParseState.get_pos();
+    while pos < s.len {
+        let b: u8 = s.bytes[pos];
+        if b == 32 || b == 9 || b == 10 || b == 13 {
+            pos += 1;
+        } else {
+            break;
+        }
+    }
+    perform ParseState.set_pos(pos);
+}
+
+fn expect(s: &mut Source, expected: u8) / {ParseState, ParseErr} {
+    skip_ws(s);
+    let pos: usize = perform ParseState.get_pos();
+    if pos >= s.len {
+        perform ParseErr.fail("unexpected end of input");
+        return;
+    }
+    let b: u8 = advance(s);
+    if b != expected {
+        perform ParseErr.fail("unexpected character");
+    }
+}
+
+// All parse functions carry all 3 effects
+fn parse_value(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    skip_ws(s);
+    perform ParseLog.log("parse_value");
+
+    let pos: usize = perform ParseState.get_pos();
+    if pos >= s.len {
+        perform ParseErr.fail("unexpected end of input");
+        return Json.Null;
+    }
+
+    let b: u8 = peek(s);
+
+    if b == 34 {
+        parse_string(s)
+    } else if b == 123 {
+        parse_object(s)
+    } else if b == 91 {
+        parse_array(s)
+    } else if b == 116 {
+        parse_true(s)
+    } else if b == 102 {
+        parse_false(s)
+    } else if b == 110 {
+        parse_null(s)
+    } else if b == 45 || (b >= 48 && b <= 57) {
+        parse_number(s)
+    } else {
+        perform ParseErr.fail("unexpected character");
+        Json.Null
+    }
+}
+
+fn parse_raw_string(s: &mut Source) -> String / {ParseState, ParseErr, ParseLog} {
+    let open: u8 = advance(s);
+    if open != 34 {
+        perform ParseErr.fail("expected '\"'");
+        return String.new();
+    }
+
+    perform ParseLog.log("parse_string");
+    let mut result: String = String.new();
+    let mut pos: usize = perform ParseState.get_pos();
+
+    while pos < s.len {
+        let b: u8 = advance(s);
+        pos = perform ParseState.get_pos();
+
+        if b == 34 { return result; }
+        if b == 92 {
+            if pos >= s.len {
+                perform ParseErr.fail("unexpected end in escape");
+                return result;
+            }
+            let esc: u8 = advance(s);
+            pos = perform ParseState.get_pos();
+            if esc == 110 { result.push(10 as char); }
+            else if esc == 116 { result.push(9 as char); }
+            else if esc == 114 { result.push(13 as char); }
+            else if esc == 34 { result.push(34 as char); }
+            else if esc == 92 { result.push(92 as char); }
+            else if esc == 47 { result.push(47 as char); }
+            else { result.push(esc as char); }
+        } else {
+            result.push(b as char);
+        }
+    }
+    perform ParseErr.fail("unterminated string");
+    result
+}
+
+fn parse_string(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    let val: String = parse_raw_string(s);
+    Json.Str(val)
+}
+
+fn parse_number(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    perform ParseLog.log("parse_number");
+    let mut negative: bool = false;
+    if peek(s) == 45 {
+        negative = true;
+        advance(s);
+    }
+
+    let mut int_part: f64 = 0.0;
+    let mut has_digit: bool = false;
+    while peek(s) >= 48 && peek(s) <= 57 {
+        int_part = int_part * 10.0 + (advance(s) as i32 - 48) as f64;
+        has_digit = true;
+    }
+
+    if !has_digit {
+        perform ParseErr.fail("expected digit");
+        return Json.Null;
+    }
+
+    let mut val: f64 = int_part;
+
+    if peek(s) == 46 {
+        advance(s);
+        let mut frac: f64 = 0.0;
+        let mut divisor: f64 = 10.0;
+        while peek(s) >= 48 && peek(s) <= 57 {
+            frac = frac + (advance(s) as i32 - 48) as f64 / divisor;
+            divisor *= 10.0;
+        }
+        val = int_part + frac;
+    }
+
+    if negative { val = 0.0 - val; }
+    Json.Number(val)
+}
+
+fn parse_true(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    perform ParseLog.log("parse_true");
+    if advance(s) != 116 || advance(s) != 114 || advance(s) != 117 || advance(s) != 101 {
+        perform ParseErr.fail("expected 'true'");
+        return Json.Null;
+    }
+    Json.Bool(true)
+}
+
+fn parse_false(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    perform ParseLog.log("parse_false");
+    if advance(s) != 102 || advance(s) != 97 || advance(s) != 108 || advance(s) != 115 || advance(s) != 101 {
+        perform ParseErr.fail("expected 'false'");
+        return Json.Null;
+    }
+    Json.Bool(false)
+}
+
+fn parse_null(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    perform ParseLog.log("parse_null");
+    if advance(s) != 110 || advance(s) != 117 || advance(s) != 108 || advance(s) != 108 {
+        perform ParseErr.fail("expected 'null'");
+        return Json.Null;
+    }
+    Json.Null
+}
+
+fn parse_array(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    advance(s); // '['
+    skip_ws(s);
+    perform ParseLog.log("parse_array");
+    perform ParseState.inc_depth();
+
+    let mut items: Vec<Json> = Vec.new();
+
+    if peek(s) == 93 {
+        advance(s);
+        perform ParseState.dec_depth();
+        return Json.Array(items);
+    }
+
+    while true {
+        let val: Json = parse_value(s);
+        items.push(val);
+
+        skip_ws(s);
+        let next: u8 = peek(s);
+        if next == 93 {
+            advance(s);
+            break;
+        } else if next == 44 {
+            advance(s);
+        } else {
+            perform ParseErr.fail("expected ',' or ']'");
+            break;
+        }
+    }
+
+    perform ParseState.dec_depth();
+    Json.Array(items)
+}
+
+fn parse_object(s: &mut Source) -> Json / {ParseState, ParseErr, ParseLog} {
+    advance(s); // '{'
+    skip_ws(s);
+    perform ParseLog.log("parse_object");
+    perform ParseState.inc_depth();
+
+    let mut entries: Vec<Entry<String, Json>> = Vec.new();
+
+    if peek(s) == 125 {
+        advance(s);
+        perform ParseState.dec_depth();
+        return Json.Object(entries);
+    }
+
+    while true {
+        skip_ws(s);
+        let key: String = parse_raw_string(s);
+
+        skip_ws(s);
+        expect(s, 58); // ':'
+
+        let val: Json = parse_value(s);
+
+        let e: Entry<String, Json> = entry_new(key, val);
+        entries.push(e);
+
+        skip_ws(s);
+        let next: u8 = peek(s);
+        if next == 125 {
+            advance(s);
+            break;
+        } else if next == 44 {
+            advance(s);
+        } else {
+            perform ParseErr.fail("expected ',' or '}'");
+            break;
+        }
+    }
+
+    perform ParseState.dec_depth();
+    Json.Object(entries)
+}
+
+// ============================================================
+// Object key lookup via HashMap (stress target #2 and #5)
+// ============================================================
+
+fn object_get(entries: &Vec<Entry<String, Json>>, key: &str) -> i32 {
+    // Linear scan (HashMap-accelerated version below)
+    for i in 0..entries.len() as i32 {
+        if str_eq(entries[i as usize].key.as_str(), key) {
+            return i;
+        }
+    }
+    0 - 1
+}
+
+// HashMap-accelerated lookup: build index, then query
+fn build_index(entries: &Vec<Entry<String, Json>>) -> stdlib_hashmap.HashMapU64U32 {
+    let mut map = stdlib_hashmap.HashMapU64U32.new();
+    for i in 0..entries.len() as i32 {
+        let h: u64 = stdlib_hashmap.hash_string(&entries[i as usize].key);
+        map.insert(h, i as u32);
+    }
+    map
+}
+
+fn index_get(map: &mut stdlib_hashmap.HashMapU64U32, key: &str) -> i32 {
+    let h: u64 = stdlib_hashmap.hash_str(key);
+    match map.get(h) {
+        Option.Some(idx) => { idx as i32 }
+        Option.None => { 0 - 1 }
+    }
+}
+
+// ============================================================
+// Serialization
+// ============================================================
+
+fn json_to_string(v: &Json, indent: i32, compact: bool) -> String {
+    let mut out: String = String.new();
+    json_write(&mut out, v, indent, 0, compact);
+    out
+}
+
+fn write_indent(out: &mut String, depth: i32, indent: i32) {
+    let spaces: i32 = depth * indent;
+    let mut i: i32 = 0;
+    while i < spaces {
+        out.push(32 as char);
+        i += 1;
+    }
+}
+
+fn write_escaped_string(out: &mut String, s: &str) {
+    out.push(34 as char);
+    let bytes = s.as_bytes();
+    for i in 0..bytes.len() as i32 {
+        let b: u8 = bytes[i as usize];
+        if b == 34 { out.push(92 as char); out.push(34 as char); }
+        else if b == 92 { out.push(92 as char); out.push(92 as char); }
+        else if b == 10 { out.push(92 as char); out.push(110 as char); }
+        else if b == 9 { out.push(92 as char); out.push(116 as char); }
+        else if b == 13 { out.push(92 as char); out.push(114 as char); }
+        else { out.push(b as char); }
+    }
+    out.push(34 as char);
+}
+
+fn write_f64(out: &mut String, val: f64) {
+    if val < 0.0 {
+        out.push(45 as char);
+        write_f64_positive(out, 0.0 - val);
+    } else {
+        write_f64_positive(out, val);
+    }
+}
+
+fn write_f64_positive(out: &mut String, val: f64) {
+    let int_part: i32 = floor(val) as i32;
+    let frac: f64 = val - floor(val);
+
+    if int_part == 0 {
+        out.push(48 as char);
+    } else {
+        let mut digits: Vec<i32> = Vec.new();
+        let mut n: i32 = int_part;
+        while n > 0 { digits.push(n % 10); n /= 10; }
+        let mut d: usize = digits.len();
+        while d > 0 { d -= 1; out.push((48 + digits[d]) as u8 as char); }
+    }
+
+    if frac > 0.000001 {
+        out.push(46 as char);
+        let mut f: f64 = frac;
+        let mut count: i32 = 0;
+        while count < 6 {
+            f *= 10.0;
+            let digit: i32 = floor(f) as i32;
+            out.push((48 + digit) as u8 as char);
+            f -= floor(f);
+            count += 1;
+            if f < 0.000001 { break; }
+        }
+    }
+}
+
+fn json_write(out: &mut String, v: &Json, indent: i32, depth: i32, compact: bool) {
+    match v {
+        Json.Null => { out.push_str("null"); }
+        Json.Bool(b) => {
+            if b { out.push_str("true"); } else { out.push_str("false"); }
+        }
+        Json.Number(n) => { write_f64(out, n); }
+        Json.Str(s) => { write_escaped_string(out, s.as_str()); }
+        Json.Array(items) => {
+            if items.len() == 0 {
+                out.push_str("[]");
+            } else {
+                out.push(91 as char);
+                for i in 0..items.len() as i32 {
+                    if i > 0 { out.push(44 as char); }
+                    if !compact { out.push(10 as char); write_indent(out, depth + 1, indent); }
+                    json_write(out, &items[i as usize], indent, depth + 1, compact);
+                }
+                if !compact { out.push(10 as char); write_indent(out, depth, indent); }
+                out.push(93 as char);
+            }
+        }
+        Json.Object(entries) => {
+            if entries.len() == 0 {
+                out.push_str("{}");
+            } else {
+                out.push(123 as char);
+                for i in 0..entries.len() as i32 {
+                    if i > 0 { out.push(44 as char); }
+                    if !compact { out.push(10 as char); write_indent(out, depth + 1, indent); }
+                    write_escaped_string(out, entries[i as usize].key.as_str());
+                    out.push(58 as char);
+                    if !compact { out.push(32 as char); }
+                    json_write(out, &entries[i as usize].val, indent, depth + 1, compact);
+                }
+                if !compact { out.push(10 as char); write_indent(out, depth, indent); }
+                out.push(125 as char);
+            }
+        }
+    }
+}
+
+// ============================================================
+// Entry point — triple-nested handlers (stress target #3)
+// ============================================================
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 3 {
+        println_str("Usage: json parse <file> [-c]");
+        println_str("       json roundtrip <file>");
+        return 1;
+    }
+
+    let mode: &str = args_get(1);
+    let filename: &str = args_get(2);
+
+    if !file_exists(filename) {
+        print_str("Error: file not found: ");
+        println_str(filename);
+        return 1;
+    }
+
+    let content: &str = file_read_to_string(filename);
+
+    let mut compact: bool = false;
+    if argc >= 4 {
+        if str_eq(args_get(3), "-c") { compact = true; }
+    }
+
+    if str_eq(mode, "parse") {
+        // Triple-nested effect handlers
+        let exit_code: i32 = with CatchParseErr {} handle {
+            with ParserCtx { pos: 0, depth: 0 } handle {
+                with LogCollector { count: 0 } handle {
+                    let mut src: Source = source_new(content);
+                    let val: Json = parse_value(&mut src);
+
+                    let log_count: i32 = perform ParseLog.get_log_count();
+                    let final_depth: i32 = perform ParseState.get_depth();
+
+                    let out: String = json_to_string(&val, 2, compact);
+                    println(out.as_str());
+
+                    // HashMap stress: build index and query
+                    match val {
+                        Json.Object(entries) => {
+                            let mut idx = build_index(&entries);
+                            let name_idx: i32 = index_get(&mut idx, "name");
+                            if name_idx >= 0 {
+                                print_str("  [hashmap lookup 'name' -> index ");
+                                print_int(name_idx);
+                                println_str("]");
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    print_str("  [parse events: ");
+                    print_int(log_count);
+                    print_str(", final depth: ");
+                    print_int(final_depth);
+                    println_str("]");
+                    0
+                }
+            }
+        };
+        return exit_code;
+    } else if str_eq(mode, "roundtrip") {
+        let exit_code: i32 = with CatchParseErr {} handle {
+            with ParserCtx { pos: 0, depth: 0 } handle {
+                with LogCollector { count: 0 } handle {
+                    let mut s1: Source = source_new(content);
+                    let val1: Json = parse_value(&mut s1);
+                    let serialized: String = json_to_string(&val1, 2, false);
+
+                    // Reset parser state for re-parse
+                    perform ParseState.set_pos(0usize);
+
+                    let mut s2: Source = source_new(serialized.as_str());
+                    let val2: Json = parse_value(&mut s2);
+                    let reserialized: String = json_to_string(&val2, 2, false);
+
+                    if str_eq(serialized.as_str(), reserialized.as_str()) {
+                        println_str("PASS: round-trip identical");
+                        println(serialized.as_str());
+                    } else {
+                        println_str("FAIL: round-trip mismatch");
+                        println_str("--- first ---");
+                        println(serialized.as_str());
+                        println_str("--- second ---");
+                        println(reserialized.as_str());
+                    }
+                    0
+                }
+            }
+        };
+        return exit_code;
+    } else {
+        print_str("Unknown mode: ");
+        println_str(mode);
+        return 1;
+    }
+}

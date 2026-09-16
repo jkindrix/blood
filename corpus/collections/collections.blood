@@ -1,0 +1,412 @@
+// Generic Collections in Blood
+//
+// Compiler stress test: recursive generic types, generic methods,
+// multi-param generics, Option<Box<T>> patterns.
+//
+// Stress targets:
+//   1. Generic recursive enum: List<T> with Box<List<T>>
+//   2. Generic functions over recursive types: map, filter, fold
+//   3. Multi-param generic struct: Pair<A, B> and KeyVal<K, V> in collections
+//   4. Option<Box<List<T>>> — nested generic indirection
+//   5. Generic tree: Tree<T> with left/right Box<Tree<T>>
+//   6. Higher-order generics: fold<T, U>, map returning different List<U>
+
+// ============================================================
+// List<T> — generic singly-linked list
+// ============================================================
+
+enum List<T> {
+    Cons(T, Box<List<T>>),
+    Nil,
+}
+
+// --- Construction ---
+
+fn list_single(val: i32) -> List<i32> {
+    List.Cons(val, Box.new(List.Nil))
+}
+
+fn list_prepend(val: i32, lst: List<i32>) -> List<i32> {
+    List.Cons(val, Box.new(lst))
+}
+
+// Build from Vec (stress: iterate Vec, produce recursive enum)
+fn list_from_vec(v: &Vec<i32>) -> List<i32> {
+    let mut result: List<i32> = List.Nil;
+    // Build in reverse so order matches
+    let mut i: i32 = v.len() as i32;
+    while i > 0 {
+        i -= 1;
+        result = List.Cons(v[i as usize], Box.new(result));
+    }
+    result
+}
+
+// --- Traversal (by value — consumes) ---
+
+fn list_len(lst: List<i32>) -> i32 {
+    match lst {
+        List.Cons(_, tail) => 1 + list_len(*tail),
+        List.Nil => 0,
+    }
+}
+
+fn list_sum(lst: List<i32>) -> i32 {
+    match lst {
+        List.Cons(head, tail) => head + list_sum(*tail),
+        List.Nil => 0,
+    }
+}
+
+// Generic count — works for any T (stress: generic fn over recursive enum)
+fn count<T>(lst: List<T>) -> i32 {
+    match lst {
+        List.Cons(_, tail) => 1 + count(*tail),
+        List.Nil => 0,
+    }
+}
+
+// --- Higher-order: map, filter, fold ---
+
+// map: List<i32> -> List<i32> via closure
+fn list_map(lst: List<i32>, f: fn(i32) -> i32) -> List<i32> {
+    match lst {
+        List.Cons(head, tail) => {
+            List.Cons(f(head), Box.new(list_map(*tail, f)))
+        }
+        List.Nil => List.Nil,
+    }
+}
+
+// filter: keep elements matching predicate
+fn list_filter(lst: List<i32>, pred: fn(i32) -> bool) -> List<i32> {
+    match lst {
+        List.Cons(head, tail) => {
+            let rest: List<i32> = list_filter(*tail, pred);
+            if pred(head) {
+                List.Cons(head, Box.new(rest))
+            } else {
+                rest
+            }
+        }
+        List.Nil => List.Nil,
+    }
+}
+
+// fold: reduce list to single value
+fn list_fold(lst: List<i32>, init: i32, f: fn(i32, i32) -> i32) -> i32 {
+    match lst {
+        List.Cons(head, tail) => {
+            list_fold(*tail, f(init, head), f)
+        }
+        List.Nil => init,
+    }
+}
+
+// --- Collect back to Vec ---
+
+fn list_to_vec(lst: List<i32>) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    list_to_vec_inner(lst, &mut result);
+    result
+}
+
+fn list_to_vec_inner(lst: List<i32>, out: &mut Vec<i32>) {
+    match lst {
+        List.Cons(head, tail) => {
+            out.push(head);
+            list_to_vec_inner(*tail, out);
+        }
+        List.Nil => {}
+    }
+}
+
+// ============================================================
+// Tree<T> — generic binary tree (stress target #5)
+// ============================================================
+
+enum Tree<T> {
+    Leaf(T),
+    Branch(Box<Tree<T>>, Box<Tree<T>>),
+}
+
+fn tree_sum(t: Tree<i32>) -> i32 {
+    match t {
+        Tree.Leaf(val) => val,
+        Tree.Branch(left, right) => tree_sum(*left) + tree_sum(*right),
+    }
+}
+
+fn tree_count<T>(t: Tree<T>) -> i32 {
+    match t {
+        Tree.Leaf(_) => 1,
+        Tree.Branch(left, right) => tree_count(*left) + tree_count(*right),
+    }
+}
+
+fn tree_depth<T>(t: Tree<T>) -> i32 {
+    match t {
+        Tree.Leaf(_) => 1,
+        Tree.Branch(left, right) => {
+            let ld: i32 = tree_depth(*left);
+            let rd: i32 = tree_depth(*right);
+            1 + if ld > rd { ld } else { rd }
+        }
+    }
+}
+
+// Tree map: transform all leaf values
+fn tree_map(t: Tree<i32>, f: fn(i32) -> i32) -> Tree<i32> {
+    match t {
+        Tree.Leaf(val) => Tree.Leaf(f(val)),
+        Tree.Branch(left, right) => {
+            Tree.Branch(Box.new(tree_map(*left, f)), Box.new(tree_map(*right, f)))
+        }
+    }
+}
+
+// ============================================================
+// Pair<A, B> — multi-param generic (stress target #3)
+// ============================================================
+
+struct Pair<A, B> {
+    fst: A,
+    snd: B,
+}
+
+fn make_pair(a: i32, b: i32) -> Pair<i32, i32> {
+    Pair { fst: a, snd: b }
+}
+
+fn swap_pair(p: Pair<i32, i32>) -> Pair<i32, i32> {
+    Pair { fst: p.snd, snd: p.fst }
+}
+
+// Mixed-type pair: stress multi-param with different types
+fn make_labeled(label: String, value: i32) -> Pair<String, i32> {
+    Pair { fst: label, snd: value }
+}
+
+// Vec of multi-param generic (stress: nested generics)
+fn labeled_list() -> Vec<Pair<String, i32>> {
+    let mut result: Vec<Pair<String, i32>> = Vec.new();
+
+    let mut l1: String = String.new();
+    l1.push_str("alpha");
+    result.push(make_labeled(l1, 1));
+
+    let mut l2: String = String.new();
+    l2.push_str("beta");
+    result.push(make_labeled(l2, 2));
+
+    let mut l3: String = String.new();
+    l3.push_str("gamma");
+    result.push(make_labeled(l3, 3));
+
+    result
+}
+
+// ============================================================
+// KeyVal<K, V> — another multi-param for map-like operations
+// ============================================================
+
+struct KeyVal<K, V> {
+    key: K,
+    val: V,
+}
+
+fn kv_new(k: i32, v: i32) -> KeyVal<i32, i32> {
+    KeyVal { key: k, val: v }
+}
+
+fn kv_sum_values(items: &Vec<KeyVal<i32, i32>>) -> i32 {
+    let mut total: i32 = 0;
+    for i in 0..items.len() as i32 {
+        total += items[i as usize].val;
+    }
+    total
+}
+
+fn kv_find(items: &Vec<KeyVal<i32, i32>>, target_key: i32) -> i32 {
+    for i in 0..items.len() as i32 {
+        if items[i as usize].key == target_key {
+            return items[i as usize].val;
+        }
+    }
+    0 - 1
+}
+
+// ============================================================
+// Entry point — exercise all patterns
+// ============================================================
+
+fn print_list(lst: List<i32>) {
+    // Convert to vec for printing
+    let v: Vec<i32> = list_to_vec(lst);
+    print_str("[");
+    for i in 0..v.len() as i32 {
+        if i > 0 { print_str(", "); }
+        print_int(v[i as usize]);
+    }
+    println_str("]");
+}
+
+fn main() -> i32 {
+    println_str("=== List<T> ===");
+
+    // Build from Vec
+    let mut data: Vec<i32> = Vec.new();
+    data.push(10);
+    data.push(20);
+    data.push(30);
+    data.push(40);
+    data.push(50);
+
+    let lst: List<i32> = list_from_vec(&data);
+    let lst2: List<i32> = list_from_vec(&data);
+    let lst3: List<i32> = list_from_vec(&data);
+    let lst4: List<i32> = list_from_vec(&data);
+    let lst5: List<i32> = list_from_vec(&data);
+
+    // Length
+    print_str("len: ");
+    println_int(list_len(lst)); // 5
+
+    // Sum
+    print_str("sum: ");
+    println_int(list_sum(lst2)); // 150
+
+    // Generic count
+    print_str("count<i32>: ");
+    println_int(count(lst3)); // 5
+
+    // Map: double each element
+    let doubled: List<i32> = list_map(lst4, |x| x * 2);
+    print_str("map(*2): ");
+    print_list(doubled); // [20, 40, 60, 80, 100]
+
+    // Filter: keep > 25
+    let filtered: List<i32> = list_filter(lst5, |x| x > 25);
+    print_str("filter(>25): ");
+    print_list(filtered); // [30, 40, 50]
+
+    // Fold: sum via fold
+    let lst6: List<i32> = list_from_vec(&data);
+    let fold_sum: i32 = list_fold(lst6, 0, |acc, x| acc + x);
+    print_str("fold(+): ");
+    println_int(fold_sum); // 150
+
+    // Fold: product
+    let mut small: Vec<i32> = Vec.new();
+    small.push(2);
+    small.push(3);
+    small.push(4);
+    let lst7: List<i32> = list_from_vec(&small);
+    let fold_prod: i32 = list_fold(lst7, 1, |acc, x| acc * x);
+    print_str("fold(*): ");
+    println_int(fold_prod); // 24
+
+    println_str("");
+    println_str("=== Tree<T> ===");
+
+    // Build tree:     +
+    //               /   \
+    //              +     +
+    //             / \   / \
+    //            1   2 3   4
+    let tree: Tree<i32> = Tree.Branch(
+        Box.new(Tree.Branch(
+            Box.new(Tree.Leaf(1)),
+            Box.new(Tree.Leaf(2))
+        )),
+        Box.new(Tree.Branch(
+            Box.new(Tree.Leaf(3)),
+            Box.new(Tree.Leaf(4))
+        ))
+    );
+
+    // Need separate trees since by-value consumes
+    let tree2: Tree<i32> = Tree.Branch(
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(1)), Box.new(Tree.Leaf(2)))),
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(3)), Box.new(Tree.Leaf(4))))
+    );
+    let tree3: Tree<i32> = Tree.Branch(
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(1)), Box.new(Tree.Leaf(2)))),
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(3)), Box.new(Tree.Leaf(4))))
+    );
+    let tree4: Tree<i32> = Tree.Branch(
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(1)), Box.new(Tree.Leaf(2)))),
+        Box.new(Tree.Branch(Box.new(Tree.Leaf(3)), Box.new(Tree.Leaf(4))))
+    );
+
+    print_str("sum: ");
+    println_int(tree_sum(tree)); // 10
+
+    print_str("count: ");
+    println_int(tree_count(tree2)); // 4
+
+    print_str("depth: ");
+    println_int(tree_depth(tree3)); // 3
+
+    // Map: square each leaf
+    let squared: Tree<i32> = tree_map(tree4, |x| x * x);
+    print_str("map(^2) sum: ");
+    println_int(tree_sum(squared)); // 1+4+9+16 = 30
+
+    println_str("");
+    println_str("=== Pair<A,B> (multi-param generic) ===");
+
+    // Same-type pair
+    let p: Pair<i32, i32> = make_pair(10, 20);
+    print_str("pair: (");
+    print_int(p.fst);
+    print_str(", ");
+    print_int(p.snd);
+    println_str(")"); // (10, 20)
+
+    let swapped: Pair<i32, i32> = swap_pair(p);
+    print_str("swapped: (");
+    print_int(swapped.fst);
+    print_str(", ");
+    print_int(swapped.snd);
+    println_str(")"); // (20, 10)
+
+    // Mixed-type pair: Pair<String, i32>
+    let mut lbl: String = String.new();
+    lbl.push_str("test");
+    let labeled: Pair<String, i32> = make_labeled(lbl, 42);
+    print_str("labeled: ");
+    print_str(labeled.fst.as_str());
+    print_str(" = ");
+    println_int(labeled.snd); // test = 42
+
+    // Vec<Pair<String, i32>>
+    let labels: Vec<Pair<String, i32>> = labeled_list();
+    print_str("labels: ");
+    for i in 0..labels.len() as i32 {
+        if i > 0 { print_str(", "); }
+        print_str(labels[i as usize].fst.as_str());
+        print_str("=");
+        print_int(labels[i as usize].snd);
+    }
+    println_str(""); // alpha=1, beta=2, gamma=3
+
+    println_str("");
+    println_str("=== KeyVal<K,V> ===");
+
+    let mut kvs: Vec<KeyVal<i32, i32>> = Vec.new();
+    kvs.push(kv_new(100, 10));
+    kvs.push(kv_new(200, 20));
+    kvs.push(kv_new(300, 30));
+
+    print_str("sum values: ");
+    println_int(kv_sum_values(&kvs)); // 60
+
+    print_str("find 200: ");
+    println_int(kv_find(&kvs, 200)); // 20
+
+    print_str("find 999: ");
+    println_int(kv_find(&kvs, 999)); // -1
+
+    0
+}

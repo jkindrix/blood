@@ -1,0 +1,47 @@
+// Test: finally clause with 3-field state
+// EXPECT: checkout: 0
+// EXPECT: checkin: 0
+// EXPECT: cleanup: 0 out
+// EXPECT: done
+struct Entry { slot: i32 }
+effect Pool {
+    op checkout() -> Entry;
+    op checkin(e: Entry) -> ();
+}
+deep handler H for Pool {
+    let mut out: i32
+    let mut cap: i32
+    let mut next: i32
+    return(x) { println_str("done"); x }
+    finally {
+        print_str("cleanup: ");
+        println_int(out);
+        println_str(" out");
+    }
+    op checkout() {
+        let s: i32 = next;
+        next = next + 1;
+        out = out + 1;
+        print_str("checkout: ");
+        println_int(s);
+        resume(Entry { slot: s })
+    }
+    op checkin(e) {
+        out = out - 1;
+        print_str("checkin: ");
+        println_int(e.slot);
+        resume(())
+    }
+}
+
+fn do_work() / {Pool} {
+    let e: Entry = perform Pool.checkout();
+    perform Pool.checkin(e);
+}
+
+fn main() -> i32 {
+    with H { out: 0, cap: 4, next: 0 } handle {
+        do_work();
+    };
+    0
+}
