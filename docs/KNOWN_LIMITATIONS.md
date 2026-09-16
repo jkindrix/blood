@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 586 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 713 pass, 0 fail (`./tools/health.sh` verifies this count). Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 273 Coq theorems/lemmas across 22 theory files, 219 proved (Qed/Defined), 14 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -91,6 +91,52 @@ Investigation found the snapshot mechanism is fully implemented. Codegen adds en
 ### ~~GAP-8: Region virtual address space leak~~ FIXED
 
 **Fixed in commit ebdac42 (2026-04-10).** Region destroy now calls `munmap` instead of `madvise(MADV_DONTNEED)`, releasing virtual address space back to the kernel. The validation array retains the region's (base, end, gen) entry so stale references are still detected. Region gen overflow also uses the -1 sentinel instead of panicking.
+
+### GAP-11: Content hashes of referencing definitions are not stable (Pillar 2)
+
+**Found 2026-09-16 by the corpus `identity` program, which passed locally only against a
+codebase store left over from March and failed on a fresh CI runner.**
+
+`CONTENT_ADDRESSED.md` specifies that a definition is identified by the hash of its
+canonicalized AST, and that "same code always produces same hash." That holds for a
+definition with no references. It does not hold for one that calls another definition —
+including a recursive call to itself. Those hashes change when an **unrelated**
+definition is added to the file:
+
+| definition | base file | same file + one unrelated fn |
+|---|---|---|
+| `fn sq(x) { x * x }` — no references | `d4cce3fdd1f9` | `d4cce3fdd1f9` stable |
+| `fn g(a) { … g(a - 1) }` — recursive | `99393ee57cc6` | `856a099d39c2` **changed** |
+| `fn h(a) { sq(a) + 1 }` — calls `sq` | `659c31a35550` | `cdaa6fda3a8b` **changed**, although `sq`'s hash did not |
+
+References appear to be hashed by compiler-internal position rather than by the
+referenced definition's content hash. Consequence: almost all real code calls other
+functions, so its hashes are unstable, and any compiler change that shifts definition
+indices — adding a builtin, for example — re-hashes every calling function. The unchanged
+`corpus/identity/mathlib.blood` hashed `factorial` to `a13d7e0a…` in March and
+`b01e23b5…` today, breaking its `use hash("a13d")` imports.
+
+What does work: hashing is deterministic run to run, and alpha-equivalence holds
+(renaming parameters yields an identical hash). Mechanism unconfirmed — the table is
+the evidence, not a trace of the canonicalizer.
+
+### GAP-12: Builtins accepted by the type checker with no runtime implementation
+
+17 of the 160 builtins registered in `src/selfhost/hir_lower_builtin.blood` typecheck,
+emit a call, and fail at `ld` with `undefined reference` and no source location —
+including every float-printing function (`print_f64`, `print_f32`, the `_prec` family),
+all file-handle I/O (`file_open`, `file_close`, `file_size`), `read_int`, `print_bool`,
+`print_char`, and `print_u64`. `tools/builtin-parity.sh` gates against new ones; its
+baseline lists the 17, each classified by compiling and linking it.
+
+### GAP-13: `with <HandlerName> handle { }` emits invalid LLVM IR
+
+`GRAMMAR.md` permits `WithHandleExpr ::= 'with' Expr 'handle' Block`, and a bare handler
+path is a valid `Expr`. The compiler accepts `with Loud handle { body() }` through type
+checking and then emits IR that `llc` rejects, with no source diagnostic.
+`with Loud {} handle { body() }` works. Open question: whether a bare fieldless-handler
+path denotes a value (then generate code for it) or not (then reject it at typeck).
+README's quick example uses the bare form.
 
 ## Design decisions (intentional behavior, not gaps)
 

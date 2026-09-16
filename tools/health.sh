@@ -135,19 +135,24 @@ else
 fi
 
 # --- documentation claims vs measurement ------------------------------------
-if [ "$GOLDEN_N" = "unknown" ]; then
-    # Never skip silently: an unverifiable claim is a finding, not an absence.
-    check "README claim" warn "cannot verify — no measured golden count to compare"
-else
-    claimed=$($GREP -oE '\*\*[0-9]+/[0-9]+ golden tests\*\*|[0-9]+/[0-9]+ golden tests' README.md 2>/dev/null | head -1 | $GREP -oE '^[0-9]+|[0-9]+' | head -1)
-    if [ -n "$claimed" ] && [ "$claimed" != "$GOLDEN_N" ]; then
-        check "README claim" fail "says $claimed golden tests, measured $GOLDEN_N"
-    elif [ -n "$claimed" ]; then
-        check "README claim" ok "golden count matches ($claimed)"
+# Every document that states a golden count. README said 576 and KNOWN_LIMITATIONS
+# said 586 while the compiler passed 713 -- the same stale-number bug, twice.
+claim_check() { # claim_check <label> <file> <ERE whose first number is the claim>
+    local claimed
+    claimed=$($GREP -oE "$3" "$2" 2>/dev/null | head -1 | $GREP -oE '[0-9]+' | head -1)
+    if [ "$GOLDEN_N" = "unknown" ]; then
+        # Never skip silently: an unverifiable claim is a finding, not an absence.
+        check "$1" warn "cannot verify — no measured golden count to compare"
+    elif [ -z "$claimed" ]; then
+        check "$1" warn "no golden-test claim found to verify"
+    elif [ "$claimed" != "$GOLDEN_N" ]; then
+        check "$1" fail "says $claimed golden tests, measured $GOLDEN_N"
     else
-        check "README claim" warn "no golden-test claim found to verify"
+        check "$1" ok "golden count matches ($claimed)"
     fi
-fi
+}
+claim_check "README claim"            README.md                 '[0-9]+/[0-9]+ golden tests'
+claim_check "KNOWN_LIMITATIONS claim" docs/KNOWN_LIMITATIONS.md '\*\*Golden tests:\*\* [0-9]+ pass'
 
 # --- CI ---------------------------------------------------------------------
 unattended=""

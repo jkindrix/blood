@@ -344,25 +344,25 @@ Work the first rule that fires. Do not skip ahead, and do not work two at once.
 Finite and ordered. Add to it only when a measurement demands it — never from an audit,
 a survey, or a decomposition. If it grows past ~10 items, something has gone wrong.
 
-1. **Silence the compiler.** `typeck_driver.blood` eprints internal phase timings on
-   every compile; the comment calls it "permanent". `--timings` already exists and is
-   ignored by these sites. No one outside this repo can use a compiler that narrates its
-   own type checker.
-2. **Close the 17 phantom builtins.** Float printing (`print_f64`, `print_f32`, the
-   `_prec` family), file-handle I/O (`file_open`/`file_close`/`file_size`), `read_int`,
-   `print_bool`, `print_char`, `print_u64`, `parse_u*_radix`, `args_join`. A language
-   that cannot print an `f64` is not finished.
+1. **Close the 17 phantom builtins** (`docs/KNOWN_LIMITATIONS.md` GAP-12). Float printing
+   (`print_f64`, `print_f32`, the `_prec` family), file-handle I/O
+   (`file_open`/`file_close`/`file_size`), `read_int`, `print_bool`, `print_char`,
+   `print_u64`, `parse_u*_radix`, `args_join`. Unblocks corpus `brainfuck` and `sortbench`.
+   A language that cannot print an `f64` is not finished.
+2. **Make content hashes stable for definitions that reference others** (GAP-11). This is
+   Pillar 2 (Identity), and it does not currently hold for real code: a function that
+   calls another — or itself — re-hashes when an unrelated definition is added. The
+   minimal repro is in GAP-11. Read the selfhost canonicalizer and the spec's
+   canonicalization section before changing anything; a hash-format change invalidates
+   every stored codebase, so it needs a design note first. Unblocks corpus `identity`,
+   which then also needs a setup step in `run_corpus.sh` (see `corpus/known-failures.txt`).
 3. **Corpus behaviour, not just compilation.** `run_corpus.sh` proves programs build. It
    does not prove they are correct. Expected outputs are described in prose in
    `corpus/WORKLOG.md`; turn them into assertions.
 4. **Verify the documentation's code compiles.** Extract every fenced `blood` block in
-   `docs/` and `README.md`, compile it, fail on error. First known casualty, verified
-   2026-09-16: README's quick example uses `with ParseErrorHandler handle {` — a bare
-   handler path. `GRAMMAR.md` permits it (`WithHandleExpr ::= 'with' Expr 'handle'
-   Block`), and the compiler accepts it through typeck, then **emits IR that llc
-   rejects**, with no source diagnostic. `with Loud {} handle {}` works; `with Loud
-   handle {}` does not. Decide whether a bare fieldless-handler path denotes a value
-   (then codegen it) or not (then reject it at typeck) — invalid IR is wrong either way.
+   `docs/` and `README.md`, compile it, fail on error. First known casualty: README's
+   quick example uses a bare handler path, which the compiler accepts and then emits
+   invalid IR for (GAP-13).
 5. **Tag `v0.1.0` and publish a release artifact.** Seed, runtime, stdlib, one-line
    install. 1,862 commits and zero tags reads as "not usable" to everyone who is not the
    author.
@@ -372,6 +372,8 @@ a survey, or a decomposition. If it grows past ~10 items, something has gone wro
    M:N scheduler are not. Either build effect-based structured concurrency — the answer
    the effect system makes uniquely available — or scope it out of v0.x and say so in
    `docs/spec/CONCURRENCY.md`.
+
+Done items leave the queue; `git log` is their record.
 
 ### `.tmp/` is frozen. Do not take work from it.
 

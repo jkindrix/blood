@@ -38,7 +38,7 @@ The self-hosted compiler passes **713/713 golden tests**, and 28 of the 30 real 
 | Multiple Dispatch | ⚠️ Partial | Compile-time dispatch works. Runtime dispatch (fingerprint-based) is deferred |
 | Fibers / Concurrency | ❌ Not integrated | pthread-based spawn; no M:N scheduler, no mutex/channel primitives wired |
 | Safety Checks | ✅ Default | Definite init, linearity, bounds, dangling ref rejection all enabled |
-| Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. VFT dispatch wiring not hooked up |
+| Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. Hashes are stable only for definitions with no references — anything that calls another function re-hashes when unrelated code changes ([GAP-11](docs/KNOWN_LIMITATIONS.md)). VFT dispatch wiring not hooked up |
 | Formal Proofs | ✅ Complete (for what they cover) | 22 theory files, 214 `Qed.`, **0 `Admitted.`, 0 `Axiom`**. Covers a core calculus formalization — there is no mechanized link to the compiler artifact |
 
 **Legend**: ✅ Working | ⚠️ Mostly working with known gaps | 🔶 Partial | ❌ Not integrated
